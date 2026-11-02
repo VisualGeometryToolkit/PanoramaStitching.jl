@@ -106,5 +106,5 @@ image, extent, composite = render_panorama(samples.cells, values, samples.ok, ze
 
 `image` is the equirectangular raster (rows the elevation from the top, columns the azimuth, one pixel per cell, NaN where no
 frame saw the cell) and `extent` its `(lon₀, lon₁, lat₀, lat₁)` in degrees. Corrections of the frames themselves, such as
-dividing out a vignetting, are applied to `values` before rendering. To level the horizon, pass `up = up_frame(pitch, roll)`
+dividing out a vignetting, are applied to `values` before rendering. To level the horizon, supply `up = up_frame(pitch, roll)`
 (the first frame's pitch and roll against the true horizon, degrees).
