@@ -4,35 +4,15 @@
 PanoramaStitching
 ```
 
-## Registration
+The package registers a pure-rotation sequence and renders its panorama in three calls:
 
-```@docs
-register_rotations
-Registration
-ViewGraph
-chain_tracks
-refine_rotations
-RotationBundleMetadata
-```
+| Step | Function | Result |
+|---|---|---|
+| the rotation of every frame | [`register_rotations`](@ref) | a [`Registration`](@ref): rotations, view graph, tracks, bundle |
+| world cells sampled in every frame | [`sample_cells`](@ref) | [`CellSamples`](@ref) |
+| the equirectangular panorama | [`render_panorama`](@ref) | `(image, extent, composite)` |
 
-## Features
+[Getting started](guide.md) walks through all three on a fisheye sweep; the [API](api.md) page documents every function.
 
-```@docs
-PanoramaStitching.FrameFeatures
-PanoramaStitching.detect_features
-PanoramaStitching.pair_bearings
-PanoramaStitching.LOMA_SIZE
-```
-
-## Cells and the panorama
-
-```@docs
-world_cells
-world_direction
-PanoramaStitching.cell_centres
-CellSamples
-sample_cells
-true_up
-up_frame
-render_panorama
-```
+PanoramaStitching is part of the [VisualGeometryToolkit](https://visualgeometrytoolkit.github.io) stack. It does no
+radiometry: a vignetting or exposure fit consumes its rotations, cells and panoramas downstream. MIT licence.
