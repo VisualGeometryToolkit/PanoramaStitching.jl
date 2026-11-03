@@ -31,7 +31,8 @@ function sequence(; K = 4)
     texture(d) = (p = project(Equirectangular(), d); bilinear_sample(tex, Val(3), SVector((p[1] + π) / 2π, (π / 2 - p[2]) / π)))
     V(θ) = exp(-0.5 * (θ / 1.4)^2)
     W = H = 1000; s = 2; Wf, Hf = W ÷ s, H ÷ s
-    cam = CentralGenericModel(CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02)), (W, H); grid_size = (40, 40))
+    model = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))   # the parametric lens the grid resamples
+    cam = CentralGenericModel(model, (W, H); grid_size = (40, 40))
     circle = (500.0, 500.0, 480.0)
     axis = backproject(cam, SVector(500.0, 500.0))
     R = [k == 1 ? SMatrix{3, 3}(1.0I) : SMatrix{3, 3}(exp_so3(SVector(0.05randn(rng), deg2rad(35) * (k - 1), 0.05randn(rng)))) for k in 1:K]
@@ -47,8 +48,24 @@ function sequence(; K = 4)
         end
         img
     end
-    return (; frames, cam, circle, raw_scale = s, R, gains, V, texture)
+    return (; frames, cam, model, circle, raw_scale = s, R, gains, V, texture)
 end
+end
+
+@testitem "sample_cells: any camera model, not only a generic grid" setup = [SyntheticSequence] begin
+    # the sequence's Kannala–Brandt lens as the parametric CameraModel itself (its project has no `init`) and as the 40 × 40 grid
+    # resampled from it: the cells through the true rotations agree
+    using Test, StableRNGs
+    using PanoramaStitching: sample_cells
+    q = sequence(; K = 2)
+    Hf, Wf = size(q.frames[1], 1), size(q.frames[1], 2)
+    cells(cam) = sample_cells(q.frames, [falses(Hf, Wf) for _ in 1:2], q.R, cam; raw_scale = q.raw_scale, circle = q.circle, cell_deg = 4.0,
+                              sub = 2, blur_px = 1.0, rim_margin_px = 12.0, fov_deg = 89.0, field_angle = :lens, rng = StableRNG(1))
+    p, g = cells(q.model), cells(q.cam)
+    both = p.ok .& g.ok
+    @test count(p.ok) > 0 && count(both) >= 0.95 * count(g.ok)
+    @test maximum(abs.(p.val[both, 2] .- g.val[both, 2])) < 0.02
+    @test maximum(abs.(p.theta_model[both] .- g.theta_model[both])) < 0.05     # degrees
 end
 
 @testitem "register_rotations, sample_cells, render_panorama: a synthetic fisheye sweep" setup = [SyntheticSequence] begin

@@ -49,7 +49,8 @@ Base.eltype(::_Observation) = Float64
 
 @inline _camera_direction(ch::VgtkCore.RotationChart, d::_TrackDirection) = SMatrix{3, 3}(ch.R)' * VgtkCore.model(d.ch)
 
-# π(f) through the camera (a generic model's pixel LM started at the observed pixel); NaN where it cannot project.
+# π(f) through any camera: a generic model's projection is a pixel-space LM, started at the guess `x` (the observed pixel in the
+# bundle, the cell's predicted pixel in `sample_cells`); a parametric model projects in closed form and takes no guess.
 @inline _project_with(camera::VgtkCore.CentralGenericModel, f, x) = VgtkCore.project(camera, f; init = x)
 @inline _project_with(camera, f, x) = VgtkCore.project(camera, f)
 @inline function _project(r::_Observation, f)

@@ -98,7 +98,7 @@ function sample_cells(frames::AbstractVector, saturated::AbstractVector, rotatio
                 lo = cells[i, 3] + (cells[i, 4] - cells[i, 3]) * ((b - 0.5) / S + jit[i, a, b, 2] / S)
                 f = R' * world_direction(la, lo)
                 θ = VgtkCore.angle_between(f, axis); φ = atan(f[2], f[1]); r0 = rad2deg(θ) / θr
-                u = VgtkCore.project(camera, f; init = SVector(cx + r0 * cos(φ), cy + r0 * sin(φ)))
+                u = _project_with(camera, f, SVector(cx + r0 * cos(φ), cy + r0 * sin(φ)))
                 if u === nothing || !all(isfinite, u) || hypot(u[1] - cx, u[2] - cy) >= rc - rim_margin_px ||
                    !(2 < u[1] < W - 2 && 2 < u[2] < H - 2) || sat[clamp(floor(Int, u[2] / s) + 1, 1, Hf), clamp(floor(Int, u[1] / s) + 1, 1, Wf)]
                     good = false; break
