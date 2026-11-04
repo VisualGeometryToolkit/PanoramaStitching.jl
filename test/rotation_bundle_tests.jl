@@ -89,10 +89,11 @@ end
 # sequence — a rectilinear grid lens calibrated over the sensor (its SplineProjection over the same region), observations up to the
 # frame's border, a start ~0.6° off (an averaging's rotations). A start prediction near the border falls outside the grid's
 # domain, where the grid has no back-projection Jacobian: the start is not finite and NLLSsolver stops at once, "nonfinite_start",
-# the rotations the start's. Controls: the same data and start through the parametric camera converge, and no iteration is
-# "not_run" (the grid from the true rotations: skipped, see below).
+# the rotations the start's. Controls: the same data and start through the parametric camera converge, the grid from the true
+# rotations converges, and no iteration is "not_run".
 @testitem "refine_rotations' outcome: a grid lens's border observations from an imperfect start (nonfinite_start)" begin
     using Test, Random, LinearAlgebra, StaticArrays
+    import NLLSsolver, PanoramaStitching
     using PanoramaStitching: refine_rotations
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -123,9 +124,18 @@ end
     @test all(k -> SMatrix{3, 3}(VgtkCore.estimate(res)[k]) == start[k], 1:K)          # no step was tried
     resp = refine_rotations(pinhole, start, tracks; kw...)
     @test resp.metadata.outcome === :converged && resp.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(resp)) < 0.05
-    # The grid from the TRUE rotations (a finite start) does not return (measured 2026-11-04, Core 0.5 + NLLSsolver of the
-    # stack's branch: one thread busy for minutes) — an iterate whose prediction leaves the grid's domain, the hang the
-    # nonfinite_start stop was made to avoid, now inside the solve rather than at its start. Kept as a skip until it is fixed:
-    @test_skip refine_rotations(grid, R, tracks; projection = sp, kw...).metadata.outcome === :converged
+    # The grid from the TRUE rotations (a finite start) converges. Until 2026-11-04 it never returned: the SplineProjection
+    # extrapolates past the grid's imaged region, so an iterate there had a finite residual but a NaN Jacobian, NLLSsolver
+    # accepted it and its Levenberg–Marquardt trial loop spun on the NaN system. The residual is now NaN off the imaged region
+    # too (`_project`): such a step is a rejected one.
+    rest = refine_rotations(grid, R, tracks; projection = sp, kw...)
+    @test rest.metadata.outcome === :converged && rest.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(rest)) < 0.05
+    # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
+    fwd = PanoramaStitching._forward_map(sp)
+    o = PanoramaStitching._Observation{false, typeof(grid), typeof(fwd), Nothing}(grid, fwd, SVector(500.0, 400.0), SVector(1, 2), nothing)
+    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(I)); far = PanoramaStitching._TrackDirection{false}(VgtkCore.SphereManifold(SVector(0.9, 0.0, 0.3)))
+    e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
+    @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
+    @test all(isfinite, sp(SVector(0.9, 0.0, 0.3)))                   # (the forward map itself extrapolates)
     @test refine_rotations(pinhole, start, tracks; kw..., iterations = 0).metadata.outcome === :not_run
 end

@@ -51,8 +51,21 @@ Base.eltype(::_Observation) = Float64
 
 @inline _camera_direction(ch::VgtkCore.RotationChart, d::_TrackDirection) = SMatrix{3, 3}(ch.R)' * VgtkCore.model(d.ch)
 
-# π(f): the forward map in closed form (NaN where it does not image).
-@inline _project(r::_Observation, f) = (u = r.projection(f); SVector(u[1], u[2]))
+# π(f): the forward map in closed form, NaN where it does not image AND where the camera does not image the point — off a grid
+# model's imaged region (its calibrated area ∩ domain), where its back-projection Jacobian is NaN. A grid's SplineProjection
+# extrapolates past its region (a finite pixel), so without the second test the residual would be finite where its Jacobian
+# is not: NLLSsolver would accept such an iterate, linearize there and loop on its NaN system for ever (measured 2026-11-04,
+# the synthetic Tamron sequence from its true rotations). With it the residual and its Jacobian are defined on the same set,
+# an iterate past it is a NaN cost (a rejected step) and a start past it is a non-finite start (`:nonfinite_start`).
+@inline function _project(r::_Observation, f)
+    u = r.projection(f); p = SVector(u[1], u[2])
+    return _images(r.camera, p) ? p : SVector(NaN, NaN)
+end
+# Whether the camera images the sensor point `u` (its back-projection and Jacobian defined there): a grid model's imaged region;
+# a parametric camera's back-projection is defined on the whole plane.
+@inline _images(camera::VgtkCore.CentralGenericModel, u) = VgtkCore.Point2(u[1], u[2]) ∈ VgtkCore.imaged_region(camera)
+@inline _images(camera::VgtkCore.BoundedCamera, u) = _images(VgtkCore.model(camera), u)
+@inline _images(camera, u) = true
 
 NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::_TrackDirection) = _project(r, _camera_direction(ch, d)) - r.x
 
