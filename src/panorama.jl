@@ -3,11 +3,18 @@
 # =============================================================================
 
 """
-    true_up(up_pitch, up_roll) -> SVector{3}
+    true_up(pitch, roll) -> SVector{3}
 
 The true up direction in the common (first-frame) frame: `Rz(roll)·(0, −cos p, −sin p)`,
 `p` the first frame's pitch-down against the true horizon and `roll` its roll, in
-degrees.
+degrees. A level first frame's up is its camera frame's −y:
+
+```jldoctest
+julia> using PanoramaStitching
+
+julia> true_up(0, 0) == [0, -1, 0]
+true
+```
 """
 function true_up(pitch::Real, roll::Real)
     p, r = deg2rad(pitch), deg2rad(roll)
@@ -16,10 +23,11 @@ function true_up(pitch::Real, roll::Real)
 end
 
 """
-    up_frame(up_pitch, up_roll) -> SMatrix{3,3}
+    up_frame(pitch, roll) -> SMatrix{3,3}
 
 `R` with `d = R·d_true`: the true-up frame (its −y the [`true_up`](@ref)
-direction, its forward the common frame's forward projected onto the horizontal).
+direction, its forward the common frame's forward projected onto the horizontal),
+`pitch` and `roll` in degrees as there. The `up` keyword of [`panorama_view`](@ref).
 """
 function up_frame(pitch::Real, roll::Real)
     u = normalize(true_up(pitch, roll)); z = SVector(0.0, 0.0, 1.0)
@@ -63,12 +71,28 @@ The raster of a panorama and its pixel → ray map.
   `LinearMap(rotation) ∘ Backprojection(camera)` (`d = rotation·f`, `f` the virtual camera's ray). No new projection type:
   the lens chooses the view.
 
-```julia
-using VisualGeometryToolkitCore: CameraModel, Lens, Perspective, Equidistant, Stereographic, Cylindrical, px
-cyl = panorama_view(Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.05)                       # cylindrical
-rect = panorama_view(CameraModel(1000.0px, SA[960.0px, 540.0px]; lens = Lens(Perspective())), 1920, 1080)   # rectilinear
-down = SMatrix{3, 3}(1.0, 0, 0, 0, 0, -1, 0, 1, 0)                                           # looking along +y (down)
-planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(Stereographic())), 2000, 2000; rotation = down)   # 'little planet'
+```jldoctest
+julia> using PanoramaStitching, StaticArrays
+
+julia> using VisualGeometryToolkitCore: CameraModel, Lens, Perspective, Stereographic, Cylindrical, px
+
+julia> cyl = panorama_view(Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.05);   # cylindrical
+
+julia> cyl.size                                     # rows in steps of tan φ, columns of longitude
+(1923, 4800)
+
+julia> rect = panorama_view(CameraModel(1000.0px, SA[960.0px, 540.0px]; lens = Lens(Perspective())), 1920, 1080);
+
+julia> rect.size                                    # rectilinear
+(1080, 1920)
+
+julia> down = SMatrix{3, 3}(1.0, 0, 0, 0, 0, -1, 0, 1, 0);   # its axis along +y (down)
+
+julia> planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(Stereographic())), 2000, 2000;
+                              rotation = down);    # a 'little planet'
+
+julia> planet.size
+(2000, 2000)
 ```
 """
 function panorama_view(projection::VgtkCore.AbstractPanoramaProjection, extent, deg_per_pixel::Real;

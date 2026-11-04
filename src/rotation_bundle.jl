@@ -144,6 +144,11 @@ bearing in the common frame.
 - `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
+
+A refine ends in the local minimum its start leads to; the result's `retcode`
+and its metadata's `outcome` ([`RotationBundleMetadata`](@ref)) say how the
+bundle ended. A track observed in fewer than two frames, or naming a frame
+without a start rotation, is an `ArgumentError`.
 """
 function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector; projection = camera,
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,

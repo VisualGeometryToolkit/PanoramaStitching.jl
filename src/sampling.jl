@@ -11,7 +11,12 @@
 # frame's value and the vignetting at the point.
 # =============================================================================
 
-"The unit direction of (latitude, longitude) in degrees: Core's `Equirectangular` back-projection (up = −y, longitude 0 = +z, +90° = +x)."
+"""
+    world_direction(lat, lon) -> Vec3{Float64}
+
+The unit direction of (latitude, longitude) in degrees: Core's `Equirectangular` back-projection (up = −y, longitude 0 = +z,
++90° = +x).
+"""
 world_direction(lat, lon) = VgtkCore.backproject(VgtkCore.Equirectangular(), SVector(deg2rad(lon), deg2rad(lat)))
 
 # The camera's forward map ray → camera pixel as a Transformation (a kernel-lawful value on a device): a parametric camera's

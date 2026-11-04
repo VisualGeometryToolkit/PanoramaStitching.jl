@@ -1,37 +1,86 @@
-# The README's code runs and its installation is complete (the General registration review of the stack, 2026-10, found
-# README examples that did not run and an installation that missed a package the examples name). The installation is fenced
-# ```julia-repl (a `pkg>` line, not run: it would modify the test environment); every ```julia block runs, in order, in one
-# fresh module, as a reader pasting them into a REPL would. The usage's one placeholder, `my_frames` (the reader's images), is
-# the synthetic sequence the README describes: a Kannala–Brandt fisheye of 300 px on a 1000 × 1000 sensor, frames 2 × 2 binned.
+# readme_tests.jl — the README's example, the documentation's first example and the Getting started page run as written,
+# in a clean environment that holds exactly what the README's install line adds. A reader's first contact with the package
+# is that code; the General registration review asked for this test (#174496: the install line missed
+# VisualGeometryToolkitCore and StaticArrays; #173031, #174579 for the stack).
+#
+# The install line is a `pkg>` block (```julia-repl), so it is not run as code: the item checks that it names every
+# non-standard-library package the examples load, and nothing else. The examples then run in a child Julia process in a
+# temporary environment (this package by path, the rest of the install line from the registries) with none of the test
+# run's load path: the README's example first, then the guide's blocks after it, in order, in one module, as a reader
+# continuing from the example would. A block that starts with `# Illustrative` (one more package) is counted, not run.
 
-@testitem "README: the installation names every package the usage loads; the usage runs" setup = [SyntheticSequence] begin
-    using Test, LinearAlgebra, StaticArrays
-    using PanoramaStitching
-    import VisualGeometryToolkitCore as VgtkCore
-    readme = read(joinpath(pkgdir(PanoramaStitching), "README.md"), String)
-    install = [m[1] for m in eachmatch(r"^```julia-repl\n(.*?)^```"ms, readme)]
-    blocks = [m[1] for m in eachmatch(r"^```julia\n(.*?)^```"ms, readme)]
-    @test length(install) == 1 && !isempty(blocks)
-    # the registry that holds the package, and every non-stdlib package a block loads
-    @test occursin(r"^pkg> registry add .*CauRegistry\.jl"m, install[1])
-    loaded = unique(m[1] for b in blocks for m in eachmatch(r"^(?:using|import) (\w+)"m, b))
-    @test !isempty(loaded)
-    for name in loaded
-        @test occursin(Regex("^pkg> add .*\\b$name\\b", "m"), install[1])
+@testitem "README: the install line names what the examples load; the examples run in a fresh environment" begin
+    using Test, PanoramaStitching
+    root = pkgdir(PanoramaStitching)
+    julia_blocks(text) = [m[1] for m in eachmatch(r"^```julia\n(.*?)^```"ms, text)]
+    illustrative(block) = startswith(block, "# Illustrative")
+    readme = read(joinpath(root, "README.md"), String)
+    index = read(joinpath(root, "docs", "src", "index.md"), String)
+    example = julia_blocks(readme)
+    landing = julia_blocks(index)
+    guide_all = julia_blocks(read(joinpath(root, "docs", "src", "guide.md"), String))
+    guide = filter(!illustrative, guide_all)
+    @test length(example) == 1 && !illustrative(only(example))   # pin the counts
+    @test landing == example                                    # one example, shown twice
+    @test length(guide) == 6 && count(illustrative, guide_all) == 1
+
+    # The install line adds exactly the packages the examples load; the registry that holds the package comes first.
+    install = [m[1] for m in eachmatch(r"^pkg> add (.+)$"m, readme)]
+    @test length(install) == 1
+    packages = split(only(install))
+    loaded = Set{String}()
+    for code in [example; guide], m in eachmatch(r"^(?:using|import)\s+([^:\n]+)"m, code)
+        for part in split(m[1], ',')
+            push!(loaded, first(split(strip(part), r"[.\s]")))
+        end
+    end
+    stdlib(name) = isdir(joinpath(Sys.STDLIB, name))
+    @test Set(filter(!stdlib, loaded)) == Set(packages)
+    @test occursin("pkg> add $(only(install))", index)
+    for text in (readme, index)
+        @test occursin(r"^pkg> registry add General https://github\.com/prittjam/CauRegistry\.jl$"m, text)
     end
 
-    q = sequence()
-    sandbox = Module(:ReadmeExamples)
-    Core.eval(sandbox, :(my_frames = $(q.frames)))
-    for (i, code) in enumerate(blocks)
-        @test (include_string(sandbox, code, "README.md (julia block $i)"); true)
+    env = mktempdir()
+    write(joinpath(env, "example.jl"), only(example))
+    write(joinpath(env, "guide.jl"), join(guide, "\n"))
+    registered = filter(!=("PanoramaStitching"), String.(packages))
+    script = joinpath(env, "run.jl")
+    write(script, """
+    using Pkg
+    Pkg.develop(path = $(repr(root)); io = devnull)
+    Pkg.add($(repr(registered)); io = devnull)
+    readme = Module(:ReadmeSandbox)
+    using Test
+    Base.include(readme, $(repr(joinpath(env, "example.jl"))))
+    @testset "README example" begin
+        # the comments' claims: the rotations within 0.05°, the bundle below a pixel, the panorama's size and NaN where
+        # no frame sees the pixel
+        @test length(readme.reg.rotations) == 4 && maximum(readme.errors) < 0.05
+        @test readme.reg.bundle.rms < 1.0
+        @test size(readme.pano.image) == (458, 1220, 3)
+        @test size(readme.pano.owner) == size(readme.pano.coverage) == size(readme.pano.image)[1:2]
+        @test eltype(readme.frames[1]) == Float32
+        @test any(>(0), readme.pano.owner) && all(i -> isnan(readme.pano.image[i, 2]), findall(==(0), readme.pano.owner))
     end
-    # the usage's commented claims hold
-    reg = Core.eval(sandbox, :reg); pano = Core.eval(sandbox, :pano); res = Core.eval(sandbox, :res)
-    K = length(q.frames)
-    errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:K]
-    @test length(reg.rotations) == K && maximum(errs) < 0.05 && reg.bundle.rms < 1.0         # pixels
-    @test VgtkCore.converged(res) && length(res.metadata.gains) == K && res.metadata.gains[1] == 1
-    @test ndims(pano.image) == 3 && size(pano.image, 3) == 3 && size(pano.owner) == size(pano.coverage) == size(pano.image)[1:2]
-    @test any(>(0), pano.owner) && all(i -> isnan(pano.image[i, 2]), findall(==(0), pano.owner))
+    Base.include(readme, $(repr(joinpath(env, "guide.jl"))))
+    @testset "Getting started" begin
+        @test readme.reg.pairs[(1, 2)].inliers >= 40
+        @test readme.S.seen isa AbstractMatrix{Bool} && size(readme.S.seen, 2) == 4 && any(readme.S.seen)
+        @test readme.rect.size == (1080, 1920) && readme.planet.size == (2000, 2000)
+        # frames without vignetting at one exposure: V and every gain close to 1, the seams small
+        @test readme.VgtkCore.converged(readme.res)
+        @test readme.g[1] == 1 && all(g -> isapprox(g, 1; atol = 0.01), readme.g)
+        @test all(r -> isapprox(readme.V(readme.SA[500.0 + r, 500.0], nothing), 1; atol = 0.01), 0:50:400)
+        @test readme.seams.rms < 0.05
+        @test size(readme.corrected.image) == size(readme.pano.image) && size(readme.pano.image, 3) == 3
+    end
+    """)
+    # Base.julia_cmd() carries the test run's flags (--depwarn=error, coverage). The load path is the project and the
+    # standard library only: no default environment (@v1.12) can supply a package the install line does not add.
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$env $script`
+    proc = withenv("JULIA_LOAD_PATH" => "@:@stdlib") do   # --project overrides JULIA_PROJECT
+        run(ignorestatus(cmd))
+    end
+    @test proc.exitcode == 0
 end

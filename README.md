@@ -1,93 +1,106 @@
 # PanoramaStitching.jl
 
 [![CI](https://github.com/VisualGeometryToolkit/PanoramaStitching.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/VisualGeometryToolkit/PanoramaStitching.jl/actions/workflows/CI.yml)
+[![Docs: dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/)
 [![Coverage](https://codecov.io/gh/VisualGeometryToolkit/PanoramaStitching.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/VisualGeometryToolkit/PanoramaStitching.jl)
-[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/)
 
-The panorama of a camera that only rotated — a sweep of a distant scene — through a calibrated lens of any field of view,
-fisheyes past 90° included, on the [VisualGeometryToolkit](https://visualgeometrytoolkit.github.io) stack:
-
-- `register_rotations(frames, camera; …)` — the rotations of the frames: ASIFT keypoints described by DeDoDe and matched by
-  LoMa (VisualGeometryToolkitFeatures), the rotation of every frame pair by RANSAC on bearings
-  (VisualGeometryToolkitEstimation's `find_rotation`), the view graph's robust rotation averaging
-  (`fit_rotation_averaging`), the tracks, and the bundle of the rotations and the track directions (NLLSsolver, the pixel
-  reprojection error through the fixed camera).
-- `sample_frames(camera, frames, rotations, directions; …)` — the frames sampled at directions of the sphere
-  (`fibonacci_directions`): per direction, every frame that sees it, its sensor point, value and vignetting.
-- `render_panorama(camera, frames, rotations, view; …)` — the panorama in a `panorama_view` (equirectangular, cylindrical,
-  equal-area, Mercator, or a virtual camera), unblended; `render_cube_map` for a cube map.
-- `fit_vignetting(space, camera, frames, rotations; …)` — the camera's vignetting from the frames alone: every pixel of every
-  frame at its own pixel centre is the scene's radiance times V, the scene a B-spline on the sphere fitted with V (radial or
-  2-D), optionally with a per-frame exposure gain (`frame_gains`), the normal equations on the GPU. `score_seams` measures
-  the seams a vignetting (and the gains) leave.
-
-`examples/panorama_vignetting/` runs the chain — RAW decode, registration, the fit, the seam scores, corrected and uncorrected
-panoramas — from a config of record (README there).
-
-The sampling and the render run on VisualGeometryToolkitCore's warping machinery (KernelAbstractions): GPU arrays in, the
-device does the work; host arrays, the same code on the CPU.
+PanoramaStitching estimates the rotations of a camera that only rotated from its frames, and renders the panorama
+in any view, through a calibrated lens of any field of view (fisheyes past 90° included). It also fits the camera's
+vignetting from the same frames, with no flat field. It is part of the
+[VisualGeometryToolkit](https://visualgeometrytoolkit.github.io) stack.
 
 ## Installation
 
-PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the VisualGeometryToolkit
-stack it is built on is in General. Add CauRegistry once (Julia 1.12 or later), then the package and the two packages the
-usage below also names:
+PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the packages it is built
+on are in General. Julia 1.12 or later. Add both registries once (naming General keeps it in a new depot), then the
+package and the two packages the example also loads:
 
 ```julia-repl
 pkg> registry add General https://github.com/prittjam/CauRegistry.jl
 pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
 ```
 
-## Usage
+## Example
 
-The frames are `H × W × 3` linear images in capture order; the camera is a calibrated VisualGeometryToolkitCore camera. Here a
-Kannala–Brandt fisheye of 300 px focal length on a 1000 × 1000 sensor, imaging out to 100° off axis, with the frames binned
-2 × 2 (`raw_scale = 2` camera pixels per frame pixel):
+A fisheye sweeps a synthetic scene in four frames 35° apart. The example estimates the frames' rotations from the
+frames alone and renders their cylindrical panorama.
 
 ```julia
 using PanoramaStitching
-import VisualGeometryToolkitCore as VgtkCore
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, Circle, Point2, Cylindrical, px
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, Circle, Point2, Equirectangular, Cylindrical, HuberShape,
+    CauchyShape, backproject, project, bilinear_sample, exp_so3, log_so3, px
 using StaticArrays: SA
+using LinearAlgebra: norm
+using Random: Xoshiro
 
+# The scene: random Gaussian blobs on an equirectangular texture (columns the longitude, rows the latitude).
+function blob_scene(rng; width = 2048, height = 1024, n = 20_000)
+    scene = fill(0.15f0, height, width, 3)
+    for _ in 1:n
+        x, y, s, a, c = width * rand(rng), height * rand(rng), 1 + 3rand(rng), 0.6rand(rng), 0.3 .+ 0.7rand(rng, 3)
+        sx = s / max(sinpi(y / height), 0.05)                    # round on the sphere, not on the texture
+        for j in floor(Int, x - 3sx):ceil(Int, x + 3sx), i in max(1, floor(Int, y - 3s)):min(height, ceil(Int, y + 3s))
+            scene[i, mod1(j, width), :] .+= a * exp(-((j - x)^2 / sx^2 + (i - y)^2 / s^2) / 2) .* c
+        end
+    end
+    return d -> (p = project(Equirectangular(), d); bilinear_sample(scene, Val(3), SA[(p[1] + π) / 2π, 0.5 - p[2] / π]))
+end
+radiance = blob_scene(Xoshiro(7))
+
+# A Kannala–Brandt fisheye (300 px focal length, 1000 × 1000 sensor, imaging to 100° off axis) turned 35° between
+# frames, each frame 2 × 2 binned: frame pixel (i, j) is centred at camera pixel (2j − 1, 2i − 1).
 camera = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))
-circle = Circle(Point2(500.0, 500.0), 480.0)   # the image circle, camera pixels (WholePlane() for a lens with none)
-frames = my_frames                             # your Vector of 500 × 500 × 3 Float32 linear images, in capture order
+circle = Circle(Point2(500.0, 500.0), 480.0)                     # the image circle, camera pixels
+truth = [exp_so3(SA[0.0, deg2rad(35.0 * k), 0.0]) for k in 0:3]  # d = R_k·f, the first frame the common frame
+frames = map(truth) do R
+    rgb = [hypot(2j - 501, 2i - 501) < 480 ? radiance(R * backproject(camera, SA[2j - 1.0, 2i - 1.0])) : SA[0f0, 0f0, 0f0]
+           for i in 1:500, j in 1:500]
+    Float32[rgb[i, j][c] for i in 1:500, j in 1:500, c in 1:3]   # H × W × 3, linear
+end
 
-# 1. the rotations: features, pairwise RANSAC, rotation averaging, tracks and the bundle
+# The rotations from the frames alone, then the cylindrical panorama at 0.25° per pixel.
 reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile = 99.5, detector_margin_px = 20.0,
-                         asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
-                         pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
-                         max_trials = 10_000, min_trials = 100,
-                         averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                         bundle_scale_multiple = 3.0, bundle_iterations = 3, bundle_max_iter = 100,
-                         bundle_ftol = 1e-10, bundle_xtol = 1e-10, say = println)
-reg.rotations    # one rotation per frame (d = R_k·f_k; the first frame's camera frame is the common frame)
-reg.bundle.rms   # the bundle's rms reprojection error, pixels
-
-saturated = [falses(size(f, 1), size(f, 2)) for f in frames]   # clipped pixels: masked in measurements, never in renders
-kw = (; circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0)
-
-# 2. the frames sampled at directions spread uniformly over the covered sphere
-S = sample_frames(camera, frames, reg.rotations, fibonacci_directions(reg.rotations, 100_000; fov_deg = 89.0);
-                  saturated, vignetting = (u, f) -> 1.0, kw...)
-
-# 3. the vignetting from the frames alone (interpolation free), and the seams it leaves
-res = fit_vignetting(RadialVignetting(SA[500.0, 500.0], 490.0, 16), camera, frames, reg.rotations; saturated, kw...,
-                     plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
-                     vignetting_penalty_weight = 1.0e-6, frame_gains = true,   # per-frame exposure gains, g₁ = 1
-                     solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))
-V = VgtkCore.estimate(res); g = res.metadata.gains
-cyl = panorama_view(Cylindrical(), (-90.0, 90.0, -45.0, 45.0), 0.1)
-seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, kw..., plane = 2,
-                    plane_offsets = nothing, chunk = 200_000)
-
-# 4. a cylindrical panorama, 0.1° per pixel, the vignetting and the frames' gains divided out
-pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, kw...)
+                         asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
+                         min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
+                         max_trials = 10_000, min_trials = 100, averaging_loss = HuberShape(), bundle_loss = CauchyShape(),
+                         bundle_scale_multiple = 3.0, bundle_iterations = 3, bundle_max_iter = 100, bundle_ftol = 1e-10,
+                         bundle_xtol = 1e-10)
+errors = [rad2deg(norm(log_so3(reg.rotations[k]' * truth[k]))) for k in 1:4]   # degrees, each below 0.05
+reg.bundle.rms                                                   # the bundle's rms reprojection error, below 1 px
+cyl = panorama_view(Cylindrical(), (-100.0, 205.0, -45.0, 45.0), 0.25)
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
+                       rim_margin_px = 12.0, fov_deg = 89.0)
+size(pano.image)                                                 # (458, 1220, 3); NaN where no frame sees the pixel
 ```
 
-`pano.image` is the panorama (rows from the top, columns the longitude, NaN where no frame sees the pixel), `pano.owner` the
-frame each pixel holds and `pano.coverage` how many frames see it. The
-[documentation](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/) explains each step and its settings.
+[Getting started](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/guide/) continues from here.
 
-MIT licence.
+## Documentation
+
+- [Getting started](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/guide/): the registration,
+  sampling the frames at directions, the panorama views and the vignetting fit, step by step.
+- [API reference](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/api/).
+
+The features come from VisualGeometryToolkitFeatures, the pairwise rotations and the rotation averaging from
+VisualGeometryToolkitEstimation, and the cameras, panorama projections and warping from VisualGeometryToolkitCore. The
+[portal](https://visualgeometrytoolkit.github.io) links every package of the stack. The repository's
+`examples/panorama_vignetting/` runs the whole chain on RAW sweeps from configs of record.
+
+## Citing
+
+PanoramaStitching is written by James Pritts. Its
+[CITATION.cff](https://github.com/VisualGeometryToolkit/PanoramaStitching.jl/blob/main/CITATION.cff) is the source of
+this entry, and GitHub's "Cite this repository" button exports it:
+
+```bibtex
+@software{pritts2026panoramastitching,
+  author = {Pritts, James},
+  title  = {{PanoramaStitching.jl}: Panoramas and Vignetting of a Rotating Camera},
+  url    = {https://github.com/VisualGeometryToolkit/PanoramaStitching.jl},
+  year   = {2026}
+}
+```
+
+## License
+
+MIT

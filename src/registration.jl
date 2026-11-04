@@ -76,6 +76,16 @@ RANSAC's:
   `bundle_xtol` — see [`refine_rotations`](@ref).
 
 `say` receives one line per frame, pair and step.
+
+A task verb: it composes the estimators above and does none of its own. Each
+pair's RANSAC sampler is seeded from `seed` and the pair's frame indices. A
+`pairs` other than `:all` or `:lag_overlap` and a `projection` that is no
+closed-form forward map (a grid model without its `SplineProjection`) are an
+`ArgumentError` before any feature is detected. With `pairs = :all`, a view
+graph that is not connected once the pairs with fewer than `min_inliers`
+inliers are dropped (its frames have no common frame, [`ViewGraph`](@ref)) is
+an `ArgumentError` too; with `:lag_overlap`, the lag pairs alone must connect
+the frames, since their rotation averaging aims the overlap pairs.
 """
 function register_rotations(frames::AbstractVector, camera; projection = camera, raw_scale::Integer, circle, tone_percentile::Real, detector_margin_px::Real,
                             asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,

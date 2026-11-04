@@ -21,16 +21,8 @@ Steps 2 and 3 run on VisualGeometryToolkitCore's warping machinery — `image_wa
 `pointwise!`, KernelAbstractions kernels — on the backend that owns the frames: GPU arrays (`CuArray`) run on the device,
 host arrays run the same code on the CPU.
 
-## Installation
-
-PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the VisualGeometryToolkit
-stack it is built on is in General. Add CauRegistry once (Julia 1.12 or later), then the package and the two packages the
-examples also name:
-
-```julia-repl
-pkg> registry add General https://github.com/prittjam/CauRegistry.jl
-pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
-```
+This page continues from the [first example](index.md#A-first-example): its `camera`, `circle`, `frames` and `reg` are
+used below, and every block runs after it, in order, as the test suite runs them (the installation is the same).
 
 ## The inputs
 
@@ -39,18 +31,16 @@ pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
 - **Camera**: a VisualGeometryToolkitCore camera. A parametric `CameraModel` serves every step. A grid model
   (`CentralGenericModel`) back-projects in the registration but has no closed-form forward map: supply its
   `SplineProjection`, fitted by VisualGeometryToolkitEstimation's `fit_camera`, as `projection` to the registration and as
-  the camera of the sampling and the render.
+  the camera of the sampling and the render. The example's camera as a 40 × 40 grid, with its forward map:
 
 ```julia
-using VisualGeometryToolkitCore: CameraModel, CentralGenericModel, KannalaBrandt, SplineProjection, Circle, Point2, Rect, px,
-    estimate
+# Illustrative: VisualGeometryToolkitEstimation's fit_camera, one more package (pkg> add VisualGeometryToolkitEstimation)
+using VisualGeometryToolkitCore: CentralGenericModel, SplineProjection, Rect, estimate
 import VisualGeometryToolkitEstimation as VgtkEstimation
-using StaticArrays: SA
 
-model = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))
-camera = CentralGenericModel(model, (1000, 1000); grid_size = (40, 40))
-circle = Circle(Point2(500.0, 500.0), 480.0)          # the image circle, camera pixels (WholePlane() for a lens with none)
-projection = estimate(VgtkEstimation.fit_camera(SplineProjection, camera, Rect(0, 0, 1000, 1000) ∩ circle; tolerance = 1e-2))
+grid = CentralGenericModel(camera, (1000, 1000); grid_size = (40, 40))
+projection = estimate(VgtkEstimation.fit_camera(SplineProjection, grid, Rect(0, 0, 1000, 1000) ∩ circle; tolerance = 1e-2))
+# register_rotations(frames, grid; projection, …), then sample_frames(projection, …) and render_panorama(projection, …)
 ```
 
 - **Image circle**: `circle`, a Core `Circle` or `Ellipse` in camera pixels, the part of the sensor the lens illuminates, or
@@ -76,23 +66,20 @@ projection = estimate(VgtkEstimation.fit_camera(SplineProjection, camera, Rect(0
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
    robust (`bundle_loss`) pixel reprojection error through `projection` with NLLSsolver.
 
+The example's call states every setting: each is a keyword without a default, so a run states its whole configuration
+(`say = println` prints one line per frame, pair and step). The result, a [`Registration`](@ref), holds the rotations, the
+view graph, per-pair statistics, the tracks and the bundle's result:
+
 ```julia
 import VisualGeometryToolkitCore as VgtkCore
 
-reg = register_rotations(frames, camera; projection, raw_scale = 2, circle, tone_percentile = 99.5, detector_margin_px = 20.0,
-                         asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
-                         pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
-                         max_trials = 10_000, min_trials = 100,
-                         averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                         bundle_scale_multiple = 3.0, bundle_iterations = 3, bundle_max_iter = 100,
-                         bundle_ftol = 1e-10, bundle_xtol = 1e-10, say = println)
+reg.pairs[(1, 2)]               # matches, inliers, rms_px (the inliers' rms Sampson distance) and rotation_deg
+length(reg.tracks), reg.dropped # the tracks, and the inconsistent ones dropped
+reg.bundle.rms                  # the bundle's rms reprojection error, pixels
+reg.bundle.metadata.outcome     # how the bundle ended (RotationBundleMetadata)
 ```
 
-Every setting is a keyword without a default, so a run states its whole configuration. The result, a
-[`Registration`](@ref), holds the rotations, the view graph, per-pair statistics (`reg.pairs[(i, j)]`: matches, inliers, the rms
-Sampson distance in pixels and the rotation angle), the tracks and the bundle's result (`reg.bundle.rms` is its rms
-reprojection error in pixels). On the package's synthetic fisheye sweep (four frames 35° apart) the rotations come back within
-0.02° and the bundle's rms is below half a pixel.
+On the example's sweep the rotations come back well within 0.05° and the bundle's rms is below a pixel.
 
 ## 2. Sampling the frames at directions
 
@@ -104,7 +91,7 @@ bilinearly and evaluates the vignetting model continuously at the same point, `v
 ```julia
 saturated = [falses(size(f, 1), size(f, 2)) for f in frames]     # mask clipped pixels here
 D = fibonacci_directions(reg.rotations, 200_000; fov_deg = 89.0)
-S = sample_frames(projection, frames, reg.rotations, D; saturated, circle, raw_scale = 2, rim_margin_px = 12.0,
+S = sample_frames(camera, frames, reg.rotations, D; saturated, circle, raw_scale = 2, rim_margin_px = 12.0,
                   fov_deg = 89.0, vignetting = (u, f) -> 1.0)
 ```
 
@@ -121,8 +108,8 @@ frame that sees it — no gain, no seam, no blend. It renders the frames as they
 (the masks are for measurements — the sampling, the fit and the seam score — not for pictures):
 
 ```julia
-cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.05)   # columns longitude, rows tan(latitude)
-pano = render_panorama(projection, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
+cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.25)  # columns longitude, rows tan(latitude)
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
                        rim_margin_px = 12.0, fov_deg = 89.0)
 pano.image      # rows × columns × 3, NaN where no frame sees the pixel
 pano.owner      # the frame each pixel holds
@@ -137,8 +124,9 @@ view, aimed by a rotation:
 ```julia
 using VisualGeometryToolkitCore: Lens, Perspective, Stereographic
 using StaticArrays: SMatrix
+# a 1920 × 1080 rectilinear view, and a 'little planet': a stereographic view looking down
 rect = panorama_view(CameraModel(1000.0px, SA[960.0px, 540.0px]; lens = Lens(Perspective())), 1920, 1080)
-down = SMatrix{3, 3}(1.0, 0, 0, 0, 0, -1, 0, 1, 0)          # its axis along +y (down): a 'little planet'
+down = SMatrix{3, 3}(1.0, 0, 0, 0, 0, -1, 0, 1, 0)          # its axis along +y (down)
 planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(Stereographic())), 2000, 2000; rotation = down)
 ```
 
@@ -171,4 +159,14 @@ g = res.metadata.gains            # the frames' gains g_k (g₁ = 1): the gains 
 A sweep about one axis does not observe a 2-D V's tilt across it (a field that varies only with the ray's height is unchanged
 by a pure yaw, so L absorbs it): fit the tensor space only to frames with pitch and roll diversity. [`score_seams`](@ref)
 measures the result where it matters, at the seams of the unblended panorama: per raster pixel measured by two frames or more,
-the median log ratio of the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.
+the median log ratio of the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD:
+
+```julia
+seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, circle, raw_scale = 2,
+                    rim_margin_px = 12.0, fov_deg = 89.0, plane = 2, plane_offsets = nothing, chunk = 200_000)
+seams.rms, seams.mad              # the spread of the log ratio over the n pixels two frames or more measure
+corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, circle, raw_scale = 2,
+                            rim_margin_px = 12.0, fov_deg = 89.0)   # the panorama with V and the gains divided out
+```
+
+The example's frames carry no vignetting and one exposure, so here V comes back close to 1 and every gain close to 1.

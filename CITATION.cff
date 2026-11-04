@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: >-
+  If you use this package, please cite it as below, and the VisualGeometryToolkit
+  packages it is built on (https://visualgeometrytoolkit.github.io).
+type: software
+title: "PanoramaStitching.jl: Panoramas and Vignetting of a Rotating Camera"
+authors:
+  - family-names: Pritts
+    given-names: James
+repository-code: "https://github.com/VisualGeometryToolkit/PanoramaStitching.jl"
+url: "https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/"
+license: MIT
+keywords:
+  - julia
+  - computer vision
+  - panorama
+  - rotation averaging
+  - vignetting
