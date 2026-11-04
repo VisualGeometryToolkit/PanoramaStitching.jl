@@ -30,6 +30,11 @@
 
 ### New
 
+- **A precompile workload** (PrecompileTools, `src/precompile.jl`): `fit_vignetting` (radial and tensor, frame and channel
+  gains), `render_panorama`, `render_cube_map`, `score_seams` and `sample_frames` on two synthetic 40 × 40 frames are compiled
+  into the package image (CPU only, no data files, no output): a fresh process's first calls take 3.8 s instead of 10.0 s, and
+  the package precompiles in 16 s instead of 4 s. `refine_rotations` is not in it (an NLLSsolver solve evaluates into
+  NLLSsolver, which a precompiling package may not do). Every result is unchanged.
 - `fit_vignetting`'s `weights` keyword: `IntensityWeights()` (the default, I²: every earlier call and its numbers stand)
   or `SampsonWeights(; point_scale | point_covariance, log_intensity_scale = 0.01, solves = 1)`. A row is the implicit
   constraint `g = log I − log L(R_k·f(u)) − log V(u) − γ_k` on the measurement `(u, log I)`, through VisualGeometryToolkitCore's

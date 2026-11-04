@@ -45,6 +45,7 @@ import ForwardDiff
 import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
 import VisualGeometryToolkitFeatures as VgtkFeatures
+using PrecompileTools: @setup_workload, @compile_workload       # src/precompile.jl
 
 export register_rotations, Registration
 export ViewGraph, chain_tracks, refine_rotations, RotationBundleMetadata
@@ -63,5 +64,6 @@ include("registration.jl")
 include("panorama.jl")
 include("vignetting.jl")
 include("seams.jl")
+include("precompile.jl")             # the precompile workload: the entry points' native code, cached in the package image
 
 end # module PanoramaStitching
