@@ -79,6 +79,31 @@ end
     @test !any(back.seen)
 end
 
+@testitem "sample_frames: a saturated pixel that any plane's sample blends masks the direction" begin
+    # the planes are read at their own sample positions (a 2 × 2 Bayer binning's R and B at ±¼ px): a direction is a
+    # measurement only when none of the pixels ANY plane's bilinear value blends is saturated, not only the centre's four
+    using Test, LinearAlgebra, StaticArrays
+    using PanoramaStitching: sample_frames
+    using VisualGeometryToolkitCore: CameraModel, Lens, Perspective, px, WholePlane, backproject
+    cam = CameraModel(100.0px, SA[50.0px, 50.0px]; lens = Lens(Perspective()))
+    Hf = Wf = 50                                                                     # raw_scale 2: a 100 × 100 sensor
+    frame = ones(Float32, Hf, Wf, 3); sat = falses(Hf, Wf)
+    frame[25, 25, :] .= 1.0f6; sat[25, 25] = true                                    # clipped, its centre at (24.5, 24.5)
+    offsets = (SVector(0.25, 0.25), SVector(0.0, 0.0), SVector(-0.25, -0.25))
+    pts = vec([SVector(x, y) for x in 22.5:0.05:26.5, y in 22.5:0.05:26.5])          # frame COLMAP points around it
+    D = [normalize(SVector{3, Float64}(backproject(cam, 2 .* p))) for p in pts]
+    samples(o) = sample_frames(cam, [frame], [SMatrix{3, 3}(1.0I)], D; saturated = [sat], circle = WholePlane(), raw_scale = 2,
+                               rim_margin_px = 0.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0, plane_offsets = o)
+    for o in (nothing, offsets)
+        S = samples(o); seen = S.seen[:, 1]
+        @test count(seen) > length(pts) ÷ 4
+        @test all(c -> maximum(S.values[seen, 1, c]) < 1.001, 1:3)                  # no seen value blends the clipped pixel
+    end
+    # the centre's taps alone leave the points within 1 px of the clipped centre (per axis) unseen; the planes' ±¼ px reach more
+    S0, S1 = samples(nothing), samples(offsets)
+    @test all(S1.seen[:, 1] .<= S0.seen[:, 1]) && count(S1.seen) < count(S0.seen)
+end
+
 @testitem "register_rotations, sample_frames: a synthetic fisheye sweep" setup = [SyntheticSequence] begin
     using Test, LinearAlgebra, Statistics, StaticArrays
     using PanoramaStitching: register_rotations, sample_frames, fibonacci_directions

@@ -48,15 +48,14 @@ end
 _frame_region(circle, W, H, rim_margin_px) = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ _rim(circle, rim_margin_px)
 
 # Whether a frame sees a direction: its sensor point `u` is finite and in the region and its ray `f` within the field angle of
-# the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. A measurement (the sampling, the fit, the seam score)
-# also needs its saturation sample `w` (the saturated mask's bilinear sample at u) zero: no saturated pixel among the four the
-# value blends.
+# the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. A measurement (the sampling, the seam score) also
+# needs the saturated mask's bilinear sample zero at every plane's sample position: no saturated pixel among those any plane's
+# value blends (`sample_frames`).
 struct _Sees{R, T}
     region::R
     cosmax::T
 end
 @inline (s::_Sees)(u, f) = all(isfinite, u) && VgtkCore.Point2(u[1], u[2]) ∈ s.region && f[3] > s.cosmax * LinearAlgebra.norm(f)
-@inline (s::_Sees)(u, f, w) = s(u, f) && iszero(w)
 
 # The vignetting model where the frame sees the point, NaN elsewhere: the model is evaluated only at seen points (a grid's
 # back-projection, say, has no ray off its domain).
@@ -106,7 +105,8 @@ A frame sees a direction by [`render_panorama`](@ref)'s masks: the ray within
 `fov_deg` of the camera frame's z axis, the sensor point inside `circle` (a
 Core `Circle` or `Ellipse` in camera pixels, or `WholePlane()` when the lens
 has no image circle) less `rim_margin_px` and at least 2 px inside the sensor,
-and no `saturated` pixel among the four its value blends. `frames` are
+and no `saturated` pixel among those any plane's value blends (the four at
+each plane's own sample position). `frames` are
 `H × W × 3` linear images with `raw_scale` camera pixels per frame pixel,
 `saturated` their `H × W` masks; `plane_offsets` the planes' sample positions
 relative to the pixel centre, frame pixels (`nothing`: all at the centre; a
@@ -123,7 +123,7 @@ the frame sees the direction. The precision is the directions' element type.
 function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector, directions::AbstractArray{<:StaticVector{3}};
                        saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, vignetting,
                        plane_offsets = nothing)
-    offsets = _plane_offsets(plane_offsets)
+    offsets = _plane_offsets(plane_offsets); sat_offsets = unique(offsets)   # the planes' distinct sample positions
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("sample_frames: frames, rotations and saturated disagree"))
     Hf, Wf, C = size(frames[1])
@@ -142,8 +142,12 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
         VgtkCore.pointwise!(d -> Rt * d, F, D)
         VgtkCore.pointwise!(fwd, U, F)
         Uf .= U ./ T(s)                                                   # the frame's COLMAP pixels
-        VgtkCore.image_sample!(w, saturated[k], Uf)                       # the tap converts the mask: no float copy of it
-        VgtkCore.pointwise!(sees, ok, U, F, w)
+        VgtkCore.pointwise!(sees, ok, U, F)
+        for o in sat_offsets                                              # unsaturated at every plane's taps
+            Uc .= Uf .- Ref(SVector{2, T}(o))
+            VgtkCore.image_sample!(w, saturated[k], Uc)                   # the tap converts the mask: no float copy of it
+            ok .&= iszero.(w)
+        end
         VgtkCore.pointwise!(_Vignetting(vignetting, T), view(vig, :, k), ok, U, F)
         for c in 1:3
             v = view(values, :, k, c)
