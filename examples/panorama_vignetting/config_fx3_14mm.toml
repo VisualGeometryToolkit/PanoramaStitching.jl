@@ -1,0 +1,98 @@
+# Config of record: the Sigma 14 mm on the Sony FX3, an indoor sweep (11 frames in two rows: pitch ≈ 0° and ≈ +14°, yaw over
+# 360°), 2026-10-29. Every input path is relative to the data root $VGTK_DATA_ROOT (the author's: ~/data/rc-cvpr2027).
+# Run: julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_14mm.toml
+
+name = "fx3_14mm_indoor"
+output = "out/fx3_14mm_indoor"                     # relative to this file's folder (gitignored); the decode cache lives in it
+
+[inputs]
+raw_dir = "panorama_good/14mm"                     # the RAW frames (*.ARW), in capture order by name
+raw_extension = ".ARW"
+# The lens: a Kannala–Brandt fit (night stars), a vgio/cameras/v4 store. The ORIGINAL is
+# geometric_accuracy/results/logs/night_stars/fx3-14mm/kb_fit/lens.json (vgio/cameras/v3, never modified); this is its
+# migration, produced once by VisualGeometryToolkitIO's vgio_migrate (README, "Inputs").
+lens = "panorama_good/derived/fx3-14mm-kb_fit.cameras-v4.json"
+lens_kind = "cameras"                              # "cameras": a parametric CameraModel store; "grid": a CentralGenericModel
+lens_camera = "cam"                                # the camera's name in the store
+# The image circle (x, y, r), camera pixels: on this sensor the frames go dark past ρ ≈ 1700 px (the sensor's corners lie
+# outside the lens's image circle). Measured from the 11 frames (2026-11-04): per 22.5° azimuth the radius where log G falls
+# through the midpoint between its 1300–1500 px plateau and its corner floor (1670–1710 px), then a circle fitted to those
+# points. A whole-sensor fit (circle "none") put V at 0.07–0.2 of its plateau in the corners and amplified the dark corners'
+# noise in the corrected panorama.
+circle = [2131.1, 1407.9, 1680.1]
+
+[compute]
+device = "cuda"                                    # "cuda" or "cpu": the same kernels (log V agrees to 1e-6)
+
+[decode]
+mode = "bin2"                                      # Features' load_raw: 2 × 2 Bayer quads (R, mean G, B), raw_scale 2
+gain = 1.0                                         # linear values, 1.0 = the white level
+
+[registration]                                     # register_rotations (every keyword stated)
+tone_percentile = 99.5
+detector_margin_px = 30.0
+asift_tilts = "imas25"                             # nothing: Features' IMAS-25 tilt set
+max_detections = 2048
+descriptor = "b"
+matcher = "b128"
+min_score = 0.0
+pairs = "all"
+max_lag = 1
+overlap_deg = 120.0
+min_inliers = 25                                   # 40 left frames 1 and 7 a component of their own (2026-11-04)
+seed = 1
+scoring_threshold_px = 5.0                         # MsacScoring on RotationProblem: RC's 5 px half-width
+max_trials = 10000
+min_trials = 100
+averaging_loss = "huber"
+bundle_loss = "cauchy"
+bundle_scale_multiple = 3.0
+bundle_iterations = 3
+bundle_max_iter = 100
+bundle_ftol = 1.0e-10
+bundle_xtol = 1.0e-10
+
+[domain]                                           # the pixels a measurement may use (fit and seam score)
+rim_margin_px = 120.0                              # the circle's soft edge (the falloff from ρ ≈ 1520 px to the 1680 px midpoint)
+fov_deg = 89.0                                     # rays within 89° of the optical axis
+plane = 2                                          # the GREEN plane (the quad's two greens, at the quad centre)
+
+[vignetting]
+# "radial" or "tensor". This set has pitch diversity (two rows), so the 2-D tensor V is also fitted (compare_models) to test
+# whether its tilt is observed here. It is not (2026-11-04, summary.md): the free 2-D V put its maximum 522 px from the
+# principal point and was 32 % asymmetric, against the radial V's 8.8 %, and it left the seams WORSE than the radial V
+# (1.4826·MAD 0.163 against 0.107; uncorrected 0.183) although it fitted the rows slightly better (weighted rms 0.168 against
+# 0.170): the extra freedom went into scene and lighting structure, not into V. Two rows 14° apart are not enough pitch
+# diversity; the radial model is the one these data support.
+model = "radial"
+radial_center = "circle_center"                    # "principal_point" (the pixel of the ray (0, 0, 1)), "circle_center" or [x, y]
+radial_radius = "domain"                           # "domain": the largest distance from the centre to a domain pixel
+radial_controls = 16
+tensor_box = "domain"                              # "domain": the domain's bounding box
+tensor_controls = [16, 12]                         # the sensor's 3:2 aspect
+compare_models = ["tensor"]                        # also fitted and reported, not used for the renders
+chart_spacing_deg = 1.0                            # L's control spacing on the azimuthal-equidistant chart
+penalty_order = 3                                  # Δ³ on L along both chart axes
+penalty_weight = 0.01                              # λ, in units of one row of mean I² weight (the self-test's choice)
+vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's controls, relative to the V block's mean diagonal
+solver = "cg"                                      # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
+cg_tolerance = 1.0e-9                              # the CG's relative residual
+cg_max_iter = 40000                                # the CG's budget
+
+[seams]                                            # score_seams, before and after the correction
+projection = "equirectangular"
+deg_per_pixel = 0.1
+extent = "coverage"                                # the frames' covered (lon, lat) box in the up frame
+chunk = 200000                                     # pixels per sampling chunk (GPU memory is shared)
+
+[render]
+up = "level"                                       # "level": the vertical orthogonal to every frame's image x axis (a roll-free
+                                                   # sweep); "first_frame": the first frame's camera frame
+exposure_percentile = 99.5                         # exposure = 1 / this percentile of the CORRECTED cylindrical, applied to all
+white_balance = "daylight"                         # for viewing only: LibRaw's daylight multipliers (G = 1); "none" = camera raw
+cylindrical_deg_per_pixel = 0.08
+cylindrical_max_lat_deg = 60.0                     # the cylindrical's rows are tan φ: capped at ±60° (the coverage is −47 … +58°)
+equal_area_deg_per_pixel = 0.1
+extent = "coverage"
+rectilinear_size = [1920, 1080]
+rectilinear_hfov_deg = 100.0

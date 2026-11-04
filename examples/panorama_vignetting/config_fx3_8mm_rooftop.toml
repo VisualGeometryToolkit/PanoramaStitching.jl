@@ -1,0 +1,92 @@
+# Config of record: the 8 mm fisheye on the Sony FX3, the rooftop sweep (10 frames, 1/1600 s, f/5.6, ISO 100, every frame the
+# same exposure; yaw −54° … +47°, pitch −5° … +27°). Every input path is relative to the data root $VGTK_DATA_ROOT (the
+# author's: ~/data/rc-cvpr2027).
+# Run: julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_8mm_rooftop.toml
+
+name = "fx3_8mm_rooftop"
+output = "out/fx3_8mm_rooftop"                     # relative to this file's folder (gitignored); the decode cache lives in it
+
+[inputs]
+raw_dir = "vignetting/data/sony_fisheye"           # the RAW frames (*.ARW), in capture order by name
+raw_extension = ".ARW"
+lens = "vignetting/data/ref_grid.json"             # a generic grid lens (vgio/generic_camera/v2, 105 × 75 CentralGenericModel)
+lens_kind = "grid"                                 # its forward map is a SplineProjection fitted to it over the circle
+spline_tolerance_px = 0.01                         # fit_camera(SplineProjection, grid, region; tolerance)
+lens_camera = "none"                               # (a grid file holds one camera)
+# The image circle (x, y, r), camera pixels: RC's registration record (vignetting/results/logs/registration/rotations.json,
+# "circle").
+circle = [2144.50, 1436.69, 1072.64]
+
+[compute]
+device = "cuda"                                    # "cuda" or "cpu": the same kernels (log V agrees to 1e-6)
+
+[decode]
+mode = "bin2"                                      # Features' load_raw: 2 × 2 Bayer quads (R, mean G, B), raw_scale 2
+gain = 1.0                                         # linear values, 1.0 = the white level
+
+[registration]                                     # register_rotations (every keyword stated); the settings that worked on
+tone_percentile = 99.5                             # the 14 mm set (2026-11-04)
+detector_margin_px = 30.0
+asift_tilts = "imas25"                             # nothing: Features' IMAS-25 tilt set
+max_detections = 2048
+descriptor = "b"
+matcher = "b128"
+min_score = 0.0
+pairs = "all"
+max_lag = 1
+overlap_deg = 120.0
+min_inliers = 25
+seed = 1
+scoring_threshold_px = 5.0                         # MsacScoring on RotationProblem: RC's 5 px half-width
+max_trials = 10000
+min_trials = 100
+averaging_loss = "huber"
+bundle_loss = "cauchy"
+bundle_scale_multiple = 3.0
+bundle_iterations = 3
+bundle_max_iter = 100
+bundle_ftol = 1.0e-10
+bundle_xtol = 1.0e-10
+
+[domain]                                           # the pixels a measurement may use (fit and seam score)
+rim_margin_px = 24.0                               # the circle less 24 px: θ ≤ 68.3°
+fov_deg = 89.0
+plane = 2                                          # the GREEN plane (the quad's two greens, at the quad centre)
+
+[vignetting]
+# RADIAL, because a mostly-yaw sweep cannot observe a free 2-D V's vertical tilt: a field exp(α·f_y) is unchanged by a pure
+# yaw, so the scene absorbs it. Measured on this rooftop set (2026-11-04): the 2-D fit moved V's maximum ~460 px off-centre
+# (down and right) and made V 37–54 % asymmetric at ρ = 600–800 px, the mode ∝ ray_y carrying 4–5× less information than
+# ray_x. Use "tensor" only for sets with pitch and roll diversity.
+model = "radial"
+radial_center = "circle_center"                    # "principal_point", "circle_center" or [x, y]
+radial_radius = "domain"                           # "domain": the largest distance from the centre to a domain pixel
+radial_controls = 16
+tensor_box = "domain"
+tensor_controls = [16, 16]
+compare_models = []
+chart_spacing_deg = 1.0                            # L's control spacing on the azimuthal-equidistant chart
+penalty_order = 3                                  # Δ³ on L along both chart axes
+penalty_weight = 0.01                              # λ, in units of one row of mean I² weight (the self-test's choice)
+vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's controls, relative to the V block's mean diagonal
+solver = "cg"                                      # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
+cg_tolerance = 1.0e-9                              # the CG's relative residual
+cg_max_iter = 40000                                # the CG's budget
+
+[seams]                                            # score_seams, before and after the correction
+projection = "equirectangular"
+deg_per_pixel = 0.1
+extent = "coverage"
+chunk = 200000
+
+[render]
+up = "level"                                       # "level": the vertical orthogonal to every frame's image x axis (a roll-free
+                                                   # sweep); "first_frame": the first frame's camera frame
+exposure_percentile = 99.5                         # exposure = 1 / this percentile of the CORRECTED cylindrical, applied to all
+white_balance = "daylight"                         # for viewing only: LibRaw's daylight multipliers (G = 1); "none" = camera raw
+cylindrical_deg_per_pixel = 0.06
+cylindrical_max_lat_deg = 55.0                     # the cylindrical's rows are tan φ: capped at ±55° (the fisheye covers ±85°)
+equal_area_deg_per_pixel = 0.08
+extent = "coverage"
+rectilinear_size = [1920, 1080]
+rectilinear_hfov_deg = 110.0
