@@ -36,6 +36,11 @@ host).
   Atomix), solved by `ConjugateGradient(; tolerance, max_iter)` on the device or `SparseCholesky()` on the host
   (SparseArrays). The estimate is a `SplineVignetting`, callable as the render's
   `vignetting`; `log_vignetting`, `VignettingMetadata`.
+- `fit_vignetting`'s required keyword `frame_gains::Bool` (no default): with `true` every frame has its own exposure gain,
+  `I_k = g_k·L·V`, K − 1 more unknowns with the gauge `g₁ = 1`, returned as `VignettingMetadata.gains` (all 1 with `false`).
+  A fixed exposure under changing light needs it: on the rooftop sweep the gains reached +18 % and V at the domain's edge
+  came out 7 % too dark without them. `score_seams` and `render_panorama` take an optional `gains` (one per frame) and divide
+  each frame by `g_k·V`; the example's configs state the key.
 - `score_seams(camera, frames, rotations, view; …)`: per raster pixel measured by two frames or more, the median log ratio of
   the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.
 - `sample_frames`, `render_panorama` (and so `score_seams`) move the camera's forward map to the frames' backend (Adapt): a

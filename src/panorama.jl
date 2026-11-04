@@ -87,7 +87,7 @@ end
 
 """
     render_panorama(camera, frames, rotations, view; vignetting, circle, raw_scale, rim_margin_px, fov_deg,
-                    plane_offsets = nothing) -> (; image, owner, coverage, extent)
+                    plane_offsets = nothing, gains = nothing) -> (; image, owner, coverage, extent)
 
 The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the REVERSE warp, Core's
 `image_warp`/`image_warp!`: every pixel's ray `d` (the view's pixel → ray map) is rotated into each frame `k`
@@ -96,7 +96,8 @@ The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the R
 `fit_camera(SplineProjection, grid, region; tolerance)`), and sampled there bilinearly — one fused map
 `camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
 (camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
-ray's direction (a field angle) reads `f`. No exposure gain, no seam, no blend: the frames are taken as one exposure, and
+ray's direction (a field angle) reads `f` — and by the frame's exposure gain `gains[k]` when `gains` is given (one per
+frame: [`fit_vignetting`](@ref)'s `metadata.gains`; `nothing`, the frames taken as one exposure). No seam, no blend, and
 each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.
 
 A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside `circle`
@@ -120,10 +121,11 @@ Returns `image` (rows × columns × 3, NaN where no frame sees the pixel), `owne
 none), `coverage` (how many frames see each pixel), all on the frames' backend, and the view's `extent`.
 """
 function render_panorama(camera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView; vignetting, circle,
-                         raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane_offsets = nothing)
+                         raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane_offsets = nothing, gains = nothing)
     offsets = _plane_offsets(plane_offsets)
     K = length(frames)
     length(rotations) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(rotations)) rotations"))
+    gains === nothing || length(gains) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(gains)) gains"))
     Hf, Wf, C = size(frames[1])
     C == 3 || throw(DimensionMismatch("render_panorama: frames are H × W × 3, got $(size(frames[1]))"))
     T = float(eltype(frames[1])); s = raw_scale
@@ -147,6 +149,7 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
         VgtkCore.pointwise!(_RayAt{Float64}(fk), F, idx)
         VgtkCore.pointwise!(sees, ok, U, F)
         VgtkCore.pointwise!(_Vignetting(vignetting, T), V, ok, U, F)
+        gains === nothing || (V .*= T(gains[k]))                           # the frame's exposure divided out with V
         for c in 1:3
             # a plane whose samples sit at o_c (frame pixels) is read at the frame point less o_c
             bmc = iszero(offsets[c]) ? bm : VgtkCore.image_warp(Float64, Translation(-offsets[c]) ∘ scale ∘ fwd ∘ Rt ∘ view.rays, rect)

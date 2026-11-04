@@ -149,16 +149,19 @@ interpolation of the frames: `log I_k(p) = log L(R_k·f(p)) + log V(u(p))`, the 
 back-projection (computed once: every frame shares the pixel grid), the scene `log L` a cubic B-spline over an
 [`AzimuthalChart`](@ref) of the covered sphere with a difference penalty, and `log V` a cubic B-spline in the distance from a
 centre ([`RadialVignetting`](@ref)) or over the sensor ([`TensorVignetting`](@ref)). The least squares is weighted by I²;
-its gauge is mean log V = 0 over the domain. The normal equations are accumulated by atomic scatter-add on the frames'
-backend (GPU arrays on the device) and solved by conjugate gradients there, or by a host Cholesky factorization:
+its gauge is mean log V = 0 over the domain. With `frame_gains = true` every frame also has its own exposure gain
+(`I_k = g_k·L·V`, gauge `g₁ = 1`): a fixed exposure under changing light needs it, or V absorbs the frames' differences.
+The normal equations are accumulated by atomic scatter-add on the frames' backend (GPU arrays on the device) and solved by
+conjugate gradients there, or by a host Cholesky factorization:
 
 ```julia
 space = RadialVignetting(SA[500.0, 500.0], 490.0, 16)          # centre, radius (camera pixels), controls
 res = fit_vignetting(space, camera, frames, reg.rotations; saturated, circle, raw_scale = 2, rim_margin_px = 12.0,
                      fov_deg = 89.0, plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3,
-                     penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6,
+                     penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, frame_gains = true,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
 V = VgtkCore.estimate(res)        # a SplineVignetting: V(u, f), the vignetting keyword of render_panorama
+g = res.metadata.gains            # the frames' gains g_k (g₁ = 1): the gains keyword of score_seams and render_panorama
 ```
 
 A sweep about one axis does not observe a 2-D V's tilt across it (a field that varies only with the ray's height is unchanged

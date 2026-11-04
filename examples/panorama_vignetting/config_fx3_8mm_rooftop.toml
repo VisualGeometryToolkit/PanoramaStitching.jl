@@ -69,7 +69,12 @@ chart_spacing_deg = 1.0                            # L's control spacing on the 
 penalty_order = 3                                  # Δ³ on L along both chart axes
 penalty_weight = 0.01                              # λ, in units of one row of mean I² weight (the self-test's choice)
 vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's controls, relative to the V block's mean diagonal
-solver = "cg"                                      # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
+# Per-frame exposure gains (g₁ = 1): ON. The exposure is fixed (1/1600 s, f/5.6, ISO 100), but the daylight changed during the
+# sweep: measured 2026-11-04 from the radial fit without gains, the frames' median log ratios at 400k directions gave
+# g = exp(0, .002, .093, .119, .147, .165, .161, .162, .159, .114) (pairwise consistency rms 0.003; RC's cell fit of record had
+# found the same). Without them V absorbs the differences: 7 % too dark at ρ = 1000 px, residual 1.4826·MAD 0.139 against 0.112.
+frame_gains = true
+solver = "cg"                                    # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
 cg_tolerance = 1.0e-9                              # the CG's relative residual
 cg_max_iter = 40000                                # the CG's budget
 

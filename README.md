@@ -18,7 +18,8 @@ fisheyes past 90° included, on the [VisualGeometryToolkit](https://visualgeomet
   equal-area, Mercator, or a virtual camera), unblended; `render_cube_map` for a cube map.
 - `fit_vignetting(space, camera, frames, rotations; …)` — the camera's vignetting from the frames alone: every pixel of every
   frame at its own pixel centre is the scene's radiance times V, the scene a B-spline on the sphere fitted with V (radial or
-  2-D), the normal equations on the GPU. `score_seams` measures the seams a vignetting leaves.
+  2-D), optionally with a per-frame exposure gain (`frame_gains`), the normal equations on the GPU. `score_seams` measures
+  the seams a vignetting (and the gains) leave.
 
 `examples/panorama_vignetting/` runs the chain — RAW decode, registration, the fit, the seam scores, corrected and uncorrected
 panoramas — from a config of record (README there).
@@ -70,14 +71,15 @@ S = sample_frames(camera, frames, reg.rotations, fibonacci_directions(reg.rotati
 # 3. the vignetting from the frames alone (interpolation free), and the seams it leaves
 res = fit_vignetting(RadialVignetting(SA[500.0, 500.0], 490.0, 16), camera, frames, reg.rotations; saturated, kw...,
                      plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
-                     vignetting_penalty_weight = 1.0e-6, solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))
-V = VgtkCore.estimate(res)
+                     vignetting_penalty_weight = 1.0e-6, frame_gains = true,   # per-frame exposure gains, g₁ = 1
+                     solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))
+V = VgtkCore.estimate(res); g = res.metadata.gains
 cyl = panorama_view(Cylindrical(), (-90.0, 90.0, -45.0, 45.0), 0.1)
-seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, saturated, kw..., plane = 2, plane_offsets = nothing,
-                    chunk = 200_000)
+seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, kw..., plane = 2,
+                    plane_offsets = nothing, chunk = 200_000)
 
-# 4. a cylindrical panorama, 0.1° per pixel, the vignetting divided out
-pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, kw...)
+# 4. a cylindrical panorama, 0.1° per pixel, the vignetting and the frames' gains divided out
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, kw...)
 ```
 
 `pano.image` is the panorama (rows from the top, columns the longitude, NaN where no frame sees the pixel), `pano.owner` the

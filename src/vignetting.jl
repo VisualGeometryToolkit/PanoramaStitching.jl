@@ -229,11 +229,14 @@ spread of log I over the rows (`residual_rms` unweighted, `residual_mad`
 1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the result's
 `rms` is the I²-weighted one), `relative_residual` (the solve's ‖r‖/‖b‖),
 `solver`, `n_pixels` (the domain's pixels), `n_active` (scene controls with
-data) and `seconds` (the stages' wall times).
+data), `gains` (the frames' exposure gains `g_k` of `I_k = g_k·L·V`, one per
+frame, `g₁ = 1`; all 1 when the fit was asked for none, `frame_gains = false`)
+and `seconds` (the stages' wall times).
 """
 struct VignettingMetadata{T <: NamedTuple}
     chart::AzimuthalChart
     scene::Vector{Float64}
+    gains::Vector{Float64}
     residual_rms::Float64
     residual_mad::Float64
     residual_quantiles::NTuple{3, Float64}
@@ -298,30 +301,48 @@ end
 
 # One frame's rows: per domain pixel p (frame value plane[j] at the linear index j = lin[p] + offset), when unsaturated and
 # positive, the weight w = I²/scale and y = log I; scatter the L–L stencil (7 × 7 per control, both triangles), the L–V block
-# and b_L; the per-pixel sums W_p, Y_p (one thread per pixel per launch: no race).
-@kernel function _accumulate_kernel!(S, BV, bL, Wp, Yp, @Const(frame), @Const(sat), @Const(lin), @Const(rays), @Const(upix),
-                                     space, R, ch::AzimuthalChart, inv_scale::Float64, plane_offset::Int)
+# and b_L; the per-pixel sums W_p, Y_p and this frame's own Wk_p, Yk_p (one thread per pixel per launch: no race). With the
+# frames' gains (`gain_col` > 0, this frame's gain column) also the L–gain column BG[:, gain_col].
+@kernel function _accumulate_kernel!(S, BV, bL, Wp, Yp, Wk, Yk, BG, @Const(frame), @Const(sat), @Const(lin), @Const(rays),
+                                     @Const(upix), space, R, ch::AzimuthalChart, inv_scale::Float64, plane_offset::Int, gain_col::Int)
     p = @index(Global)
     @inbounds begin
         j = lin[p]
         I = Float64(frame[j + plane_offset])
+        Wk[p] = 0.0; Yk[p] = 0.0
         if !sat[j] && I > 0
             ia, ib, wa, wb = _chart_span(ch, R * rays[p])
             w = I * I * inv_scale
             y = log(I)
             vidx, vw = _vbasis(space, upix[p])
             Wp[p] += w; Yp[p] += w * y
+            Wk[p] = w; Yk[p] = w * y
             n = ch.n
             for jb in 0:3, ja in 0:3
                 Bq = wa[ja + 1] * wb[jb + 1]
                 q = _chart_index(n, ia + ja + 1, ib + jb + 1)
                 Atomix.@atomic bL[q] += w * Bq * y
+                gain_col > 0 && (Atomix.@atomic BG[q, gain_col] += w * Bq)
                 for m in 1:length(vidx)
                     Atomix.@atomic BV[q, vidx[m]] += w * Bq * vw[m]
                 end
                 for lb in 0:3, la in 0:3
                     Atomix.@atomic S[q, (lb - jb + 3) * 7 + (la - ja + 3) + 1] += w * Bq * wa[la + 1] * wb[lb + 1]
                 end
+            end
+        end
+    end
+end
+
+# One frame's gain column of the V block: GV[:, col] = Σ_p Wk_p · b(u_p), Wk this frame's weights.
+@kernel function _gain_vblock_kernel!(GV, @Const(Wk), @Const(upix), space, col::Int)
+    p = @index(Global)
+    @inbounds begin
+        W = Wk[p]
+        if W > 0
+            idx, w = _vbasis(space, upix[p])
+            for m in 1:length(idx)
+                Atomix.@atomic GV[idx[m], col] += W * w[m]
             end
         end
     end
@@ -405,9 +426,9 @@ end
     end
 end
 
-# One frame's residuals of log I (NaN where the row is not an observation) and their weights.
+# One frame's residuals of log I (NaN where the row is not an observation; `log_gain` the frame's γ_k) and their weights.
 @kernel function _residual_kernel!(res, wout, @Const(frame), @Const(sat), @Const(lin), @Const(rays), @Const(upix), @Const(cL),
-                                   vignetting, R, ch::AzimuthalChart, plane_offset::Int)
+                                   vignetting, R, ch::AzimuthalChart, plane_offset::Int, log_gain::Float64)
     p = @index(Global)
     @inbounds begin
         j = lin[p]
@@ -418,7 +439,7 @@ end
             for jb in 0:3, ja in 0:3
                 lL += wa[ja + 1] * wb[jb + 1] * cL[_chart_index(ch.n, ia + ja + 1, ib + jb + 1)]
             end
-            res[p] = Float32(log(I) - lL - log_vignetting(vignetting, upix[p])); wout[p] = Float32(I * I)
+            res[p] = Float32(log(I) - lL - log_vignetting(vignetting, upix[p]) - log_gain); wout[p] = Float32(I * I)
         else
             res[p] = NaN32; wout[p] = 0.0f0
         end
@@ -472,7 +493,7 @@ end
 
 """
     fit_vignetting(space, camera, frames, rotations; saturated, circle, raw_scale, rim_margin_px, fov_deg, plane,
-                   plane_offsets, chart_spacing_deg, penalty_order, penalty_weight, vignetting_penalty_weight, solver)
+                   plane_offsets, chart_spacing_deg, penalty_order, penalty_weight, vignetting_penalty_weight, frame_gains, solver)
         -> FitResult{SplineVignetting, VignettingMetadata}
 
 The vignetting V of a camera that only rotated, from its frames alone (no flat
@@ -508,6 +529,14 @@ sphere whose values are fitted with V.
   `vignetting_penalty_weight` relative to the V block's mean diagonal (it fixes
   the controls the domain does not reach), and the gauge mean log V = 0 over
   the domain's pixels.
+- The frames' exposure: with `frame_gains = true`, every frame has its own gain,
+  `log I_k = log g_k + log L(d) + log V(u)`, with K − 1 unknowns `log g_k` and
+  the gauge `g₁ = 1` (L carries the first frame's exposure). Use it when the
+  exposure or the light can change between frames: a fixed shutter under a
+  drifting sky changes every frame's level, and the fit then puts the
+  difference into V — on the rooftop sweep the gains reached +18 % and V at the
+  domain's edge came out 7 % too dark without them. With `false` every frame
+  is taken at one exposure (`g_k = 1`). Required, no default.
 - The solve: `solver`, a [`ConjugateGradient`](@ref) (Jacobi-preconditioned, on
   the frames' backend) or a [`SparseCholesky`](@ref) (the same system assembled
   sparse and factored on the host).
@@ -520,12 +549,14 @@ Returns a `FitResult` whose estimate is the [`SplineVignetting`](@ref) (callable
 `v(u, f)`, the vignetting keyword of [`render_panorama`](@ref) and
 [`sample_frames`](@ref)), `retcode` `:converged` or `:max_iterations` (CG) or
 `:solved` (Cholesky), `iterations` the CG's (0 for Cholesky), `rms` the
-I²-weighted rms of the log residual over `n` rows, and [`VignettingMetadata`](@ref).
+I²-weighted rms of the log residual over `n` rows, and [`VignettingMetadata`](@ref)
+(its `gains`, the frames' `g_k`: the `gains` keyword of [`score_seams`](@ref) and
+[`render_panorama`](@ref)).
 """
 function fit_vignetting(space::Union{RadialVignetting, TensorVignetting}, camera, frames::AbstractVector, rotations::AbstractVector;
                         saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane::Integer,
                         plane_offsets, chart_spacing_deg::Real, penalty_order::Integer, penalty_weight::Real,
-                        vignetting_penalty_weight::Real, solver::Union{ConjugateGradient, SparseCholesky})
+                        vignetting_penalty_weight::Real, frame_gains::Bool, solver::Union{ConjugateGradient, SparseCholesky})
     penalty_order in (2, 3) || throw(ArgumentError("fit_vignetting: penalty_order must be 2 or 3, got $penalty_order"))
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("fit_vignetting: frames, rotations and saturated disagree"))
@@ -575,10 +606,19 @@ function fit_vignetting(space::Union{RadialVignetting, TensorVignetting}, camera
     t0 = time_ns()
     nV = _n_coefficients(space)
     S = _zeros(be, Float64, nL, 49); BV = _zeros(be, Float64, nL, nV); bL = _zeros(be, Float64, nL)
-    Wp = _zeros(be, Float64, P); Yp = _zeros(be, Float64, P)
-    acc! = _accumulate_kernel!(be, 256)
+    Wp = _zeros(be, Float64, P); Yp = _zeros(be, Float64, P); Wk = _zeros(be, Float64, P); Yk = _zeros(be, Float64, P)
+    # the frames' gains: frame k ≥ 2 has the gain column k − 1 (g₁ = 1, the gauge); its L, V and diagonal blocks and b
+    nG = frame_gains ? K - 1 : 0
+    BG = _zeros(be, Float64, nL, max(nG, 1)); GVd = _zeros(be, Float64, nV, max(nG, 1)); Gdiag = zeros(nG); bG = zeros(nG)
+    acc! = _accumulate_kernel!(be, 256); gvb! = _gain_vblock_kernel!(be, 256)
     for k in 1:K
-        acc!(S, BV, bL, Wp, Yp, frames[k], saturated[k], lin, rays, upix, space, Rs[k], ch, inv_scale, poff; ndrange = P)
+        col = frame_gains && k >= 2 ? k - 1 : 0
+        acc!(S, BV, bL, Wp, Yp, Wk, Yk, BG, frames[k], saturated[k], lin, rays, upix, space, Rs[k], ch, inv_scale, poff, col; ndrange = P)
+        if col > 0
+            gvb!(GVd, Wk, upix, space, col; ndrange = P)
+            KA.synchronize(be)
+            Gdiag[col] = sum(Wk); bG[col] = sum(Yk)
+        end
     end
     seconds[:accumulate] = _elapsed(be, t0)
     t0 = time_ns()
@@ -592,11 +632,19 @@ function fit_vignetting(space::Union{RadialVignetting, TensorVignetting}, camera
     _penalty_kernel!(be, 256)(S, _upload(be, active), Float64(penalty_weight), ch.n, Int(penalty_order); ndrange = nL)
     seconds[:penalty] = _elapsed(be, t0)
 
-    # the gauge mean log V = 0: V = Z·z, Z the null space of gᵀ
-    Z = LinearAlgebra.nullspace(reshape(g, 1, :)); m = size(Z, 2)
+    # the gauge mean log V = 0: V = Z·z, Z the null space of gᵀ. The small block of the system is V's m coefficients then the
+    # frames' nG log gains (none without frame_gains): BVz its L columns, AVVz its own block, bVz its right-hand side.
+    Z = LinearAlgebra.nullspace(reshape(g, 1, :)); mV = size(Z, 2)
     Zd = _upload(be, Z)
     BVz = BV * Zd
     AVVz = Z' * AVV * Z; bVz = Z' * bV
+    if nG > 0
+        GVz = Z' * Array(GVd)
+        BVz = hcat(BVz, BG)
+        AVVz = [AVVz GVz; GVz' LinearAlgebra.diagm(Gdiag)]
+        bVz = vcat(bVz, bG)
+    end
+    m = mV + nG
     rhs = vcat(bL, _upload(be, bVz))
 
     t0 = time_ns()
@@ -625,14 +673,15 @@ function fit_vignetting(space::Union{RadialVignetting, TensorVignetting}, camera
     seconds[:solve] = _elapsed(be, t0)
     xh = Array(x)
     cL = x[1:nL]
-    v = SplineVignetting(space, SVector{nV, Float64}(Z * xh[(nL + 1):end]))
+    v = SplineVignetting(space, SVector{nV, Float64}(Z * xh[(nL + 1):(nL + mV)]))
+    log_gains = vcat(0.0, frame_gains ? xh[(nL + mV + 1):end] : zeros(K - 1))
 
     # the residuals
     t0 = time_ns()
     res = _zeros(be, Float32, P); ww = _zeros(be, Float32, P); R_all = Float32[]; swr = 0.0; sw = 0.0
     rk! = _residual_kernel!(be, 256)
     for k in 1:K
-        rk!(res, ww, frames[k], saturated[k], lin, rays, upix, cL, v, Rs[k], ch, poff; ndrange = P)
+        rk!(res, ww, frames[k], saturated[k], lin, rays, upix, cL, v, Rs[k], ch, poff, log_gains[k]; ndrange = P)
         KA.synchronize(be)
         r = Array(res); w = Array(ww); ok = .!isnan.(r)
         append!(R_all, r[ok]); swr += sum(Float64.(w[ok]) .* Float64.(r[ok]) .^ 2); sw += sum(Float64, w[ok])
@@ -642,7 +691,7 @@ function fit_vignetting(space::Union{RadialVignetting, TensorVignetting}, camera
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = xh[1:nL]; scene[.!active] .= NaN
-    meta = VignettingMetadata(ch, scene, sqrt(Statistics.mean(abs2, Float64.(R_all))), 1.4826 * Statistics.median(abs.(R_all .- med)),
+    meta = VignettingMetadata(ch, scene, exp.(log_gains), sqrt(Statistics.mean(abs2, Float64.(R_all))), 1.4826 * Statistics.median(abs.(R_all .- med)),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               P, count(active),
                               NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))

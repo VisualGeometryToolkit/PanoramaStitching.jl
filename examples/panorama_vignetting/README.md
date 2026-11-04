@@ -76,6 +76,10 @@ Under `$VGTK_DATA_ROOT`:
    over the sensor. The least squares is weighted by I² (the log of a photon-limited value), its normal equations are
    accumulated on the GPU, and it is solved by conjugate gradients there. V's scale is not observable (L can take any
    factor), so V is reported with mean log V = 0 over the domain — no special point is pinned.
+   *The frames' exposure gains* (`vignetting.frame_gains`, required): with `true` each frame has its own gain g_k
+   (`I_k = g_k·L·V`, g₁ = 1), divided out by the seam score and the corrected renders as well. Both configs fit them: the
+   rooftop's daylight changed during the sweep (gains up to +18 %; without them V came out 7 % too dark at the domain's edge),
+   and the 14 mm frames drift by up to 6.7 % (with the gains the seams' 1.4826·MAD fell from 0.107 to 0.102).
    *Why radial for the rooftop:* a sweep that turns mostly about the vertical cannot see a 2-D V's vertical tilt (a field
    that varies only with the ray's height is unchanged by a pure yaw, so L absorbs it). On the rooftop, a free 2-D V moved its
    maximum ~460 px off-centre. The tensor model needs frames with pitch and roll diversity; the 14 mm set has two rows, so

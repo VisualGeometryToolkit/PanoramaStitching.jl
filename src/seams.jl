@@ -45,7 +45,7 @@ end
 
 """
     score_seams(camera, frames, rotations, view; vignetting, saturated, circle, raw_scale, rim_margin_px, fov_deg, plane,
-                plane_offsets, chunk) -> (; ratio, rms, mad, n)
+                plane_offsets, chunk, gains = nothing) -> (; ratio, rms, mad, n)
 
 How well `vignetting` makes the frames agree where they overlap, at every
 pixel of the panorama raster `view` ([`panorama_view`](@ref)): the pixel's ray
@@ -58,7 +58,10 @@ least two frames measure it, `ratio` is the median over the other frames of
 noise, misregistration and parallax; a wrong one leaves a step at every frame
 boundary. The score is the ratio's spread over the pixels measured twice or
 more: `rms` and the robust `mad` (1.4826·MAD; misalignment and moving content
-inflate the rms), over `n` pixels.
+inflate the rms), over `n` pixels. `gains` (optional, one per frame: the
+exposure gains `g_k` of [`fit_vignetting`](@ref)'s `metadata.gains`) divides
+each frame's exposure out as well, `log(I_k/(g_k·V_k))`; `nothing` takes the
+frames at one exposure.
 
 The camera and the masks are [`sample_frames`](@ref)'s (`camera` its forward
 map: a `CameraModel` or a grid's `SplineProjection`). The raster is sampled in
@@ -68,10 +71,11 @@ NaN where fewer than two frames measure the pixel) on the frames' backend.
 """
 function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView; vignetting,
                      saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane::Integer,
-                     plane_offsets, chunk::Integer)
+                     plane_offsets, chunk::Integer, gains = nothing)
     K = length(frames)
     1 <= plane <= 3 || throw(ArgumentError("score_seams: plane $plane of a 3-plane frame"))
     chunk > 0 || throw(ArgumentError("score_seams: chunk must be positive, got $chunk"))
+    gains === nothing || length(gains) == K || throw(DimensionMismatch("score_seams: $K frames and $(length(gains)) gains"))
     nv, nλ = view.size; N = nv * nλ
     proto = frames[1]; be = KA.get_backend(proto)
     D = similar(proto, SVector{3, Float64}, nv, nλ)
@@ -79,10 +83,12 @@ function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, 
     D = vec(D)
     ratio = fill!(similar(proto, Float64, N), NaN)
     rk! = _seam_ratio_kernel!(be, 256)
+    G = gains === nothing ? nothing : reshape(_upload(be, Float64.(collect(gains))), 1, K)
     for lo in 1:chunk:N
         hi = min(lo + chunk - 1, N)
         S = sample_frames(camera, frames, rotations, D[lo:hi]; saturated, circle, raw_scale, rim_margin_px, fov_deg, vignetting,
                           plane_offsets)
+        G === nothing || (S.vignetting .*= G)                              # I_k / (g_k·V_k): the frame's exposure divided out too
         rk!(ratio, Base.view(S.values, :, :, plane), S.vignetting, S.seen, K, lo - 1; ndrange = hi - lo + 1)
         KA.synchronize(be)
     end

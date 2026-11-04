@@ -264,8 +264,10 @@ function fit(kind, C, lens, dev, rotations, W, H)
     return fit_vignetting(space, lens.camera, dev.frames, rotations; saturated = dev.saturated, circle = lens.circle, raw_scale = 2,
                           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_offsets = dev.plane_offsets,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
-                          vignetting_penalty_weight = v["vignetting_penalty_weight"], solver)
+                          vignetting_penalty_weight = v["vignetting_penalty_weight"], frame_gains = v["frame_gains"], solver)
 end
+# The frames' exposure gains of a fit, for the seam score and the renders: its metadata's when it fitted them, else none.
+fit_gains(C, res) = C.cfg["vignetting"]["frame_gains"] ? res.metadata.gains : nothing
 
 # ----------------------------------------------------------------------------- views, renders, images
 
@@ -384,6 +386,7 @@ function run_example(config_path)
     say(log, "fit_vignetting ($kind): $(res.retcode), $(res.iterations) iterations, weighted rms $(round(res.rms; digits = 4)), " *
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
     say(log, "  stages (s): $(m.seconds)")
+    C.cfg["vignetting"]["frame_gains"] && say(log, "  frame gains g_k (g₁ = 1): $(join(round.(m.gains; digits = 4), ", "))")
     M = write_vignetting(C, "vignetting", res, W, H)
 
     # the seam scores, before and after
@@ -394,7 +397,7 @@ function run_example(config_path)
            plane = d["plane"], plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
     t = time()
     before = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = NoVignetting(), skw...)
-    after = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), skw...)
+    after = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
     T["score_seams (two)"] = time() - t
     save_ratio(joinpath(C.out, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.out, "seams_corrected.png"), Array(after.ratio))
     say(log, "seams (saturated pixels excluded): uncorrected rms $(round(before.rms; digits = 4)) MAD $(round(before.mad; digits = 4)); " *
@@ -405,7 +408,9 @@ function run_example(config_path)
     rext = rc["extent"] == "coverage" ? ext : Tuple(rc["extent"])
     rkw = (; circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_offsets = dev.plane_offsets)
     V = VgtkCore.estimate(res)
-    render(view, vig) = Array(render_panorama(lens.forward, rframes, reg.rotations, view; vignetting = vig, rkw...).image)
+    # the corrected renders divide by the frames' gains as well; the uncorrected ones show the frames as they are
+    render(view, vig) = Array(render_panorama(lens.forward, rframes, reg.rotations, view; vignetting = vig,
+                                              gains = vig isa NoVignetting ? nothing : fit_gains(C, res), rkw...).image)
     t = time()
     ℓ = Float64(rc["cylindrical_max_lat_deg"])                 # tan φ grows without bound: the cylindrical's latitude cap
     cyl = panorama_view(VgtkCore.Cylindrical(), (rext[1], rext[2], max(rext[3], -ℓ), min(rext[4], ℓ)), rc["cylindrical_deg_per_pixel"]; up)
@@ -445,7 +450,7 @@ function run_example(config_path)
     rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, W, H, rim, in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
-        s2 = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), skw...)
+        s2 = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
         write_vignetting(C, "vignetting_compare_$k", r2, W, H)
         push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, W, H, rim, in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
@@ -483,6 +488,9 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                         "$(f(v.V_min; d = 3)) / $(f(v.V_max; d = 3)) | ($(f(v.max_at[1]; d = 0)), $(f(v.max_at[2]; d = 0))) | " *
                         "$(f(v.max_offset_px; d = 0)) | $(f(100v.asymmetry; d = 1)) % |")
         end
+        println(io, "\nFrame gains (vignetting.frame_gains = $(C.cfg["vignetting"]["frame_gains"])): " *
+                    (C.cfg["vignetting"]["frame_gains"] ? "g_k of the fit of record (g₁ = 1) $(join(f.(rows[1][2].metadata.gains), ", ")); the seam score and the corrected renders divide them out." :
+                     "none fitted, the frames taken at one exposure."))
         println(io, "\nStage times of the fit of record (s): $(rows[1][2].metadata.seconds)\n")
         println(io, "## Wall times (s)\n")
         for (k, v) in sort(collect(T); by = first)
