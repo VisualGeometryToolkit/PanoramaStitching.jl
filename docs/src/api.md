@@ -20,15 +20,22 @@ PanoramaStitching.pair_bearings
 PanoramaStitching.LOMA_SIZE
 ```
 
-## Cells and the panorama
+## Sampling the frames at directions
 
 ```@docs
-world_cells
 world_direction
-PanoramaStitching.cell_centres
-CellSamples
-sample_cells
+fibonacci_directions
+FrameSamples
+sample_frames
+```
+
+## The panorama
+
+```@docs
 true_up
 up_frame
+PanoramaView
+panorama_view
 render_panorama
+render_cube_map
 ```

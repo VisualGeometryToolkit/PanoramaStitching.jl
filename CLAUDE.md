@@ -4,16 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 PanoramaStitching: the panorama of a camera that only rotated, through a calibrated lens of any field of view — the rotations of
 its frames (`register_rotations`: ASIFT + DeDoDe + LoMa features, `find_rotation` per frame pair, the view graph's robust rotation
-averaging, the tracks and the rotation and direction bundle), the world cells sampled in every frame (`sample_cells`) and the
-equirectangular panorama of per-frame values (`render_panorama`). A package of the VisualGeometryToolkit stack; it does no
-radiometry (a vignetting fit consumes its rotations, cells and panoramas downstream).
+averaging, the tracks and the rotation and direction bundle), the frames sampled at directions of the sphere
+(`sample_frames`) and the panorama in any view (`render_panorama`, `render_cube_map`), both on Core's warping machinery
+(KernelAbstractions: GPU arrays or the host, one code path; no per-pixel or per-direction host loops). A package of the
+VisualGeometryToolkit stack; it does no radiometry (a vignetting fit consumes its rotations, direction samples and panoramas
+downstream).
 
 ## Commands
 
 ```bash
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. -e 'using Pkg; Pkg.test()'                                   # every item (ReTestItems)
-julia --project=. -e 'using Pkg; Pkg.test(; test_args = ["bundle|cells"])'     # items whose name matches
+julia --project=. -e 'using Pkg; Pkg.test(; test_args = ["bundle|sample_frames"])'   # items whose name matches
 julia --project=docs --startup-file=no docs/make.jl
 ```
 
@@ -27,7 +29,9 @@ from the registries (CauRegistry; General for those it holds).
 - `src/registration.jl` — `register_rotations` and its `Registration`.
 - `src/view_graph.jl` — `ViewGraph` (Graphs.jl) and `chain_tracks` (DataStructures.jl union-find).
 - `src/rotation_bundle.jl` — `refine_rotations`: NLLSsolver, one `SO3Manifold` per frame and one `SphereManifold` per track.
-- `src/cells.jl`, `src/panorama.jl` — `world_cells`, `sample_cells`, `render_panorama`.
+- `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
+  render shares.
+- `src/panorama.jl` — `panorama_view`, `render_panorama`, `render_cube_map`.
 
 ## Git Commit Conventions
 

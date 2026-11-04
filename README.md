@@ -12,9 +12,13 @@ fisheyes past 90° included, on the [VisualGeometryToolkit](https://visualgeomet
   (VisualGeometryToolkitEstimation's `find_rotation`), the view graph's robust rotation averaging
   (`fit_rotation_averaging`), the tracks, and the bundle of the rotations and the track directions (NLLSsolver, the pixel
   reprojection error through the fixed camera).
-- `sample_cells(frames, saturated, rotations, camera; …)` — a near-equal-area grid of world cells sampled in every frame.
-- `render_panorama(cells, values, ok, gains; up)` — the equirectangular panorama of per-frame cell values, composited in capture
-  order.
+- `sample_frames(camera, frames, rotations, directions; …)` — the frames sampled at directions of the sphere
+  (`fibonacci_directions`): per direction, every frame that sees it, its sensor point, value and vignetting.
+- `render_panorama(camera, frames, rotations, view; …)` — the panorama in a `panorama_view` (equirectangular, cylindrical,
+  equal-area, Mercator, or a virtual camera), unblended; `render_cube_map` for a cube map.
+
+The sampling and the render run on VisualGeometryToolkitCore's warping machinery (KernelAbstractions): GPU arrays in, the
+device does the work; host arrays, the same code on the CPU.
 
 ## Installation
 
@@ -25,21 +29,19 @@ Pkg.add("PanoramaStitching")
 
 ## Usage
 
-The frames are `H × W × 3` linear images in capture order; the camera is any calibrated VisualGeometryToolkitCore camera. Here a
+The frames are `H × W × 3` linear images in capture order; the camera is a calibrated VisualGeometryToolkitCore camera. Here a
 Kannala–Brandt fisheye of 300 px focal length on a 1000 × 1000 sensor, imaging out to 100° off axis, with the frames binned
 2 × 2 (`raw_scale = 2` camera pixels per frame pixel):
 
 ```julia
 using PanoramaStitching
 import VisualGeometryToolkitCore as VgtkCore
-using VisualGeometryToolkitCore: CameraModel, CentralGenericModel, KannalaBrandt, px
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, Circle, Point2, Cylindrical, px
 using StaticArrays: SA
-using Random: Xoshiro
 
-camera = CentralGenericModel(CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02)), (1000, 1000);
-                             grid_size = (40, 40))
-circle = (500.0, 500.0, 480.0)   # the image circle (cx, cy, r), camera pixels
-frames = my_frames               # your Vector of 500 × 500 × 3 Float32 linear images, in capture order
+camera = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))
+circle = Circle(Point2(500.0, 500.0), 480.0)   # the image circle, camera pixels (WholePlane() for a lens with none)
+frames = my_frames                             # your Vector of 500 × 500 × 3 Float32 linear images, in capture order
 
 # 1. the rotations: features, pairwise RANSAC, rotation averaging, tracks and the bundle
 reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile = 99.5, detector_margin_px = 20.0,
@@ -52,19 +54,18 @@ reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile 
 reg.rotations    # one rotation per frame (d = R_k·f_k; the first frame's camera frame is the common frame)
 reg.bundle.rms   # the bundle's rms reprojection error, pixels
 
-# 2. a 2° grid of world cells, sampled in every frame
 saturated = [falses(size(f, 1), size(f, 2)) for f in frames]
-samples = sample_cells(frames, saturated, reg.rotations, camera; raw_scale = 2, circle, cell_deg = 2.0, sub = 4,
-                       blur_px = 1.0, rim_margin_px = 12.0, fov_deg = 89.0, field_angle = :lens, rng = Xoshiro(1))
+kw = (; saturated, circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0)
 
-# 3. the equirectangular panorama (zero log-gains: no exposure correction)
-K, N = size(samples.ok)
-values = [samples.ok[k, i] ? samples.val[k, i, c] : NaN for k in 1:K, i in 1:N, c in 1:3]
-image, extent, _ = render_panorama(samples.cells, values, samples.ok, zeros(K, 3))
+# 2. the frames sampled at directions spread uniformly over the covered sphere
+S = sample_frames(camera, frames, reg.rotations, fibonacci_directions(reg.rotations, 100_000; fov_deg = 89.0); kw...)
+
+# 3. a cylindrical panorama, 0.1° per pixel
+pano = render_panorama(camera, frames, reg.rotations, panorama_view(Cylindrical(), (-90.0, 90.0, -45.0, 45.0), 0.1); kw...)
 ```
 
-`image` is the panorama (rows the elevation from the top, columns the azimuth, NaN where no frame saw the cell) and `extent`
-its `(lon₀, lon₁, lat₀, lat₁)` in degrees. The [documentation](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/)
-explains each step and its settings.
+`pano.image` is the panorama (rows from the top, columns the longitude, NaN where no frame sees the pixel), `pano.owner` the
+frame each pixel holds and `pano.coverage` how many frames see it. The
+[documentation](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/) explains each step and its settings.
 
 MIT licence.

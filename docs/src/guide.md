@@ -1,16 +1,23 @@
 # Getting started
 
-PanoramaStitching turns a sweep of frames from a camera that only rotated into the rotation of every frame and an
-equirectangular panorama. The camera is calibrated and fixed; its lens may have any field of view, so a fisheye imaging past
-90° off axis works the same as a pinhole. All geometry is on unit bearings (VisualGeometryToolkitCore's `backproject`), never on
-the `z = 1` plane, and every residual is measured in the camera's pixels.
+PanoramaStitching turns a sweep of frames from a camera that only rotated into the rotation of every frame and a panorama.
+The camera is calibrated and fixed; its lens may have any field of view, so a fisheye imaging past 90° off axis works the same
+as a pinhole. All geometry is on unit bearings (VisualGeometryToolkitCore's `backproject`), never on the `z = 1` plane, and
+every residual is measured in the camera's pixels.
 
-The pipeline has three steps, one function each:
+The pipeline has three steps:
 
 1. [`register_rotations`](@ref) — the rotation `R_k` of every frame (`d = R_k·f_k`, a bearing `f_k` of frame `k` to a world
    direction `d`; the first frame's camera frame is the common frame).
-2. [`sample_cells`](@ref) — a near-equal-area grid of world cells, sampled in every frame that sees it.
-3. [`render_panorama`](@ref) — the equirectangular image of per-frame cell values, composited in capture order.
+2. [`sample_frames`](@ref) — the frames sampled at directions spread uniformly over the covered sphere
+   ([`fibonacci_directions`](@ref)): per direction, every frame that sees it with its sensor point, its value and the
+   vignetting there — the observations of a vignetting validation or fit.
+3. [`render_panorama`](@ref) — the panorama into a view ([`panorama_view`](@ref): a cylindrical-family projection or a
+   virtual camera) by the reverse warp of the frames, unblended; [`render_cube_map`](@ref) renders the six faces of a cube map.
+
+Steps 2 and 3 run on VisualGeometryToolkitCore's warping machinery — `image_warp`/`image_warp!`, `image_sample!` and
+`pointwise!`, KernelAbstractions kernels — on the backend that owns the frames: GPU arrays (`CuArray`) run on the device,
+host arrays run the same code on the CPU.
 
 ## Installation
 
@@ -23,19 +30,25 @@ Pkg.add("PanoramaStitching")
 
 - **Frames**: a `Vector` of `H × W × 3` linear (not gamma-encoded) images in capture order. They may be binned relative to the
   calibration: `raw_scale` is the number of camera pixels per frame pixel.
-- **Camera**: any VisualGeometryToolkitCore camera with `project`, `backproject` and `backproject_with_jacobian`. A fisheye
-  is best modelled as a `CentralGenericModel` over a lens model:
+- **Camera**: a VisualGeometryToolkitCore camera. A parametric `CameraModel` serves every step. A grid model
+  (`CentralGenericModel`) back-projects in the registration but has no closed-form forward map: supply its
+  `SplineProjection`, fitted by VisualGeometryToolkitEstimation's `fit_camera`, as `projection` to the registration and as
+  the camera of the sampling and the render.
 
 ```julia
-using VisualGeometryToolkitCore: CameraModel, CentralGenericModel, KannalaBrandt, px
+using VisualGeometryToolkitCore: CameraModel, CentralGenericModel, KannalaBrandt, SplineProjection, Circle, Point2, Rect, px,
+    estimate
+import VisualGeometryToolkitEstimation as VgtkEstimation
 using StaticArrays: SA
 
-camera = CentralGenericModel(CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02)), (1000, 1000);
-                             grid_size = (40, 40))
+model = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))
+camera = CentralGenericModel(model, (1000, 1000); grid_size = (40, 40))
+circle = Circle(Point2(500.0, 500.0), 480.0)          # the image circle, camera pixels (WholePlane() for a lens with none)
+projection = estimate(VgtkEstimation.fit_camera(SplineProjection, camera, Rect(0, 0, 1000, 1000) ∩ circle; tolerance = 1e-2))
 ```
 
-- **Image circle**: `circle = (cx, cy, r)` in camera pixels, the part of the sensor the lens illuminates. Features and samples
-  outside it are ignored.
+- **Image circle**: `circle`, a Core `Circle` or `Ellipse` in camera pixels, the part of the sensor the lens illuminates, or
+  `WholePlane()` for a lens that fills the sensor. Features and samples outside it are ignored.
 
 ## 1. Registering the rotations
 
@@ -55,12 +68,12 @@ camera = CentralGenericModel(CameraModel(300.0px, SA[500.0px, 500.0px]; lens = K
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames; inconsistent tracks (two keypoints
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
-   robust (`bundle_loss`) pixel reprojection error with NLLSsolver.
+   robust (`bundle_loss`) pixel reprojection error through `projection` with NLLSsolver.
 
 ```julia
 import VisualGeometryToolkitCore as VgtkCore
 
-reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile = 99.5, detector_margin_px = 20.0,
+reg = register_rotations(frames, camera; projection, raw_scale = 2, circle, tone_percentile = 99.5, detector_margin_px = 20.0,
                          asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
                          pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
                          max_trials = 10_000, min_trials = 100,
@@ -75,36 +88,52 @@ Sampson distance in pixels and the rotation angle), the tracks and the bundle's 
 reprojection error in pixels). On the package's synthetic fisheye sweep (four frames 35° apart) the rotations come back within
 0.02° and the bundle's rms is below half a pixel.
 
-## 2. Sampling world cells
+## 2. Sampling the frames at directions
 
-[`world_cells`](@ref) divides the sphere into latitude bands of `cell_deg` degrees, each split into longitude cells of nearly
-equal area. [`sample_cells`](@ref) takes `sub × sub` jittered sample directions in every cell into each frame through the
-camera and averages the (slightly blurred) frame there:
+[`fibonacci_directions`](@ref) spreads directions uniformly over the sphere (the golden-angle spiral: equal area per direction,
+no pole bias), here restricted to those within `fov_deg` of some frame's axis. [`sample_frames`](@ref) takes each into every
+frame (`f = R_kᵀ·d`), projects it to its exact sub-pixel sensor point `u` through the camera, samples the frame there
+bilinearly and evaluates the vignetting model continuously at the same point, `vignetting(u, f)`:
 
 ```julia
-using Random: Xoshiro
-
 saturated = [falses(size(f, 1), size(f, 2)) for f in frames]     # mask clipped pixels here
-samples = sample_cells(frames, saturated, reg.rotations, camera; raw_scale = 2, circle, cell_deg = 2.0, sub = 4,
-                       blur_px = 1.0, rim_margin_px = 12.0, fov_deg = 89.0, field_angle = :lens, rng = Xoshiro(1))
+D = fibonacci_directions(reg.rotations, 200_000; fov_deg = 89.0)
+S = sample_frames(projection, frames, reg.rotations, D; saturated, circle, raw_scale = 2, rim_margin_px = 12.0,
+                  fov_deg = 89.0, vignetting = (u, f) -> 1.0)
 ```
 
-A cell counts in a frame (`samples.ok[k, i]`) only when the frame sees all of it: its centre within `fov_deg` of the optical
-axis and every sample inside the image circle less `rim_margin_px`, unsaturated. The [`CellSamples`](@ref) also record each
-cell's field angle per frame (`theta_model`), which is what a vignetting fit downstream needs.
+A frame sees a direction (`S.seen[i, k]`) when the ray is within `fov_deg` of the camera's z axis, its sensor point lies inside
+the image circle less `rim_margin_px` and 2 px inside the sensor, and no saturated pixel enters its value. For every direction
+seen by several frames, `S.values[i, k, c] / S.vignetting[i, k]` must agree across `k`: the spread is the vignetting model's
+error, and `I_k = L(d)·V(u_k)` is the equation of a panorama vignetting fit.
 
 ## 3. Rendering the panorama
 
-[`render_panorama`](@ref) composites per-frame cell values in capture order — each cell takes the last frame that saw it —
-divided by that frame's gain (`gains` is `K × 3`, natural log; zeros for none):
+[`panorama_view`](@ref) builds the raster and its pixel → ray map; [`render_panorama`](@ref) warps every frame into it (Core's
+`image_warp`, one fused map `camera ∘ R_kᵀ ∘ rays` per frame), divides by the vignetting and keeps, at each pixel, the LAST
+frame that sees it — no gain, no seam, no blend:
 
 ```julia
-K, N = size(samples.ok)
-values = [samples.ok[k, i] ? samples.val[k, i, c] : NaN for k in 1:K, i in 1:N, c in 1:3]
-image, extent, composite = render_panorama(samples.cells, values, samples.ok, zeros(K, 3))
+cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.05)   # columns longitude, rows tan(latitude)
+pano = render_panorama(projection, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
+                       rim_margin_px = 12.0, fov_deg = 89.0, saturated)
+pano.image      # rows × columns × 3, NaN where no frame sees the pixel
+pano.owner      # the frame each pixel holds
+pano.coverage   # how many frames see each pixel
 ```
 
-`image` is the equirectangular raster (rows the elevation from the top, columns the azimuth, one pixel per cell, NaN where no
-frame saw the cell) and `extent` its `(lon₀, lon₁, lat₀, lat₁)` in degrees. Corrections of the frames themselves, such as
-dividing out a vignetting, are applied to `values` before rendering. To level the horizon, supply `up = up_frame(pitch, roll)`
-(the first frame's pitch and roll against the true horizon, degrees).
+The cylindrical family — Core's `Equirectangular()` (rows the latitude), `Cylindrical()` (`tan φ`), `CylindricalEqualArea()`
+(`sin φ`: every pixel subtends the same solid angle) and `Mercator()` (`asinh(tan φ)`, conformal) — shares the longitude
+columns. An azimuthal view needs no projection of its own: it is a virtual camera, a Core `CameraModel` with the lens of the
+view, aimed by a rotation:
+
+```julia
+using VisualGeometryToolkitCore: Lens, Perspective, Stereographic
+using StaticArrays: SMatrix
+rect = panorama_view(CameraModel(1000.0px, SA[960.0px, 540.0px]; lens = Lens(Perspective())), 1920, 1080)
+down = SMatrix{3, 3}(1.0, 0, 0, 0, 0, -1, 0, 1, 0)          # its axis along +y (down): a 'little planet'
+planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(Stereographic())), 2000, 2000; rotation = down)
+```
+
+[`render_cube_map`](@ref) renders the six 90° faces and their horizontal cross. To level the horizon, supply
+`up = up_frame(pitch, roll)` to `panorama_view` (the first frame's pitch and roll against the true horizon, degrees).

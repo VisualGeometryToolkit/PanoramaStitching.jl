@@ -1,6 +1,6 @@
 name: CI
 
-# The package's suite (test/runtests.jl, ReTestItems): the registration, cells and panorama on a synthetic fisheye sweep, the
+# The package's suite (test/runtests.jl, ReTestItems): the registration, direction sampling and panorama on a synthetic fisheye sweep, the
 # rotation bundle, and the tooling gates (Aqua, ExplicitImports, JET). It needs no data and no GPU.
 on:
   push:

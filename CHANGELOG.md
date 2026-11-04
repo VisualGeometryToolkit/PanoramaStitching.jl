@@ -1,0 +1,36 @@
+# Changelog
+
+## Unreleased
+
+The VisualGeometryToolkit 0.5 stack (Core 0.5, Estimation 0.6), and the sampling and the panorama on Core's warping machinery
+(`image_warp`/`image_warp!`, `image_sample!`, `pointwise!`: KernelAbstractions kernels on GPU arrays, the same code on the
+host).
+
+### Breaking
+
+- `circle` (of `register_rotations`, `detect_features`, `sample_frames`, `render_panorama`) is a Core `Circle` or `Ellipse` in
+  camera pixels, or `WholePlane()` for a lens with no image circle, instead of a `(cx, cy, r)` tuple. Masks of binned frames
+  are Core's `pixel_mask` of the circle scaled by `1/raw_scale`; a point is in it by Core's `∈` (the boundary included).
+- A grid camera (`CentralGenericModel`) has no closed-form forward map: `register_rotations` and `refine_rotations` take its
+  `SplineProjection` (VisualGeometryToolkitEstimation's `fit_camera(SplineProjection, grid, region; tolerance)`) as the
+  keyword `projection`, and `sample_frames` and `render_panorama` take it as their camera. A grid without one is an
+  `ArgumentError`. The private seeded projection helper is gone (Core's `project` no longer takes `init`).
+- `render_panorama(camera, frames, rotations, view; vignetting, circle, raw_scale, rim_margin_px, fov_deg, saturated)`: the
+  raster is a `PanoramaView` built by `panorama_view` — a Core panorama projection (`Equirectangular`, `Cylindrical`,
+  `CylindricalEqualArea`, `Mercator`) over an `extent` at `deg_per_pixel` with an `up` frame, or a virtual camera (any Core
+  `CameraModel`, aimed by a rotation) — instead of the `extent`, `deg_per_pixel` and `up` keywords. The field angle is measured
+  from the camera frame's z axis. The render is Core's `image_warp`, and its masks are batches at the warp's own sensor points;
+  a pixel next to a saturated one is now masked when the saturated pixel enters its bilinear blend.
+- Removed: `world_cells`, `sample_cells`, `CellSamples` and `cell_centres` (the binned sampling of the sphere). Use
+  `sample_frames` at `fibonacci_directions`.
+
+### New
+
+- `sample_frames(camera, frames, rotations, directions; …) -> FrameSamples`: per direction and frame, the exact sub-pixel
+  sensor point, the ray, the frame's bilinear value and the vignetting model evaluated there, and whether the frame sees it —
+  the observations of a vignetting validation or a panorama vignetting fit.
+- `fibonacci_directions(n)` and `fibonacci_directions(rotations, n; fov_deg)`: directions spread uniformly over the sphere,
+  optionally restricted to the frames' coverage.
+- `panorama_view`, `PanoramaView`, `render_cube_map` (the six 90° faces, `CUBE_FACES`, and their horizontal cross).
+- `detect_features` resamples the descriptor's input with Core's `image_warp!` (the same values: a downscale never reaches the
+  frame's edge).
