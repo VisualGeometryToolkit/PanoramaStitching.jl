@@ -49,7 +49,7 @@ end
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
-                       bundle_xtol, bundle_whitening = :none, say = _ -> nothing) -> Registration
+                       bundle_xtol, bundle_whitening = :none, execution_provider = :cpu, say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
@@ -64,7 +64,10 @@ RANSAC's:
   for a lens with none), `tone_percentile`,
   `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections` — see
   [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
-  `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`); `min_score`.
+  `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
+  each for the whole registration on `execution_provider` (`:cpu`, the default,
+  or `:cuda`, which needs `import CUDA, cuDNN` and a functional device);
+  `min_score`.
 - pairs: `pairs = :all` (every frame pair) or `:lag_overlap` (pairs at most
   `max_lag` apart; while the verified pairs leave the frames in more than one
   part, as when a lag pair is dropped, the pair between two parts nearest in
@@ -88,7 +91,8 @@ A task verb: it composes the estimators above and does none of its own. Each
 pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
 stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a `bundle_whitening`
-other than `:none` or `:keypoint_covariance` and a `projection` that
+other than `:none` or `:keypoint_covariance`, an `execution_provider` other
+than `:cpu` or `:cuda` and a `projection` that
 is no closed-form forward map (a grid model without its `SplineProjection`) are
 an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
@@ -100,15 +104,18 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
-                            bundle_xtol::Real, bundle_whitening::Symbol = :none, say = _ -> nothing)
+                            bundle_xtol::Real, bundle_whitening::Symbol = :none, execution_provider::Symbol = :cpu, say = _ -> nothing)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("register_rotations: pairs = :$pairs is not :all or :lag_overlap"))
     bundle_whitening in (:none, :keypoint_covariance) ||
         throw(ArgumentError("register_rotations: bundle_whitening = :$bundle_whitening is not :none or :keypoint_covariance"))
     pairs === :all || max_lag >= 1 || throw(ArgumentError("register_rotations: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
+    execution_provider in (:cpu, :cuda) ||
+        throw(ArgumentError("register_rotations: execution_provider = :$execution_provider is not :cpu or :cuda"))
     _forward_map(projection)                                                 # refused before the features, not after
     K = length(frames)
-    desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections)
-    match = VgtkFeatures.LoMaMatcher(matcher)
+    # one ONNX session each for the whole registration, on `execution_provider`
+    desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider)
+    match = VgtkFeatures.LoMaMatcher(matcher; execution_provider)
     feats = map(1:K) do k
         f = detect_features(frames[k], desc; raw_scale, circle, tone_percentile, detector_margin_px, asift_tilts, max_detections)
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")

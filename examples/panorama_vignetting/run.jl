@@ -9,6 +9,11 @@
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
 using CUDA
+# ONNX Runtime's CUDA provider (registration.execution_provider = "cuda") needs cuDNN loaded beside CUDA, and CUDA's runtime
+# 12.x (CUDA.set_runtime_version!(v"12.9")); cuDNN is loaded only where the environment holds it, so one without it runs "cpu"
+if Base.find_package("cuDNN") !== nothing
+    import cuDNN
+end
 using PanoramaStitching
 import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -183,6 +188,10 @@ function registration(C, inp, lens; log)
                     bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = get(rec, "provenance", nothing))
         end
     end
+    ep = r["execution_provider"]
+    ep in ("cpu", "cuda") || error("registration.execution_provider = $ep is not \"cpu\" or \"cuda\"")
+    ep == "cuda" && !isdefined(@__MODULE__, :cuDNN) &&
+        error("registration.execution_provider = \"cuda\" needs cuDNN in the environment (ONNX Runtime's CUDA provider)")
     t0 = time()
     reg = register_rotations(inp.frames, lens.camera; projection = lens.forward, raw_scale = 2, circle = lens.circle,
                              tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
@@ -194,7 +203,8 @@ function registration(C, inp, lens; log)
                              max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_loss = LOSSES[r["averaging_loss"]],
                              bundle_loss = LOSSES[r["bundle_loss"]], bundle_scale_multiple = r["bundle_scale_multiple"],
                              bundle_iterations = r["bundle_iterations"], bundle_max_iter = r["bundle_max_iter"],
-                             bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"], say = m -> say(log, m))
+                             bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"], execution_provider = Symbol(ep),
+                             say = m -> say(log, m))
     secs = time() - t0
     Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
     rec = Dict("key" => key, "convention" => "d = R_k·f_k, the first frame's camera frame the common frame; R row by row",
