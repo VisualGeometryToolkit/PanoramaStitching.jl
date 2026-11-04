@@ -26,7 +26,7 @@ using Random: Random, Xoshiro
 using Static: static
 using StaticArrays: SVector, SMatrix, StaticVector
 using Rotations: RotMatrix
-using CoordinateTransformations: AffineMap, LinearMap
+using CoordinateTransformations: AffineMap, LinearMap, Translation
 import Graphs
 import DataStructures
 import NLLSsolver

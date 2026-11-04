@@ -38,4 +38,5 @@ PanoramaView
 panorama_view
 render_panorama
 render_cube_map
+PanoramaStitching.CUBE_FACES
 ```

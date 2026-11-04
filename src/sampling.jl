@@ -33,6 +33,13 @@ _binned(c::VgtkCore.Circle, s) = VgtkCore.Circle(c.center / s, c.r / s)
 _binned(e::VgtkCore.Ellipse, s) = VgtkCore.Ellipse(e.center / s, e.a / s, e.b / s, e.θ)
 _binned(w::VgtkCore.WholePlane, s) = w
 
+# The three planes' sample offsets (frame pixels): `nothing` puts every plane at the pixel centre.
+_plane_offsets(::Nothing) = ntuple(_ -> SVector(0.0, 0.0), 3)
+function _plane_offsets(o)
+    length(o) == 3 || throw(ArgumentError("plane_offsets: one offset per plane (3), got $(length(o))"))
+    return ntuple(c -> SVector{2, Float64}(o[c][1], o[c][2]), 3)
+end
+
 # Where a frame's sensor point counts (camera pixels): at least 2 px inside the W × H sensor and inside the circle less the rim
 # margin.
 _frame_region(circle, W, H, rim_margin_px) = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ _rim(circle, rim_margin_px)
@@ -75,8 +82,8 @@ struct FrameSamples{D, P, F, V, W, S}
 end
 
 """
-    sample_frames(camera, frames, rotations, directions; saturated, circle, raw_scale, rim_margin_px, fov_deg, vignetting)
-        -> FrameSamples
+    sample_frames(camera, frames, rotations, directions; saturated, circle, raw_scale, rim_margin_px, fov_deg, vignetting,
+                  plane_offsets = nothing) -> FrameSamples
 
 The frames sampled at `directions` (unit 3-vectors of the common frame, any
 array): for every frame `k` and direction `d`, the ray `f = R_kᵀ·d`
@@ -97,16 +104,22 @@ Core `Circle` or `Ellipse` in camera pixels, or `WholePlane()` when the lens
 has no image circle) less `rim_margin_px` and at least 2 px inside the sensor,
 and no `saturated` pixel among the four its value blends. `frames` are
 `H × W × 3` linear images with `raw_scale` camera pixels per frame pixel,
-`saturated` their `H × W` masks.
+`saturated` their `H × W` masks; `plane_offsets` the planes' sample positions
+relative to the pixel centre, frame pixels (`nothing`: all at the centre; a
+2 × 2 Bayer binning's R and B at `(±¼, ±¼)`, VisualGeometryToolkitFeatures'
+`load_raw(…; mode = :bin2).plane_offsets`): each plane is read at the sensor
+point less its offset.
 
 Every step is a batch on the backend that owns `frames` and `directions`
 (Core's `pointwise!`, `image_sample!`: one kernel each on a GPU array, the
 same code on the host), so for device arrays `vignetting` must be
-kernel-lawful (isbits, no allocation, no throw). The precision is the
-directions' element type.
+kernel-lawful (isbits, no allocation, no throw); it is evaluated only where
+the frame sees the direction. The precision is the directions' element type.
 """
 function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector, directions::AbstractArray{<:StaticVector{3}};
-                       saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, vignetting)
+                       saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, vignetting,
+                       plane_offsets = nothing)
+    offsets = _plane_offsets(plane_offsets)
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("sample_frames: frames, rotations and saturated disagree"))
     Hf, Wf, C = size(frames[1])
@@ -118,7 +131,7 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
     proto = frames[1]
     pixels = similar(proto, SVector{2, T}, N, K); rays = similar(proto, SVector{3, T}, N, K)
     values = similar(proto, T, N, K, 3); vig = similar(proto, T, N, K); seen = similar(proto, Bool, N, K)
-    Uf = similar(proto, SVector{2, T}, N); w = similar(proto, T, N)
+    Uf = similar(proto, SVector{2, T}, N); Uc = similar(Uf); w = similar(proto, T, N)
     for k in 1:K
         Rt = SMatrix{3, 3, T, 9}(rotations[k])'
         F = view(rays, :, k); U = view(pixels, :, k); ok = view(seen, :, k)
@@ -130,7 +143,8 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
         VgtkCore.pointwise!(_Vignetting(vignetting, T), view(vig, :, k), ok, U, F)
         for c in 1:3
             v = view(values, :, k, c)
-            VgtkCore.image_sample!(w, view(frames[k], :, :, c), Uf)
+            Uc .= Uf .- Ref(SVector{2, T}(offsets[c]))                      # the plane's samples sit at its offset
+            VgtkCore.image_sample!(w, view(frames[k], :, :, c), Uc)
             v .= ifelse.(ok, w, T(NaN))
         end
     end

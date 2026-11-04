@@ -130,7 +130,7 @@ end
     # frames up front) and the true V, the panorama IS the scene's texture, equirectangular and cylindrical; the parametric
     # Kannala–Brandt model and the grid's spline give the same panorama, and a V read on the sensor the same as one read on the ray
     using Test, Statistics, LinearAlgebra, StaticArrays
-    using PanoramaStitching: render_panorama, render_cube_map, panorama_view, world_direction, CUBE_FACES
+    using PanoramaStitching: render_panorama, render_cube_map, panorama_view, world_direction, CUBE_FACES, sample_frames
     import VisualGeometryToolkitCore as VgtkCore
     q = sequence(; K = 3, spline = true)
     frames = [f ./ Float32(g) for (f, g) in zip(q.frames, q.gains)]                 # constant exposure
@@ -154,6 +154,17 @@ end
     @test length(both) >= 0.99 * length(seen) && maximum(abs.(g.image[both, 2] .- p.image[both, 2])) < 0.01
     s = pano(q.projection; vignetting = on_sensor)                                  # the same V, read on the sensor
     @test s.owner == g.owner && maximum(abs.(s.image[seen, 2] .- g.image[seen, 2])) < 1.0e-3
+    # the render and sample_frames are one pipeline: the frames sampled at the rays of the rendered pixels give, for the pixel's
+    # owner, its value — with the planes' sample offsets too (R read ¼ px off, B the other way, G at the centre)
+    offsets = (SVector(0.25, 0.25), SVector(0.0, 0.0), SVector(-0.25, -0.25))
+    o = render_panorama(q.model, frames, q.R, eq; vignetting = on_ray, plane_offsets = offsets, kw...)
+    @test o.owner == p.owner && view(o.image, :, :, 2) == view(p.image, :, :, 2) && view(o.image, :, :, 1) != view(p.image, :, :, 1)
+    pick = seen[1:97:end]
+    D = [eq.rays(SVector(I[2] - 0.5, I[1] - 0.5)) for I in pick]
+    S = sample_frames(q.model, frames, q.R, D; vignetting = on_ray, plane_offsets = offsets, kw...)
+    @test all(i -> S.seen[i, o.owner[pick[i]]], eachindex(pick))
+    @test maximum(i -> maximum(abs(S.values[i, o.owner[pick[i]], c] / S.vignetting[i, o.owner[pick[i]]] - o.image[pick[i], c]) for c in 1:3),
+                  eachindex(pick)) < 1.0e-5
     # cylindrical: rows uniform in h = tan(latitude), from tan 50° down; the scene at each pixel's ray
     cyl = panorama_view(VgtkCore.Cylindrical(), (-80.0, 150.0, -50.0, 50.0), 0.5)
     c = pano(q.model, cyl)

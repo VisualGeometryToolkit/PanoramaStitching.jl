@@ -32,5 +32,9 @@ host).
 - `fibonacci_directions(n)` and `fibonacci_directions(rotations, n; fov_deg)`: directions spread uniformly over the sphere,
   optionally restricted to the frames' coverage.
 - `panorama_view`, `PanoramaView`, `render_cube_map` (the six 90° faces, `CUBE_FACES`, and their horizontal cross).
+- `plane_offsets` (of `render_panorama` and `sample_frames`): the planes' sample positions in frame pixels — a 2 × 2 Bayer
+  binning's R and B at `(±¼, ±¼)`, VisualGeometryToolkitFeatures' `load_raw(…; mode = :bin2).plane_offsets` — each plane
+  read at the sensor point less its offset.
+- The render's warp math is Float64 whatever the frames' element type: GPU and host renders agree to 1e-7 relative.
 - `detect_features` resamples the descriptor's input with Core's `image_warp!` (the same values: a downscale never reaches the
   frame's edge).
