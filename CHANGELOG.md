@@ -21,10 +21,29 @@ host).
   `CameraModel`, aimed by a rotation) — instead of the `extent`, `deg_per_pixel` and `up` keywords. The field angle is measured
   from the camera frame's z axis. The render is Core's `image_warp`, and its masks are batches at the warp's own sensor points;
   a pixel next to a saturated one is now masked when the saturated pixel enters its bilinear blend.
+- `render_panorama` and `render_cube_map` take no `saturated` keyword: a render shows the frames as they are, a saturated pixel
+  with its clipped value (a window that clips in every frame comes out bright, not empty). Saturation masks measurements only:
+  `sample_frames`, `fit_vignetting` and `score_seams`.
 - Removed: `world_cells`, `sample_cells`, `CellSamples` and `cell_centres` (the binned sampling of the sphere). Use
   `sample_frames` at `fibonacci_directions`.
 
 ### New
+
+- `fit_vignetting(space, camera, frames, rotations; …) -> FitResult`: the vignetting of a rotating camera from its frames
+  alone, interpolation free — every pixel of every frame at its pixel centre is `L(R_k·f)·V(u)`, log L a cubic B-spline over
+  an `AzimuthalChart` of the covered sphere with a Δ² or Δ³ penalty, log V a `RadialVignetting` or `TensorVignetting` spline,
+  weighted by I², gauge mean log V = 0; the normal equations by atomic scatter-add on the frames' backend (KernelAbstractions,
+  Atomix), solved by `ConjugateGradient(; tolerance, max_iter)` on the device or `SparseCholesky()` on the host
+  (SparseArrays). The estimate is a `SplineVignetting`, callable as the render's
+  `vignetting`; `log_vignetting`, `VignettingMetadata`.
+- `score_seams(camera, frames, rotations, view; …)`: per raster pixel measured by two frames or more, the median log ratio of
+  the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.
+- `sample_frames`, `render_panorama` (and so `score_seams`) move the camera's forward map to the frames' backend (Adapt): a
+  grid's `SplineProjection` now samples GPU frames (its control grid was a host array inside a device kernel). Its device
+  render still waits on Core: `image_warp`'s map wraps it in a `BoundedMap` and a `ComposedTransformation`, which have no
+  Adapt rule yet.
+- `examples/panorama_vignetting/`: the chain from RAW frames to corrected panoramas, two configs of record (the FX3 with the
+  8 mm fisheye on a rooftop, with the Sigma 14 mm indoors).
 
 - `sample_frames(camera, frames, rotations, directions; …) -> FrameSamples`: per direction and frame, the exact sub-pixel
   sensor point, the ray, the frame's bilinear value and the vignetting model evaluated there, and whether the frame sees it —

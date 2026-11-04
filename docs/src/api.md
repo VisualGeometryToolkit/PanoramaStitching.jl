@@ -40,3 +40,18 @@ render_panorama
 render_cube_map
 PanoramaStitching.CUBE_FACES
 ```
+
+## The vignetting from the frames
+
+```@docs
+fit_vignetting
+RadialVignetting
+TensorVignetting
+SplineVignetting
+log_vignetting
+AzimuthalChart
+VignettingMetadata
+ConjugateGradient
+SparseCholesky
+score_seams
+```

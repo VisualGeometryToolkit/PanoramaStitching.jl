@@ -16,6 +16,12 @@ fisheyes past 90° included, on the [VisualGeometryToolkit](https://visualgeomet
   (`fibonacci_directions`): per direction, every frame that sees it, its sensor point, value and vignetting.
 - `render_panorama(camera, frames, rotations, view; …)` — the panorama in a `panorama_view` (equirectangular, cylindrical,
   equal-area, Mercator, or a virtual camera), unblended; `render_cube_map` for a cube map.
+- `fit_vignetting(space, camera, frames, rotations; …)` — the camera's vignetting from the frames alone: every pixel of every
+  frame at its own pixel centre is the scene's radiance times V, the scene a B-spline on the sphere fitted with V (radial or
+  2-D), the normal equations on the GPU. `score_seams` measures the seams a vignetting leaves.
+
+`examples/panorama_vignetting/` runs the chain — RAW decode, registration, the fit, the seam scores, corrected and uncorrected
+panoramas — from a config of record (README there).
 
 The sampling and the render run on VisualGeometryToolkitCore's warping machinery (KernelAbstractions): GPU arrays in, the
 device does the work; host arrays, the same code on the CPU.
@@ -54,14 +60,24 @@ reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile 
 reg.rotations    # one rotation per frame (d = R_k·f_k; the first frame's camera frame is the common frame)
 reg.bundle.rms   # the bundle's rms reprojection error, pixels
 
-saturated = [falses(size(f, 1), size(f, 2)) for f in frames]
-kw = (; saturated, circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0)
+saturated = [falses(size(f, 1), size(f, 2)) for f in frames]   # clipped pixels: masked in measurements, never in renders
+kw = (; circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0)
 
 # 2. the frames sampled at directions spread uniformly over the covered sphere
-S = sample_frames(camera, frames, reg.rotations, fibonacci_directions(reg.rotations, 100_000; fov_deg = 89.0); kw...)
+S = sample_frames(camera, frames, reg.rotations, fibonacci_directions(reg.rotations, 100_000; fov_deg = 89.0);
+                  saturated, vignetting = (u, f) -> 1.0, kw...)
 
-# 3. a cylindrical panorama, 0.1° per pixel
-pano = render_panorama(camera, frames, reg.rotations, panorama_view(Cylindrical(), (-90.0, 90.0, -45.0, 45.0), 0.1); kw...)
+# 3. the vignetting from the frames alone (interpolation free), and the seams it leaves
+res = fit_vignetting(RadialVignetting(SA[500.0, 500.0], 490.0, 16), camera, frames, reg.rotations; saturated, kw...,
+                     plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
+                     vignetting_penalty_weight = 1.0e-6, solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))
+V = VgtkCore.estimate(res)
+cyl = panorama_view(Cylindrical(), (-90.0, 90.0, -45.0, 45.0), 0.1)
+seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, saturated, kw..., plane = 2, plane_offsets = nothing,
+                    chunk = 200_000)
+
+# 4. a cylindrical panorama, 0.1° per pixel, the vignetting divided out
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, kw...)
 ```
 
 `pano.image` is the panorama (rows from the top, columns the longitude, NaN where no frame sees the pixel), `pano.owner` the

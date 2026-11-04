@@ -22,6 +22,9 @@ _forward_map(b::VgtkCore.BoundedCamera) = _forward_map(VgtkCore.model(b))
 _forward_map(sp::VgtkCore.SplineProjection) = sp
 _forward_map(c) = throw(ArgumentError("PanoramaStitching: $(typeof(c).name.name) has no closed-form forward map; supply its " *
                                       "SplineProjection, VisualGeometryToolkitEstimation.fit_camera(SplineProjection, camera, region; tolerance)"))
+# The forward map on the frames' backend: a SplineProjection's control grid moved to the device (Core's adapt_structure), a
+# parametric camera's map unchanged.
+_forward_map(camera, proto) = Adapt.adapt(KA.get_backend(proto), _forward_map(camera))
 
 # The image circle less a margin (camera pixels): a `Circle` or an `Ellipse` shrunk by `m` along its axes, the whole plane kept.
 _rim(c::VgtkCore.Circle, m) = VgtkCore.Circle(c.center, c.r - m)
@@ -44,15 +47,16 @@ end
 # margin.
 _frame_region(circle, W, H, rim_margin_px) = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ _rim(circle, rim_margin_px)
 
-# Whether a frame sees a direction: its sensor point `u` is finite and in the region, its ray `f` within the field angle of the
-# camera frame's z axis (`f₃ > cos θ_max·‖f‖`), and its saturation sample `w` (the saturated mask's bilinear sample at u) zero —
-# no saturated pixel among the four the value blends.
+# Whether a frame sees a direction: its sensor point `u` is finite and in the region and its ray `f` within the field angle of
+# the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. A measurement (the sampling, the fit, the seam score)
+# also needs its saturation sample `w` (the saturated mask's bilinear sample at u) zero: no saturated pixel among the four the
+# value blends.
 struct _Sees{R, T}
     region::R
     cosmax::T
 end
-@inline (s::_Sees)(u, f, w) =
-    all(isfinite, u) && VgtkCore.Point2(u[1], u[2]) ∈ s.region && f[3] > s.cosmax * LinearAlgebra.norm(f) && iszero(w)
+@inline (s::_Sees)(u, f) = all(isfinite, u) && VgtkCore.Point2(u[1], u[2]) ∈ s.region && f[3] > s.cosmax * LinearAlgebra.norm(f)
+@inline (s::_Sees)(u, f, w) = s(u, f) && iszero(w)
 
 # The vignetting model where the frame sees the point, NaN elsewhere: the model is evaluated only at seen points (a grid's
 # back-projection, say, has no ray off its domain).
@@ -125,7 +129,7 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
     Hf, Wf, C = size(frames[1])
     C == 3 || throw(DimensionMismatch("sample_frames: frames are H × W × 3, got $(size(frames[1]))"))
     T = eltype(eltype(directions)); s = raw_scale
-    fwd = _forward_map(camera)
+    fwd = _forward_map(camera, frames[1])
     sees = _Sees(_frame_region(circle, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
     N = length(directions); D = reshape(directions, N)
     proto = frames[1]

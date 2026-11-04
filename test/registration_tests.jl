@@ -137,7 +137,8 @@ end
     Hf, Wf = size(frames[1], 1), size(frames[1], 2)
     on_ray(u, f) = q.V(VgtkCore.angle_between(f, q.axis))                           # V defined on the ray's direction
     on_sensor(u, f) = q.V(VgtkCore.angle_between(VgtkCore.backproject(q.cam, u), q.axis))   # V defined on the sensor
-    kw = (; circle = q.circle, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0, saturated = [falses(Hf, Wf) for _ in 1:3])
+    kw = (; circle = q.circle, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0)
+    saturated = [falses(Hf, Wf) for _ in 1:3]                                       # the sampling's measurement masks
     eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 150.0, -60.0, 60.0), 0.5)
     pano(cam, view = eq; vignetting = on_ray) = render_panorama(cam, frames, q.R, view; vignetting, kw...)
     g = pano(q.projection); p = pano(q.model)
@@ -161,7 +162,7 @@ end
     @test o.owner == p.owner && view(o.image, :, :, 2) == view(p.image, :, :, 2) && view(o.image, :, :, 1) != view(p.image, :, :, 1)
     pick = seen[1:97:end]
     D = [eq.rays(SVector(I[2] - 0.5, I[1] - 0.5)) for I in pick]
-    S = sample_frames(q.model, frames, q.R, D; vignetting = on_ray, plane_offsets = offsets, kw...)
+    S = sample_frames(q.model, frames, q.R, D; vignetting = on_ray, plane_offsets = offsets, saturated, kw...)
     @test all(i -> S.seen[i, o.owner[pick[i]]], eachindex(pick))
     @test maximum(i -> maximum(abs(S.values[i, o.owner[pick[i]], c] / S.vignetting[i, o.owner[pick[i]]] - o.image[pick[i], c]) for c in 1:3),
                   eachindex(pick)) < 1.0e-5

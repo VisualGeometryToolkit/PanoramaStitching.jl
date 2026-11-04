@@ -86,7 +86,7 @@ function panorama_view(camera::VgtkCore.CameraModel, width::Integer, height::Int
 end
 
 """
-    render_panorama(camera, frames, rotations, view; vignetting, circle, raw_scale, rim_margin_px, fov_deg, saturated,
+    render_panorama(camera, frames, rotations, view; vignetting, circle, raw_scale, rim_margin_px, fov_deg,
                     plane_offsets = nothing) -> (; image, owner, coverage, extent)
 
 The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the REVERSE warp, Core's
@@ -101,9 +101,11 @@ each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting
 
 A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside `circle`
 (a Core `Circle` or `Ellipse` in camera pixels, `WholePlane()` when the lens has no image circle) less `rim_margin_px` and
-at least 2 px inside the sensor, and no `saturated` pixel is among the four its value blends — the masks of
-[`sample_frames`](@ref), evaluated as batches at the warp's own sensor points. `frames` are `H × W × 3` linear images with
-`raw_scale` camera pixels per frame pixel, `saturated` their `H × W` masks; `plane_offsets` are the three planes' sample
+at least 2 px inside the sensor — the geometric masks of [`sample_frames`](@ref), evaluated as batches at the warp's own
+sensor points. The render shows the frames as they are: a saturated pixel is rendered with its clipped value (a window that
+clips in every frame comes out bright, not empty); saturation masks measurements only ([`sample_frames`](@ref),
+[`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images with `raw_scale` camera pixels
+per frame pixel; `plane_offsets` are the three planes' sample
 positions relative to the pixel centre in frame pixels (`nothing`: all at the centre) — a 2 × 2 Bayer binning's R and B sit
 at `(±¼, ±¼)` (VisualGeometryToolkitFeatures' `load_raw(…; mode = :bin2).plane_offsets`), and each plane is read at the
 sensor point less its offset. The masks and the vignetting are at the pixel centre's point.
@@ -118,15 +120,14 @@ Returns `image` (rows × columns × 3, NaN where no frame sees the pixel), `owne
 none), `coverage` (how many frames see each pixel), all on the frames' backend, and the view's `extent`.
 """
 function render_panorama(camera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView; vignetting, circle,
-                         raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, saturated::AbstractVector,
-                         plane_offsets = nothing)
+                         raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane_offsets = nothing)
     offsets = _plane_offsets(plane_offsets)
     K = length(frames)
-    length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("render_panorama: frames, rotations and saturated disagree"))
+    length(rotations) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(rotations)) rotations"))
     Hf, Wf, C = size(frames[1])
     C == 3 || throw(DimensionMismatch("render_panorama: frames are H × W × 3, got $(size(frames[1]))"))
     T = float(eltype(frames[1])); s = raw_scale
-    fwd = _forward_map(camera)
+    fwd = _forward_map(camera, frames[1])
     sees = _Sees(_frame_region(circle, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
     nv, nλ = view.size
     rect = VgtkCore.Rect(0, 0, nλ, nv)
@@ -144,8 +145,7 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
         fk = Rt ∘ view.rays
         VgtkCore.pointwise!(_SensorPoint{Float64}(bm, s), U, idx)
         VgtkCore.pointwise!(_RayAt{Float64}(fk), F, idx)
-        VgtkCore.image_warp!(w, bm, T.(saturated[k]))
-        VgtkCore.pointwise!(sees, ok, U, F, w)
+        VgtkCore.pointwise!(sees, ok, U, F)
         VgtkCore.pointwise!(_Vignetting(vignetting, T), V, ok, U, F)
         for c in 1:3
             # a plane whose samples sit at o_c (frame pixels) is read at the frame point less o_c

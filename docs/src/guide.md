@@ -5,7 +5,7 @@ The camera is calibrated and fixed; its lens may have any field of view, so a fi
 as a pinhole. All geometry is on unit bearings (VisualGeometryToolkitCore's `backproject`), never on the `z = 1` plane, and
 every residual is measured in the camera's pixels.
 
-The pipeline has three steps:
+The pipeline has four steps:
 
 1. [`register_rotations`](@ref) — the rotation `R_k` of every frame (`d = R_k·f_k`, a bearing `f_k` of frame `k` to a world
    direction `d`; the first frame's camera frame is the common frame).
@@ -14,6 +14,8 @@ The pipeline has three steps:
    vignetting there — the observations of a vignetting validation or fit.
 3. [`render_panorama`](@ref) — the panorama into a view ([`panorama_view`](@ref): a cylindrical-family projection or a
    virtual camera) by the reverse warp of the frames, unblended; [`render_cube_map`](@ref) renders the six faces of a cube map.
+4. [`fit_vignetting`](@ref) — the camera's vignetting from the frames alone (every pixel of every frame, at its own pixel
+   centre, is the scene's radiance times V), and [`score_seams`](@ref), how well a vignetting makes overlapping frames agree.
 
 Steps 2 and 3 run on VisualGeometryToolkitCore's warping machinery — `image_warp`/`image_warp!`, `image_sample!` and
 `pointwise!`, KernelAbstractions kernels — on the backend that owns the frames: GPU arrays (`CuArray`) run on the device,
@@ -111,12 +113,13 @@ error, and `I_k = L(d)·V(u_k)` is the equation of a panorama vignetting fit.
 
 [`panorama_view`](@ref) builds the raster and its pixel → ray map; [`render_panorama`](@ref) warps every frame into it (Core's
 `image_warp`, one fused map `camera ∘ R_kᵀ ∘ rays` per frame), divides by the vignetting and keeps, at each pixel, the LAST
-frame that sees it — no gain, no seam, no blend:
+frame that sees it — no gain, no seam, no blend. It renders the frames as they are: a saturated pixel keeps its clipped value
+(the masks are for measurements — the sampling, the fit and the seam score — not for pictures):
 
 ```julia
 cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.05)   # columns longitude, rows tan(latitude)
 pano = render_panorama(projection, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
-                       rim_margin_px = 12.0, fov_deg = 89.0, saturated)
+                       rim_margin_px = 12.0, fov_deg = 89.0)
 pano.image      # rows × columns × 3, NaN where no frame sees the pixel
 pano.owner      # the frame each pixel holds
 pano.coverage   # how many frames see each pixel
@@ -137,3 +140,28 @@ planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(
 
 [`render_cube_map`](@ref) renders the six 90° faces and their horizontal cross. To level the horizon, supply
 `up = up_frame(pitch, roll)` to `panorama_view` (the first frame's pitch and roll against the true horizon, degrees).
+
+## 4. The vignetting from the frames
+
+A rotating camera sees each scene direction at several sensor points, so its frames determine its vignetting up to one
+scale. [`fit_vignetting`](@ref) uses every pixel of every frame inside the domain, read at its own pixel centre — no
+interpolation of the frames: `log I_k(p) = log L(R_k·f(p)) + log V(u(p))`, the pixel's ray `f(p)` the camera's
+back-projection (computed once: every frame shares the pixel grid), the scene `log L` a cubic B-spline over an
+[`AzimuthalChart`](@ref) of the covered sphere with a difference penalty, and `log V` a cubic B-spline in the distance from a
+centre ([`RadialVignetting`](@ref)) or over the sensor ([`TensorVignetting`](@ref)). The least squares is weighted by I²;
+its gauge is mean log V = 0 over the domain. The normal equations are accumulated by atomic scatter-add on the frames'
+backend (GPU arrays on the device) and solved by conjugate gradients there, or by a host Cholesky factorization:
+
+```julia
+space = RadialVignetting(SA[500.0, 500.0], 490.0, 16)          # centre, radius (camera pixels), controls
+res = fit_vignetting(space, camera, frames, reg.rotations; saturated, circle, raw_scale = 2, rim_margin_px = 12.0,
+                     fov_deg = 89.0, plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3,
+                     penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6,
+                     solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
+V = VgtkCore.estimate(res)        # a SplineVignetting: V(u, f), the vignetting keyword of render_panorama
+```
+
+A sweep about one axis does not observe a 2-D V's tilt across it (a field that varies only with the ray's height is unchanged
+by a pure yaw, so L absorbs it): fit the tensor space only to frames with pitch and roll diversity. [`score_seams`](@ref)
+measures the result where it matters, at the seams of the unblended panorama: per raster pixel measured by two frames or more,
+the median log ratio of the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.

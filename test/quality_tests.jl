@@ -5,7 +5,8 @@
     using Test, Aqua, ExplicitImports, JET
     import VisualGeometryToolkitCore as VgtkCore
     using PanoramaStitching
-    VgtkCore.test_quality_gates(PanoramaStitching; jet_bound = 0)
+    # Atomix declares no public names; `Atomix.@atomic` is its documented API (the vignetting fit's scatter-add)
+    VgtkCore.test_quality_gates(PanoramaStitching; jet_bound = 0, qualified_ignore = (Symbol("@atomic"),))
 end
 
 @testitem "agent docs and the conventions pointer" begin

@@ -6,9 +6,11 @@ PanoramaStitching: the panorama of a camera that only rotated, through a calibra
 its frames (`register_rotations`: ASIFT + DeDoDe + LoMa features, `find_rotation` per frame pair, the view graph's robust rotation
 averaging, the tracks and the rotation and direction bundle), the frames sampled at directions of the sphere
 (`sample_frames`) and the panorama in any view (`render_panorama`, `render_cube_map`), both on Core's warping machinery
-(KernelAbstractions: GPU arrays or the host, one code path; no per-pixel or per-direction host loops). A package of the
-VisualGeometryToolkit stack; it does no radiometry (a vignetting fit consumes its rotations, direction samples and panoramas
-downstream).
+(KernelAbstractions: GPU arrays or the host, one code path; no per-pixel or per-direction host loops), and the camera's
+vignetting from the frames alone (`fit_vignetting`, interpolation free: every pixel at its centre, the scene a spline on the
+sphere fitted with V) with the seams it leaves (`score_seams`). A package of the VisualGeometryToolkit stack; its only
+radiometry is that vignetting fit. Saturation masks measurements (`sample_frames`, `fit_vignetting`, `score_seams`), never a
+render.
 
 ## Commands
 
@@ -32,6 +34,12 @@ from the registries (CauRegistry; General for those it holds).
 - `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
   render shares.
 - `src/panorama.jl` — `panorama_view`, `render_panorama`, `render_cube_map`.
+- `src/vignetting.jl` — `fit_vignetting`: the spline spaces (`RadialVignetting`, `TensorVignetting`), the scene's
+  `AzimuthalChart`, the scatter-add kernels of the normal equations (KernelAbstractions + Atomix), device CG or host
+  Cholesky (SparseArrays).
+- `src/seams.jl` — `score_seams`: the seam ratio per raster pixel through `sample_frames`.
+- `examples/panorama_vignetting/` — the RAW-to-corrected-panorama driver (`run.jl`) and its configs of record; its own
+  environment (`Project.toml`, not a workspace member: CUDA and LibRaw_jll).
 
 ## Git Commit Conventions
 
