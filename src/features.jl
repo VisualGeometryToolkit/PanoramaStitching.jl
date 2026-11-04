@@ -57,10 +57,12 @@ function detect_features(frame::AbstractArray{<:Real, 3}, descriptor; raw_scale:
     for c in 1:3
         img[c, :, :] .= VgtkCore.image_warp!(plane, bm, view(toned, :, :, c))
     end
-    # the detections in the network's coordinates (the descriptor reads their centres); the order is kept
+    # the detections in the network's coordinates (the descriptor reads their centres); the order is kept. A frame's moment
+    # matrix moves by the scaling A = diag(sx, sy) as A·M·Aᵀ
     sx, sy = LOMA_SIZE / Wf, LOMA_SIZE / Hf
+    A = SMatrix{2, 2, Float64, 4}(sx, 0, 0, sy)
     scaled = [VgtkFeatures.Detection(VgtkCore.EllipticFrame(VgtkCore.Point2(sx * dets[i].center[1], sy * dets[i].center[2]),
-                                                            SMatrix{2, 2, Float64}(sx^2, 0, 0, sy^2) .* VgtkCore.moment_matrix(dets[i])),
+                                                            A * VgtkCore.moment_matrix(dets[i]) * A'),
                                      dets[i].metadata) for i in keep]
     pixels = [SVector(s * dets[i].center[1], s * dets[i].center[2]) for i in keep]
     return FrameFeatures(pixels, descriptor(img, scaled), n)
