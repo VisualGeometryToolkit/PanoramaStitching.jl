@@ -49,7 +49,7 @@ end
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
-                       bundle_xtol, say = _ -> nothing) -> Registration
+                       bundle_xtol, bundle_whitening = :none, say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
@@ -75,14 +75,20 @@ RANSAC's:
   with at least `min_inliers` inliers.
 - graph and bundle: `averaging_loss`, `bundle_loss` (stack loss shapes),
   `bundle_scale_multiple`, `bundle_iterations`, `bundle_max_iter`, `bundle_ftol`,
-  `bundle_xtol` — see [`refine_rotations`](@ref).
+  `bundle_xtol` — see [`refine_rotations`](@ref). `bundle_whitening = :none`
+  (the default) weighs every observation alike, in pixels;
+  `:keypoint_covariance` whitens each by its keypoint's position covariance
+  ([`FrameFeatures`](@ref)'s `pixel_covariances`; a keypoint the detector did
+  not refine takes the isotropic median), the loss acting on the whitened
+  residuals.
 
 `say` receives one line per frame, pair and step.
 
 A task verb: it composes the estimators above and does none of its own. Each
 pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
 stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
-`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap` and a `projection` that
+`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a `bundle_whitening`
+other than `:none` or `:keypoint_covariance` and a `projection` that
 is no closed-form forward map (a grid model without its `SplineProjection`) are
 an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
@@ -94,8 +100,10 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
-                            bundle_xtol::Real, say = _ -> nothing)
+                            bundle_xtol::Real, bundle_whitening::Symbol = :none, say = _ -> nothing)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("register_rotations: pairs = :$pairs is not :all or :lag_overlap"))
+    bundle_whitening in (:none, :keypoint_covariance) ||
+        throw(ArgumentError("register_rotations: bundle_whitening = :$bundle_whitening is not :none or :keypoint_covariance"))
     pairs === :all || max_lag >= 1 || throw(ArgumentError("register_rotations: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
     _forward_map(projection)                                                 # refused before the features, not after
     K = length(frames)
@@ -142,13 +150,29 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
     say("  rotation averaging: $(length(graph.rotations)) edges, σ̂ $(round(rad2deg(avg.sigma); digits = 4))°, $(avg.retcode)")
     ts, dropped = chain_tracks(inlier_matches)
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
-    obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts]
+    obs = bundle_whitening === :none ? [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts] : _uncertain_observations(feats, ts; say)
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; projection, loss = bundle_loss, scale_multiple = bundle_scale_multiple,
                               iterations = bundle_iterations, max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.start_nonfinite) observations not finite at the start)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
     return Registration(Rs, graph, stats, avg, ts, dropped, bundle, feats)
+end
+
+# The bundle's observations with their keypoints' position covariances (`bundle_whitening = :keypoint_covariance`): each
+# `frame => Uncertain(pixel, CovMat(Σ))`, Σ the keypoint's camera-pixel covariance (`FrameFeatures`). A keypoint the detector did
+# not refine (Σ NaN), or whose Σ is not positive definite, takes the isotropic fallback σ²·I, σ² the median over the tracks'
+# refined keypoints of tr Σ / 2.
+function _uncertain_observations(feats, ts; say = _ -> nothing)
+    valid(Σ) = all(isfinite, Σ) && Σ[1, 1] > 0 && Σ[1, 1] * Σ[2, 2] - Σ[1, 2] * Σ[2, 1] > 0
+    Σs = [feats[k].pixel_covariances[kp] for t in ts for (k, kp) in t]
+    good = filter(valid, Σs)
+    isempty(good) && throw(ArgumentError("register_rotations: bundle_whitening = :keypoint_covariance, but no tracked keypoint has a covariance"))
+    fallback = SMatrix{2, 2, Float64, 4}(Statistics.median(Σ[1, 1] + Σ[2, 2] for Σ in good) / 2 * I)
+    say("  bundle whitening: keypoint covariances, $(length(Σs) - length(good)) of $(length(Σs)) observations take the isotropic fallback " *
+        "($(round(sqrt(fallback[1, 1]); sigdigits = 3)) px)")
+    return [[k => VgtkCore.Uncertain(feats[k].pixels[kp], VgtkCore.CovMat(valid(feats[k].pixel_covariances[kp]) ? feats[k].pixel_covariances[kp] : fallback))
+             for (k, kp) in t] for t in ts]
 end
 
 # The RANSAC sampler of the pair (i, j): Core's `stable_seed` keyed by the pair's frame indices (a SHA-256 of the integers'

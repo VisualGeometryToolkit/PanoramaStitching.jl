@@ -34,13 +34,15 @@ if _SCHUR
 end
 
 # One observation: √w (π(R_kᵀ d_j) − x_jk), pixels, through the fixed camera: `projection` its forward map π (`_forward_map`),
-# `camera` its back-projection (the Jacobian's).
-struct _Observation{E, C, P, L} <: NLLSsolver.AbstractResidual
+# `camera` its back-projection (the Jacobian's). `whitening` is `nothing` (the pixel residual) or L⁻¹ of the observation's
+# pixel covariance Σ = LLᵀ (the residual L⁻¹(π − x) and its Jacobian L⁻¹J, in units of the covariance's unit noise).
+struct _Observation{E, C, P, L, W} <: NLLSsolver.AbstractResidual
     camera::C
     projection::P
     x::SVector{2, Float64}
     varind::SVector{2, Int}
     kernel::L
+    whitening::W
 end
 NLLSsolver.ndeps(::_Observation) = static(2)
 NLLSsolver.nres(::_Observation) = static(2)
@@ -67,21 +69,41 @@ end
 @inline _images(camera::VgtkCore.BoundedCamera, u) = _images(VgtkCore.model(camera), u)
 @inline _images(camera, u) = true
 
-NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::_TrackDirection) = _project(r, _camera_direction(ch, d)) - r.x
+# An observation's pixel and whitening: a bare pixel has none; an `Uncertain` pixel's is Core's `whitening_factor` of the
+# residual π − x (its measurement Jacobian −I, so L⁻¹ of the covariance Σ = LLᵀ), refused unless Σ is finite and positive
+# definite (Core's factor is NaN or zero then).
+_observed_pixel(x) = x
+_observed_pixel(x::VgtkCore.Uncertain) = VgtkCore.geom(x)
+_observation_whitening(x) = nothing
+function _observation_whitening(x::VgtkCore.Uncertain)
+    Σ = SMatrix{2, 2, Float64, 4}(Statistics.cov(x))
+    Li = VgtkCore.whitening_factor(-SMatrix{2, 2, Float64, 4}(I), Σ)
+    (all(isfinite, Li) && !iszero(Li)) || throw(ArgumentError("refine_rotations: an observation's covariance $Σ is not finite and positive definite"))
+    return Li
+end
+
+# The whitening of a residual or its Jacobian: none, or L⁻¹ (the observation's pixel covariance Σ = LLᵀ).
+@inline _whiten(::Nothing, x) = x
+@inline _whiten(Li::SMatrix{2, 2, Float64, 4}, x) = Li * x
+
+# The pixel residual π(R_kᵀ d_j) − x_jk (unwhitened: the residual norms the metadata reports).
+@inline _pixel_residual(r::_Observation, ch::VgtkCore.RotationChart, d::_TrackDirection) = _project(r, _camera_direction(ch, d)) - r.x
+
+NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::_TrackDirection) = _whiten(r.whitening, _pixel_residual(r, ch, d))
 
 # The closed-form 2 × 5 Jacobian at the variables' anchors: ∂π/∂f on the tangent plane is the pseudo-inverse of the
 # camera's back-projection Jacobian M at π(f) (`backproject_with_jacobian`), f = R_kᵀ·exp(−ω)·d moves by R_kᵀ[d]×·dω
 # and by R_kᵀ·∂d/∂v along the direction's chart.
 # `varflags` (NLLSsolver's): bit 1 the frame, bit 2 the direction — only the free variables' columns are returned (the
-# gauge frame is fixed).
+# gauge frame is fixed). A whitened observation returns L⁻¹e and L⁻¹J (L fixed: the residual's exact Jacobian).
 function NLLSsolver.computeresjac(varflags, r::_Observation, ch::_FrameChart, d::_TrackDirection)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.ch); f = R' * dir
     u = _project(r, f)
     _, M = VgtkCore.backproject_with_jacobian(r.camera, u)
-    Mp = (M' * M) \ M'
+    Mp = _whiten(r.whitening, (M' * M) \ M')
     Jω = Mp * (R' * VgtkCore.skew(dir))
     Jv = Mp * (R' * VgtkCore.retract_jacobian(d.ch))
-    e = u - r.x
+    e = _whiten(r.whitening, u - r.x)
     varflags == 3 && return e, hcat(Jω, Jv)
     return varflags == 2 ? (e, Jv) : (e, Jω)
 end
@@ -91,8 +113,9 @@ end
 
 `FitResult` metadata of [`refine_rotations`](@ref): `directions` (one unit
 direction per track, the common frame), `residuals` (per track, the pixel
-reprojection error norm of each of its observations at the result),
-`loss_width` (px, of the last NLLSsolver run), `n_observations`,
+reprojection error norm of each of its observations at the result, unwhitened),
+`loss_width` (of the last NLLSsolver run: px, or in whitened units when the
+observations carry covariances), `n_observations`,
 `start_nonfinite` (the observations whose residual or Jacobian is not finite
 at the start: a start prediction outside the lens's domain, where the camera
 has no back-projection Jacobian) and `outcome`, the bundle's outcome:
@@ -136,11 +159,18 @@ per track minimizing the robust sum of the pixel reprojection errors
 bearing in the common frame.
 
 - `tracks` — `AbstractVector` of tracks, each an `AbstractVector` of `frame =>
-  pixel` observations (pixels in the camera's frame), two frames at least.
+  pixel` observations (pixels in the camera's frame), two frames at least. A
+  pixel may be VisualGeometryToolkitCore's `Uncertain(pixel, CovMat(Σ))`, its
+  2 × 2 covariance `Σ = LLᵀ` (finite, positive definite, up to one global
+  scale): the residual is then whitened, `L⁻¹(π(R_kᵀ d_j) − x_jk)`, and the
+  loss acts on the whitened residual. Every observation carries a covariance
+  or none does.
 - `loss`, `scale_multiple` — the stack loss shape (NLLSsolver's robustifier,
   `loss_robustifier`) and its width as a multiple of the Rayleigh scale of the
-  reprojection error norms at the start of each of the `iterations` NLLSsolver
-  runs (`max_iter`, `ftol`, `xtol` each: `nlls_options`).
+  residual norms (pixels, or whitened: the one global scale that absorbs the
+  noise level and the model error the covariances leave out) at the start of
+  each of the `iterations` NLLSsolver runs (`max_iter`, `ftol`, `xtol` each:
+  `nlls_options`).
 - `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
@@ -148,7 +178,9 @@ bearing in the common frame.
 A refine ends in the local minimum its start leads to; the result's `retcode`
 and its metadata's `outcome` ([`RotationBundleMetadata`](@ref)) say how the
 bundle ended. A track observed in fewer than two frames, or naming a frame
-without a start rotation, is an `ArgumentError`.
+without a start rotation, some observations with a covariance and some
+without, and a covariance that is not finite and positive definite are an
+`ArgumentError`.
 """
 function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector; projection = camera,
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
@@ -158,43 +190,51 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     fid = Dict(k => v for (v, k) in enumerate(frames))
     E = eliminate && _SCHUR
     V = Union{_FrameChart, _TrackDirection{E, _SphereChart}}
-    nobs = 0
+    nobs = 0; nuncertain = 0
     for t in tracks
         length(unique(first.(t))) >= 2 || throw(ArgumentError("refine_rotations: a track needs observations in two frames"))
         all(o -> haskey(fid, first(o)), t) || throw(ArgumentError("refine_rotations: a track names a frame with no start rotation"))
-        nobs += length(t)
+        nobs += length(t); nuncertain += count(o -> last(o) isa VgtkCore.Uncertain, t)
     end
+    0 < nuncertain < nobs && throw(ArgumentError("refine_rotations: $nuncertain of $nobs observations carry a covariance; " *
+                                                 "every observation or none must"))
+    # per observation: its pixel and its whitening (nothing, or L⁻¹ of its covariance)
+    pixel(o) = SVector{2, Float64}(_observed_pixel(last(o)))
+    Wt = nuncertain > 0 ? SMatrix{2, 2, Float64, 4} : Nothing
+    whitenings = [Wt[_observation_whitening(last(o)) for o in t] for t in tracks]
     # the start: the frames' rotations, each track's mean bearing in the common frame
     vars = V[VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(rotations[k])) for k in frames]
     for t in tracks
-        m = sum(SMatrix{3, 3, Float64, 9}(rotations[first(o)]) * VgtkCore.backproject(camera, SVector{2, Float64}(last(o))) for o in t)
+        m = sum(SMatrix{3, 3, Float64, 9}(rotations[first(o)]) * VgtkCore.backproject(camera, pixel(o)) for o in t)
         push!(vars, _TrackDirection{E}(VgtkCore.SphereManifold(m)))
     end
     unfixed = trues(length(vars)); unfixed[1] = false                       # the gauge frame
     width = NaN
-    residual_norms() = [[norm(NLLSsolver.computeresidual(_Observation{E, C, P, Nothing}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), nothing),
-                                                         vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E})) for o in t]
-                        for (j, t) in enumerate(tracks)]
+    observation(kernel, j, i, o) = _Observation{E, C, P, typeof(kernel), Wt}(camera, fwd, pixel(o), SVector(fid[first(o)], length(frames) + j),
+                                                                              kernel, whitenings[j][i])
+    residual_norms(f) = [[norm(f(observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E}))
+                          for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
     # the start's finiteness: the observations whose residual or Jacobian is not finite there (the bundle's outcome)
     start_nonfinite = 0
-    for (j, t) in enumerate(tracks), o in t
-        r = _Observation{E, C, P, Nothing}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), nothing)
-        e, J = NLLSsolver.computeresjac(3, r, vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E})
+    for (j, t) in enumerate(tracks), (i, o) in enumerate(t)
+        e, J = NLLSsolver.computeresjac(3, observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E})
         (all(isfinite, e) && all(isfinite, J)) || (start_nonfinite += 1)
     end
     start_rotations = [SMatrix{3, 3, Float64, 9}((vars[i]::_FrameChart).R) for i in eachindex(frames)]
     result = nothing
     for _ in 1:iterations
-        rn = reduce(vcat, residual_norms())
+        # the loss width: a multiple of the Rayleigh scale of the residual norms the loss acts on (pixels, or whitened: the
+        # one global scale that absorbs the noise level and the model error the unit-noise covariances leave out)
+        rn = reduce(vcat, residual_norms(NLLSsolver.computeresidual))
         σ = Statistics.median(filter(isfinite, rn)) / sqrt(VgtkCore.chisq_median(2))
         width = scale_multiple * σ
         kernel = VgtkCore.loss_robustifier(loss, width)
-        problem = NLLSsolver.NLLSProblem(V, _Observation{E, C, P, typeof(kernel)})
+        problem = NLLSsolver.NLLSProblem(V, _Observation{E, C, P, typeof(kernel), Wt})
         for v in vars
             NLLSsolver.addvariable!(problem, v)
         end
-        for (j, t) in enumerate(tracks), o in t
-            NLLSsolver.addcost!(problem, _Observation{E, C, P, typeof(kernel)}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), kernel))
+        for (j, t) in enumerate(tracks), (i, o) in enumerate(t)
+            NLLSsolver.addcost!(problem, observation(kernel, j, i, o))
         end
         result = NLLSsolver.optimize!(problem, VgtkCore.nlls_options(; max_iter, ftol, xtol), unfixed)
         vars = problem.variables
@@ -202,7 +242,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     code = result === nothing ? :max_iterations : VgtkCore.lm_retcode(VgtkCore.nlls_stop_code(result.termination))   # NLLSsolver's stop, decoded (no stall test here)
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[length(frames) + j]::_TrackDirection{E}).ch)) for j in eachindex(tracks)]
-    rn = residual_norms(); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
+    rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
     unmoved = all(i -> SMatrix{3, 3, Float64, 9}((vars[i]::_FrameChart).R) == start_rotations[i], eachindex(frames))
     outcome = iterations == 0 ? :not_run : code === :converged ? :converged :
               code === :solve_failed && unmoved && start_nonfinite > 0 ? :nonfinite_start : code

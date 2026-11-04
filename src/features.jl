@@ -16,11 +16,16 @@ const LOMA_SIZE = 784
     FrameFeatures
 
 One frame's features: `pixels` (the kept detections' centres in the camera's
-pixel frame, full resolution), `features` (their DeDoDe descriptions),
-`n_detected` (ASIFT's count before the circle and the strength selection).
+pixel frame, full resolution), `pixel_covariances` (each centre's 2 × 2
+position covariance in camera pixels², VisualGeometryToolkitFeatures'
+`FeatureCovariance` for unit iid noise of the tone-mapped detection image,
+scaled as the centres are; all `NaN` for a detection the detector did not
+refine), `features` (their DeDoDe descriptions), `n_detected` (ASIFT's count
+before the circle and the strength selection).
 """
 struct FrameFeatures{F}
     pixels::Vector{SVector{2, Float64}}
+    pixel_covariances::Vector{SMatrix{2, 2, Float64, 4}}
     features::F
     n_detected::Int
 end
@@ -65,7 +70,10 @@ function detect_features(frame::AbstractArray{<:Real, 3}, descriptor; raw_scale:
                                                             A * VgtkCore.moment_matrix(dets[i]) * A'),
                                      dets[i].metadata) for i in keep]
     pixels = [SVector(s * dets[i].center[1], s * dets[i].center[2]) for i in keep]
-    return FrameFeatures(pixels, descriptor(img, scaled), n)
+    # the centres' position covariance (the top-left 2 × 2 of the (x, y, log σ) covariance, detection-image pixels²), in camera
+    # pixels² as the centres are scaled: s²·Σ
+    covs = [(Σ = Statistics.cov(dets[i]); s^2 * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2])) for i in keep]
+    return FrameFeatures(pixels, covs, descriptor(img, scaled), n)
 end
 
 """
