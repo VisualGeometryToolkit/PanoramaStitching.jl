@@ -13,8 +13,8 @@ using VisualGeometryToolkitCore: SplineProjection
 export sequence
 
 # the scene: random Gaussian blobs on an equirectangular texture; the camera: a KB fisheye (f = 300 px) imaging to 100° off axis;
-# K frames rotating 35° about the vertical, 2×2 binned; a vignetting V(θ) = exp(−θ²/2·1.4²) and per-frame gains
-function sequence(; K = 4, spline = false)
+# K frames rotating 35° about the vertical (`yaw_deg[k]` for k ≥ 2; frame 1 is the common frame, at the identity), 2×2 binned; a vignetting V(θ) = exp(−θ²/2·1.4²) and per-frame gains
+function sequence(; K = 4, spline = false, yaw_deg = 35.0 .* (0:(K - 1)))
     rng = StableRNG(7)
     TW, TH = 2048, 1024
     tex = fill(0.15f0, TH, TW, 3)
@@ -37,7 +37,7 @@ function sequence(; K = 4, spline = false)
     cam = CentralGenericModel(model, (W, H); grid_size = (40, 40))
     circle = Circle(Point2(500.0, 500.0), 480.0)
     axis = backproject(cam, SVector(500.0, 500.0))
-    R = [k == 1 ? SMatrix{3, 3}(1.0I) : SMatrix{3, 3}(exp_so3(SVector(0.05randn(rng), deg2rad(35) * (k - 1), 0.05randn(rng)))) for k in 1:K]
+    R = [k == 1 ? SMatrix{3, 3}(1.0I) : SMatrix{3, 3}(exp_so3(SVector(0.05randn(rng), deg2rad(yaw_deg[k]), 0.05randn(rng)))) for k in 1:K]
     gains = [1.0; exp.(0.1 .* randn(rng, K - 1))]
     frames = map(1:K) do k
         img = zeros(Float32, Hf, Wf, 3)
@@ -147,6 +147,56 @@ end
           "(true V), $(round(median(bad); digits = 4)) (a wrong V)"
     @test length(good) > 1000
     @test median(good) < 0.03 && median(bad) > 3 * median(good)
+end
+
+@testitem "register_rotations: a dropped lag pair, the overlap pairs connect the frames" setup = [SyntheticSequence] begin
+    # frames at yaw 0°, 180° and 90° in capture order, keypoints inside the circle less 60 px (r ≤ 420 px: ~84° off axis): the
+    # lag pair 0-1 shares no keypoint's scene and is dropped, which leaves frame 0 a part of its own; the pair 0-2, between the
+    # two parts, is verified and joins them (with the 20 px margin of the sweep above, the ~13° rim of 0-1 is verified)
+    using Test, LinearAlgebra, StaticArrays
+    using PanoramaStitching: register_rotations
+    import VisualGeometryToolkitCore as VgtkCore
+    q = sequence(; K = 3, spline = true, yaw_deg = [0.0, 180.0, 90.0])
+    reg = register_rotations(q.frames, q.cam; projection = q.projection, raw_scale = q.raw_scale, circle = q.circle, tone_percentile = 99.5,
+                             detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
+                             min_score = 0.0, pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0, min_inliers = 40, seed = 1,
+                             max_trials = 10000, min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
+                             bundle_scale_multiple = 3.0, bundle_iterations = 3, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+    @test sort(collect(keys(reg.pairs))) == [(1, 3), (2, 3)]
+    errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:3]
+    @info "a dropped lag pair: rotation errors (deg) $(round.(errs; digits = 4))"
+    @test maximum(errs) < 0.05
+end
+
+@testitem "register_rotations: the overlap pairs of :lag_overlap, and the pairs' samplers" begin
+    # frames 30° apart in yaw (overlap_deg 70°: the pairs two apart overlap), a pair verified with its true rotation (f_j = R_ij·f_i,
+    # R_ij = R_jᵀR_i) unless it is in `dropped`; the order in which the pairs past the lag are tried, after the lag pairs
+    using Test, StaticArrays
+    using PanoramaStitching: PanoramaStitching, ViewGraph
+    import VisualGeometryToolkitCore as VgtkCore
+    function tried_pairs(K, dropped)
+        R = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:K]
+        verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}()
+        tried = Tuple{Int, Int}[]
+        verify(i, j) = ((i, j) in dropped || (verified[(i, j)] = (rotation = R[j]' * R[i], inliers = 100)); nothing)
+        foreach(k -> verify(k, k + 1), 1:(K - 1))
+        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, 70.0, VgtkCore.HuberShape())
+        return tried, verified
+    end
+    @test first(tried_pairs(6, [])) == [(1, 3), (2, 4), (3, 5), (4, 6)]                # connected: the aimed pairs only
+    # the lag pair 3-4 dropped: the nearest pair between {1, 2, 3} and {4, 5, 6} joins them, then the aimed pairs
+    tried, verified = tried_pairs(6, [(3, 4)])
+    @test tried == [(2, 4), (1, 3), (3, 5), (4, 6)]
+    @test length(ViewGraph(collect(1:6), verified).frames) == 6
+    @test first(tried_pairs(6, [(3, 4), (2, 4)])) == [(2, 4), (3, 5), (1, 3), (4, 6)]  # the nearest dropped too: the next
+    @test first(tried_pairs(6, [(1, 2)])) == [(1, 3), (2, 4), (3, 5), (4, 6)]          # frame 1 a part of its own
+    # nothing joins {1, 2} and {3, 4}: every pair between them tried, the graph refused
+    tried, verified = tried_pairs(4, [(2, 3), (1, 3), (2, 4), (1, 4)])
+    @test tried == [(1, 3), (2, 4), (1, 4)]
+    @test_throws ArgumentError ViewGraph(collect(1:4), verified)
+    # the samplers: one stream per (seed, i, j), reproducible
+    draw(s, i, j) = rand(PanoramaStitching._pair_rng(s, i, j), UInt64, 4)
+    @test draw(1, 1, 2) == draw(1, 1, 2) && draw(1, 1, 2) != draw(1, 1, 3)
 end
 
 @testitem "render_panorama: the warp through any camera reproduces the scene, in any view" setup = [SyntheticSequence] begin

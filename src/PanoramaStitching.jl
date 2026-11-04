@@ -20,13 +20,14 @@ cameras, rotation charts, panorama projections and warping machinery
 arrays, the same code on the host); KernelAbstractions.jl and Atomix.jl (the
 vignetting fit's normal equations), Adapt.jl (a camera's forward map moved to the
 frames' backend), SparseArrays (the fit's host Cholesky solve),
-Graphs.jl, DataStructures.jl and NLLSsolver.jl.
+Graphs.jl, DataStructures.jl, NLLSsolver.jl and StableRNGs.jl (the pairs'
+RANSAC samplers, seeded by VisualGeometryToolkitCore's `stable_seed`).
 """
 module PanoramaStitching
 
 using LinearAlgebra: LinearAlgebra, I, norm, normalize, dot, cross
 using Statistics: Statistics, quantile
-using Random: Random, Xoshiro
+using StableRNGs: StableRNG
 using Static: static
 using StaticArrays: SVector, SMatrix, StaticVector
 using Rotations: RotMatrix

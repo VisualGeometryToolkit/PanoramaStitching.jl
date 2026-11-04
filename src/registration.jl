@@ -66,8 +66,10 @@ RANSAC's:
   [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`); `min_score`.
 - pairs: `pairs = :all` (every frame pair) or `:lag_overlap` (pairs at most
-  `max_lag` apart, then those whose averaged optical axes are within
-  `overlap_deg`); a pair is verified by `find_rotation` (its `scoring` and
+  `max_lag` apart; while the verified pairs leave the frames in more than one
+  part, as when a lag pair is dropped, the pair between two parts nearest in
+  capture order; then those whose optical axes, aimed by the rotation
+  averaging of the verified pairs, are within `overlap_deg`); a pair is verified by `find_rotation` (its `scoring` and
   `local_optimization` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
   with at least `min_inliers` inliers.
@@ -78,14 +80,13 @@ RANSAC's:
 `say` receives one line per frame, pair and step.
 
 A task verb: it composes the estimators above and does none of its own. Each
-pair's RANSAC sampler is seeded from `seed` and the pair's frame indices. A
-`pairs` other than `:all` or `:lag_overlap` and a `projection` that is no
-closed-form forward map (a grid model without its `SplineProjection`) are an
-`ArgumentError` before any feature is detected. With `pairs = :all`, a view
-graph that is not connected once the pairs with fewer than `min_inliers`
-inliers are dropped (its frames have no common frame, [`ViewGraph`](@ref)) is
-an `ArgumentError` too; with `:lag_overlap`, the lag pairs alone must connect
-the frames, since their rotation averaging aims the overlap pairs.
+pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
+stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
+`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap` and a `projection` that
+is no closed-form forward map (a grid model without its `SplineProjection`) are
+an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
+pairs with fewer than `min_inliers` inliers are dropped (its frames have no
+common frame, [`ViewGraph`](@ref)) is an `ArgumentError` too.
 """
 function register_rotations(frames::AbstractVector, camera; projection = camera, raw_scale::Integer, circle, tone_percentile::Real, detector_margin_px::Real,
                             asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,
@@ -95,6 +96,7 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
                             bundle_xtol::Real, say = _ -> nothing)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("register_rotations: pairs = :$pairs is not :all or :lag_overlap"))
+    pairs === :all || max_lag >= 1 || throw(ArgumentError("register_rotations: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
     _forward_map(projection)                                                 # refused before the features, not after
     K = length(frames)
     desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections)
@@ -114,7 +116,7 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
             say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches → dropped"); return nothing
         end
         cs, kept = pair_bearings(camera, feats[i], feats[j], ms)
-        kw = (; max_trials, min_trials, rng = Xoshiro(seed + 1000i + j))
+        kw = (; max_trials, min_trials, rng = _pair_rng(seed, i, j))
         kw = scoring === nothing ? kw : merge(kw, (; scoring))
         kw = local_optimization === nothing ? kw : merge(kw, (; local_optimization))
         res = VgtkEstimation.find_rotation(cs; kw...)
@@ -134,14 +136,7 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
     for i in 1:K, j in (i + 1):K
         (pairs === :all || j - i <= max_lag) && verify(i, j)
     end
-    if pairs === :lag_overlap
-        lag_averaging = VgtkEstimation.fit_rotation_averaging(Dict(p => e.rotation for (p, e) in verified),
-                                                           Dict(p => Float64(e.inliers) for (p, e) in verified); loss = averaging_loss)
-        z = SVector(0.0, 0.0, 1.0); A = VgtkCore.estimate(lag_averaging)
-        for i in 1:K, j in (i + max_lag + 1):K
-            rad2deg(VgtkCore.angle_between(SMatrix{3, 3}(A[i]) * z, SMatrix{3, 3}(A[j]) * z)) < overlap_deg && verify(i, j)
-        end
-    end
+    pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag, overlap_deg, averaging_loss)
     graph = ViewGraph(collect(1:K), verified)
     avg = VgtkEstimation.fit_rotation_averaging(graph.rotations, Dict(p => Float64(n) for (p, n) in graph.inliers); loss = averaging_loss)
     say("  rotation averaging: $(length(graph.rotations)) edges, σ̂ $(round(rad2deg(avg.sigma); digits = 4))°, $(avg.retcode)")
@@ -154,4 +149,39 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.start_nonfinite) observations not finite at the start)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
     return Registration(Rs, graph, stats, avg, ts, dropped, bundle, feats)
+end
+
+# The RANSAC sampler of the pair (i, j): Core's `stable_seed` keyed by the pair's frame indices (a SHA-256 of the integers'
+# decimal text, so no two (seed, i, j) share a stream) seeding a StableRNG (its stream fixed across Julia versions).
+_pair_rng(seed::Integer, i::Integer, j::Integer) = StableRNG(VgtkCore.stable_seed(seed, i, j))
+
+# The pairs of `pairs = :lag_overlap` past the lag, after the lag pairs: `verify(i, j)` adds a pair it keeps to `verified`.
+# While the verified pairs leave the frames in more than one part (a lag pair dropped), the untried pair between two parts
+# nearest in capture order is tried, since no verified rotation relates their frames; when no such pair is left the graph stays
+# disconnected (`ViewGraph` refuses it). Then the rotation averaging of every verified pair aims the rest: a pair whose optical
+# axes are within `overlap_deg` is tried, in (i, j) order.
+function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_lag::Integer, overlap_deg::Real, averaging_loss)
+    tried = Set{Tuple{Int, Int}}()                               # pairs past the lag: no lag pair comes up again
+    attempt(p) = (push!(tried, p); verify(p...))
+    while true
+        g = Graphs.SimpleGraph(K)
+        foreach(p -> Graphs.add_edge!(g, p...), keys(verified))
+        parts = Graphs.connected_components(g)
+        length(parts) == 1 && break
+        part = zeros(Int, K)
+        for (c, fs) in enumerate(parts)
+            part[fs] .= c
+        end
+        joins = [(i, j) for i in 1:K for j in (i + max_lag + 1):K if part[i] != part[j] && (i, j) ∉ tried]
+        isempty(joins) && return nothing
+        attempt(argmin(p -> (p[2] - p[1], p[1]), joins))
+    end
+    K > 1 || return nothing
+    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(Dict(p => e.rotation for (p, e) in verified),
+                                                               Dict(p => Float64(e.inliers) for (p, e) in verified); loss = averaging_loss))
+    axis = [SMatrix{3, 3}(A[k]) * SVector(0.0, 0.0, 1.0) for k in 1:K]
+    for i in 1:K, j in (i + max_lag + 1):K
+        ((i, j) ∉ tried && rad2deg(VgtkCore.angle_between(axis[i], axis[j])) < overlap_deg) && attempt((i, j))
+    end
+    return nothing
 end

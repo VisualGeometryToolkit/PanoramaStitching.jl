@@ -160,7 +160,9 @@ end
 const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.CauchyShape())
 
 # The registration's cache key: its record's format, its settings, the inputs, the decode settings and the RAW files' hashes.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v2 (the bundle's retcode, outcome and start finiteness)"
+# v3: PanoramaStitching 0.2.2 seeds each pair's sampler by stable_seed(seed, i, j), so a v2 record's rotations are not this
+# code's; they are recomputed.
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v3 (the bundle's retcode, outcome and start finiteness; pair samplers by stable_seed)"
 function registration_key(C, inp)
     canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
     return bytes2hex(SHA.sha256(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),

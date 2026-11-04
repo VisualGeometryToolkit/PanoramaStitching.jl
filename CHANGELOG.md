@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.2
+
+VisualGeometryToolkitCore 0.5.3 (compat `"0.5.3"`, for `stable_seed`); new dependency StableRNGs (Random dropped).
+
+- `register_rotations(…; pairs = :lag_overlap)` no longer needs the lag pairs alone to connect the frames. When they leave
+  them in more than one part (a lag pair dropped, for example for too few matches), the pair between two parts nearest in
+  capture order is tried, and the next one, until the parts are joined; then the rotation averaging of every verified pair
+  aims the overlap pairs as before. Before, that averaging ran on the lag pairs alone, and a dropped lag pair ended in a
+  `KeyError` or an `ArgumentError` that the overlap pairs would have avoided. As with `pairs = :all`, only a graph that no
+  pair joins is an `ArgumentError`.
+- Each pair's RANSAC sampler is `StableRNG(stable_seed(seed, i, j))` (Core's SHA-256 seed keyed by the pair) instead of
+  `Xoshiro(seed + 1000i + j)`, which gave one stream to different `(seed, i, j)`, for example `(1000, 1, 3)` and `(0, 2, 3)`.
+  The streams are now also fixed across Julia versions. They change, so a registration's pairs, rotations and bundle move
+  within the RANSAC's noise (the suite's tolerances hold). The example's registration record is `rotations/v3`, so a cached
+  `rotations.json` from 0.2.1 is recomputed rather than reused.
+
 ## 0.2.1
 
 VisualGeometryToolkitCore 0.5.1 (compat `"0.5.1"`).
