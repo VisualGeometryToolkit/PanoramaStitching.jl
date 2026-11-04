@@ -66,7 +66,9 @@ Under `$VGTK_DATA_ROOT`:
    of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring with a 5 px half-width), robust rotation
    averaging over the view graph, tracks, and the bundle of the rotations and track directions. A grid lens has no
    closed-form projection, so its forward map is a `SplineProjection` fitted to it over the image circle. The rotations are
-   cached in `rotations.json`, keyed by the registration settings, the inputs and the RAW files' hashes.
+   cached in `rotations.json`, keyed by the registration settings, the inputs and the RAW files' hashes, with the bundle's
+   outcome (`converged`, `nonfinite_start` — its start not finite, a start prediction outside the lens's domain —, `not_run`
+   or another retcode) and its count of observations not finite at the start; `summary.md` states it.
 3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the image
    circle less a rim margin, or the whole sensor; unsaturated; positive) is one observation of
    `I_k(p) = L(R_k·f(p)) · V(u(p))`: the scene's radiance L in the pixel's direction times the vignetting V at its sensor

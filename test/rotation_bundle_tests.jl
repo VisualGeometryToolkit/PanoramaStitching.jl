@@ -84,3 +84,48 @@ end
     f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 end
+
+# The bundle's outcome (RotationBundleMetadata outcome, start_nonfinite): the Tamron 20 mm sequence's mechanism on a synthetic
+# sequence — a rectilinear grid lens calibrated over the sensor (its SplineProjection over the same region), observations up to the
+# frame's border, a start ~0.6° off (an averaging's rotations). A start prediction near the border falls outside the grid's
+# domain, where the grid has no back-projection Jacobian: the start is not finite and NLLSsolver stops at once, "nonfinite_start",
+# the rotations the start's. Controls: the same data and start through the parametric camera converge, and no iteration is
+# "not_run" (the grid from the true rotations: skipped, see below).
+@testitem "refine_rotations' outcome: a grid lens's border observations from an imperfect start (nonfinite_start)" begin
+    using Test, Random, LinearAlgebra, StaticArrays
+    using PanoramaStitching: refine_rotations
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    rot(v) = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector{3, Float64}(v)))
+    W, H = 1000, 800
+    pinhole = VgtkCore.CameraModel(800.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px])
+    grid = VgtkCore.CentralGenericModel(pinhole, (W, H); grid_size = (20, 16))
+    sp = VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineProjection, grid, VgtkCore.Rect(0, 0, W, H); tolerance = 0.01))
+    rng = Xoshiro(7); K = 5
+    R = Dict(k => rot(SVector(0.02randn(rng), 0.3 * (k - 1), 0.02randn(rng))) for k in 1:K)
+    tracks = Vector{Vector{Pair{Int, SVector{2, Float64}}}}()
+    while length(tracks) < 400
+        d = normalize(randn(rng, SVector{3, Float64})); t = Pair{Int, SVector{2, Float64}}[]
+        for k in 1:K
+            c = R[k]' * d; c[3] > 0 || continue
+            u = sp(c); all(isfinite, u) || continue
+            x = SVector(u[1], u[2]) + 0.5randn(rng, SVector{2, Float64})
+            (2 < x[1] < W - 2 && 2 < x[2] < H - 2) && push!(t, k => x)
+        end
+        length(t) >= 2 && push!(tracks, t)
+    end
+    start = Dict(k => (k == 1 ? R[1] : rot(0.01 .* randn(rng, 3)) * R[k]) for k in 1:K)
+    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 3, max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
+    err(Rs) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
+
+    res = refine_rotations(grid, start, tracks; projection = sp, kw...)
+    @test res.retcode === :solve_failed && res.metadata.outcome === :nonfinite_start && res.metadata.start_nonfinite > 0
+    @test all(k -> SMatrix{3, 3}(VgtkCore.estimate(res)[k]) == start[k], 1:K)          # no step was tried
+    resp = refine_rotations(pinhole, start, tracks; kw...)
+    @test resp.metadata.outcome === :converged && resp.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(resp)) < 0.05
+    # The grid from the TRUE rotations (a finite start) does not return (measured 2026-11-04, Core 0.5 + NLLSsolver of the
+    # stack's branch: one thread busy for minutes) — an iterate whose prediction leaves the grid's domain, the hang the
+    # nonfinite_start stop was made to avoid, now inside the solve rather than at its start. Kept as a skip until it is fixed:
+    @test_skip refine_rotations(grid, R, tracks; projection = sp, kw...).metadata.outcome === :converged
+    @test refine_rotations(pinhole, start, tracks; kw..., iterations = 0).metadata.outcome === :not_run
+end

@@ -41,6 +41,11 @@ host).
   A fixed exposure under changing light needs it: on the rooftop sweep the gains reached +18 % and V at the domain's edge
   came out 7 % too dark without them. `score_seams` and `render_panorama` take an optional `gains` (one per frame) and divide
   each frame by `g_k·V`; the example's configs state the key.
+- `RotationBundleMetadata` (of `refine_rotations`, and so `register_rotations(…).bundle`) carries the bundle's `outcome` —
+  `:converged`, `:nonfinite_start` (the start not finite: the retcode `:solve_failed`, the rotations the start's, and
+  observations whose residual or Jacobian is not finite at the start, a start prediction outside the lens's domain),
+  `:not_run` (no iteration) or the retcode — and `start_nonfinite`, that count. The example records both in rotations.json
+  (its cache format v2) and summary.md.
 - `score_seams(camera, frames, rotations, view; …)`: per raster pixel measured by two frames or more, the median log ratio of
   the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.
 - `sample_frames`, `render_panorama` (and so `score_seams`) move the camera's forward map to the frames' backend (Adapt): a

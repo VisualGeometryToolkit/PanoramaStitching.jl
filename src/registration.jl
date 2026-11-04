@@ -28,8 +28,10 @@ frame, `d = R_k·f_k`, the first frame's camera frame the common frame), `graph`
 `(i, j)`: matches, inliers, the rms Sampson distance of its inliers in pixels and
 its rotation angle in degrees), `averaging` (the `fit_rotation_averaging`
 result), `tracks` (the tracks as `(frame, keypoint)` observations), `dropped`
-(inconsistent tracks dropped), `bundle` (the `refine_rotations` result) and
-`features` (the frames' [`FrameFeatures`](@ref)).
+(inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
+metadata's `outcome` and `start_nonfinite` say how the bundle ended and whether
+its start was finite, [`RotationBundleMetadata`](@ref)) and `features` (the
+frames' [`FrameFeatures`](@ref)).
 """
 struct Registration{A, B, F}
     rotations::Vector{RotMatrix{3, Float64, 9}}
@@ -138,7 +140,8 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
     obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts]
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; projection, loss = bundle_loss, scale_multiple = bundle_scale_multiple,
                               iterations = bundle_iterations, max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
-    say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, $(bundle.retcode)")
+    say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
+        "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.start_nonfinite) observations not finite at the start)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
     return Registration(Rs, graph, stats, avg, ts, dropped, bundle, feats)
 end

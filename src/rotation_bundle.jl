@@ -79,13 +79,28 @@ end
 `FitResult` metadata of [`refine_rotations`](@ref): `directions` (one unit
 direction per track, the common frame), `residuals` (per track, the pixel
 reprojection error norm of each of its observations at the result),
-`loss_width` (px, of the last NLLSsolver run), `n_observations`.
+`loss_width` (px, of the last NLLSsolver run), `n_observations`,
+`start_nonfinite` (the observations whose residual or Jacobian is not finite
+at the start: a start prediction outside the lens's domain, where the camera
+has no back-projection Jacobian) and `outcome`, the bundle's outcome:
+
+- `:not_run` — `iterations = 0` (the start's rotations are the result);
+- `:converged` — the retcode is `:converged`;
+- `:nonfinite_start` — NLLSsolver stopped at its start point because its start
+  is not finite: the retcode is `:solve_failed`, the rotations are the start's
+  bit for bit (no step was tried) and `start_nonfinite > 0`. A rectilinear
+  frame whose observations reach its corners, a start (the rotation
+  averaging's) off by a fraction of a degree and a grid lens calibrated over
+  the sensor at most give this (the Tamron 20 mm of 2026-10-29);
+- otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …).
 """
 struct RotationBundleMetadata
     directions::Vector{SVector{3, Float64}}
     residuals::Vector{Vector{Float64}}
     loss_width::Float64
     n_observations::Int
+    start_nonfinite::Int
+    outcome::Symbol
 end
 
 """
@@ -142,6 +157,14 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     residual_norms() = [[norm(NLLSsolver.computeresidual(_Observation{E, C, P, Nothing}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), nothing),
                                                          vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E})) for o in t]
                         for (j, t) in enumerate(tracks)]
+    # the start's finiteness: the observations whose residual or Jacobian is not finite there (the bundle's outcome)
+    start_nonfinite = 0
+    for (j, t) in enumerate(tracks), o in t
+        r = _Observation{E, C, P, Nothing}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), nothing)
+        e, J = NLLSsolver.computeresjac(3, r, vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E})
+        (all(isfinite, e) && all(isfinite, J)) || (start_nonfinite += 1)
+    end
+    start_rotations = [SMatrix{3, 3, Float64, 9}((vars[i]::_FrameChart).R) for i in eachindex(frames)]
     result = nothing
     for _ in 1:iterations
         rn = reduce(vcat, residual_norms())
@@ -162,6 +185,9 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[length(frames) + j]::_TrackDirection{E}).ch)) for j in eachindex(tracks)]
     rn = residual_norms(); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
+    unmoved = all(i -> SMatrix{3, 3, Float64, 9}((vars[i]::_FrameChart).R) == start_rotations[i], eachindex(frames))
+    outcome = iterations == 0 ? :not_run : code === :converged ? :converged :
+              code === :solve_failed && unmoved && start_nonfinite > 0 ? :nonfinite_start : code
     return VgtkCore.FitResult(out, code, iterations, sqrt(sum(abs2, flat) / max(length(flat), 1)), nobs,
-                              RotationBundleMetadata(dirs, rn, width, nobs))
+                              RotationBundleMetadata(dirs, rn, width, nobs, start_nonfinite, outcome))
 end

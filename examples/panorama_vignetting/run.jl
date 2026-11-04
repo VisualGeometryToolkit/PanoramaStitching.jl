@@ -159,10 +159,11 @@ end
 
 const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.CauchyShape())
 
-# The registration's cache key: its settings, the inputs, the decode settings and the RAW files' hashes.
+# The registration's cache key: its record's format, its settings, the inputs, the decode settings and the RAW files' hashes.
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v2 (the bundle's retcode, outcome and start finiteness)"
 function registration_key(C, inp)
     canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
-    return bytes2hex(SHA.sha256(join([canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
+    return bytes2hex(SHA.sha256(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
                                       (sha256_file(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names)...], "|")))
 end
 
@@ -176,7 +177,8 @@ function registration(C, inp, lens; log)
             say(log, "registration: reused $(path)$(haskey(rec, "provenance") ? " ($(rec["provenance"]))" : "")")
             return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
                     pairs = rec["pairs"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
-                    provenance = get(rec, "provenance", nothing))
+                    bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
+                    bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = get(rec, "provenance", nothing))
         end
     end
     t0 = time()
@@ -195,9 +197,14 @@ function registration(C, inp, lens; log)
     Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
     rec = Dict("key" => key, "convention" => "d = R_k·f_k, the first frame's camera frame the common frame; R row by row",
                "frames" => inp.names, "rotations" => [[collect(R[i, :]) for i in 1:3] for R in Rs],
-               "pairs" => length(reg.pairs), "bundle_rms_px" => reg.bundle.rms, "seconds" => secs)
+               "pairs" => length(reg.pairs), "bundle_rms_px" => reg.bundle.rms, "seconds" => secs,
+               # the bundle's outcome (RotationBundleMetadata): converged, nonfinite_start (its start not finite: a start prediction
+               # outside the lens's domain), not_run, or another retcode; the observations not finite at the start
+               "bundle_retcode" => string(reg.bundle.retcode), "bundle_outcome" => string(reg.bundle.metadata.outcome),
+               "bundle_start_nonfinite" => reg.bundle.metadata.start_nonfinite)
     open(io -> JSON.print(io, rec, 2), path, "w")
-    return (; rotations = Rs, pairs = length(reg.pairs), bundle_rms_px = reg.bundle.rms, seconds = secs, provenance = nothing)
+    return (; rotations = Rs, pairs = length(reg.pairs), bundle_rms_px = reg.bundle.rms, seconds = secs, bundle_retcode = rec["bundle_retcode"],
+            bundle_outcome = rec["bundle_outcome"], bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = nothing)
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -467,7 +474,8 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = reg.bundle_rms_px === nothing ? "not recorded" : "$(f(reg.bundle_rms_px; d = 3)) px"
-        println(io, "- Registration: $(reg.pairs) verified pairs, bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)").")
+        println(io, "- Registration: $(reg.pairs) verified pairs, bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
+                    "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_start_nonfinite) observations not finite at the start).")
         println(io, "- Principal point (the ray (0, 0, 1)): ($(f(pp[1]; d = 1)), $(f(pp[2]; d = 1))) px.")
         println(io, "- Compute backend: $(get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])).")
         println(io, "- Seam raster: equirectangular, $(C.cfg["seams"]["deg_per_pixel"])°/px over lon $(f(ext[1]; d = 1))…$(f(ext[2]; d = 1))°, lat $(f(ext[3]; d = 1))…$(f(ext[4]; d = 1))° (up frame).")
