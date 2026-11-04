@@ -1,0 +1,89 @@
+# The comparison of record of fit_vignetting's settings (run: compare_arms.jl, README.md "The comparison of the fit's settings").
+# Every arm runs on every set: the set's config of record (decode, registration, domain, the radial model and the solver) with the
+# arm's three settings in place of the config's:
+#   vignetting       "free" (self-calibration: V fitted with the gains) or "fixed" (V held at the V of record: the arm named by
+#                    `fixed_from`'s fitted V, its log V(u) the fixed numbers: gain compensation under a given V)
+#   gain_correction  "none", "frame" (one gain per frame) or "channel" (per frame and colour plane)
+#   weights          "intensity" (I²) or "sampson" (the observation's Sampson whitening; the sensor point's σ the registration
+#                    bundle's core scale, loss width / scale multiple, from the set's rotations.json)
+# A run is keyed by this file's content, the set's config and its registration record: results under
+# <set output>/arms/<key>/ (results.json, results.md), reused when the key matches.
+
+output = "arms"                                    # under each set's output folder
+sets = ["config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml"]
+kind = "radial"                                    # the V model of every arm (the configs of record's)
+fixed_from = "free_frame_intensity"                # the V of record: the fit with the record's settings (frame gains, I²)
+log_intensity_scale = 0.01                         # sampson: σ of log I
+sampson_solves = 1                                 # sampson: its solves after the I² one
+
+[[arms]]
+name = "free_frame_intensity"
+vignetting = "free"
+gain_correction = "frame"
+weights = "intensity"
+
+[[arms]]
+name = "free_none_intensity"
+vignetting = "free"
+gain_correction = "none"
+weights = "intensity"
+
+[[arms]]
+name = "free_channel_intensity"
+vignetting = "free"
+gain_correction = "channel"
+weights = "intensity"
+
+[[arms]]
+name = "fixed_none_intensity"
+vignetting = "fixed"
+gain_correction = "none"
+weights = "intensity"
+
+[[arms]]
+name = "fixed_frame_intensity"
+vignetting = "fixed"
+gain_correction = "frame"
+weights = "intensity"
+
+[[arms]]
+name = "fixed_channel_intensity"
+vignetting = "fixed"
+gain_correction = "channel"
+weights = "intensity"
+
+[[arms]]
+name = "free_none_sampson"
+vignetting = "free"
+gain_correction = "none"
+weights = "sampson"
+
+[[arms]]
+name = "free_frame_sampson"
+vignetting = "free"
+gain_correction = "frame"
+weights = "sampson"
+
+[[arms]]
+name = "free_channel_sampson"
+vignetting = "free"
+gain_correction = "channel"
+weights = "sampson"
+
+[[arms]]
+name = "fixed_none_sampson"
+vignetting = "fixed"
+gain_correction = "none"
+weights = "sampson"
+
+[[arms]]
+name = "fixed_frame_sampson"
+vignetting = "fixed"
+gain_correction = "frame"
+weights = "sampson"
+
+[[arms]]
+name = "fixed_channel_sampson"
+vignetting = "fixed"
+gain_correction = "channel"
+weights = "sampson"
