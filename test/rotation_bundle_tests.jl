@@ -78,7 +78,8 @@ end
     # the closed-form Jacobian blocks against ForwardDiff through the variables' updates
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = PanoramaStitching._TrackDirection{false}(VgtkCore.SphereManifold(dirs[1]))
     x = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * dirs[1]) + SVector(0.3, -0.2)
-    obs = PanoramaStitching._Observation{false, typeof(CAM), Nothing}(CAM, x, SVector(1, 2), nothing)
+    fwd = PanoramaStitching._forward_map(CAM)
+    obs = PanoramaStitching._Observation{false, typeof(CAM), typeof(fwd), Nothing}(CAM, fwd, x, SVector(1, 2), nothing)
     _, J = NLLSsolver.computeresjac(NLLSsolver.static(3), obs, ch, dv)
     f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7

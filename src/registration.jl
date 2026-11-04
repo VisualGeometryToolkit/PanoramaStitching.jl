@@ -43,7 +43,7 @@ struct Registration{A, B, F}
 end
 
 """
-    register_rotations(frames, camera; raw_scale, circle, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+    register_rotations(frames, camera; projection = camera, raw_scale, circle, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
@@ -51,11 +51,15 @@ end
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
-`camera` (fixed; any camera with `backproject_with_jacobian`, `backproject` and
-`project`), with the view graph, the tracks and the bundle's statistics. Every
-setting is the caller's configuration, none defaulted but the RANSAC's:
+`camera` (fixed; any camera with `backproject_with_jacobian` and `backproject`),
+projected in the bundle through `projection`, its closed-form forward map (the
+camera itself when it is a `CameraModel`; for a grid model its `SplineProjection`,
+see [`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's
+statistics. Every setting is the caller's configuration, none defaulted but the
+RANSAC's:
 
-- features: `circle = (cx, cy, r)` (camera pixels), `tone_percentile`,
+- features: `circle` (a Core `Circle` or `Ellipse` in camera pixels, `WholePlane()`
+  for a lens with none), `tone_percentile`,
   `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections` — see
   [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`); `min_score`.
@@ -71,7 +75,7 @@ setting is the caller's configuration, none defaulted but the RANSAC's:
 
 `say` receives one line per frame, pair and step.
 """
-function register_rotations(frames::AbstractVector, camera; raw_scale::Integer, circle, tone_percentile::Real, detector_margin_px::Real,
+function register_rotations(frames::AbstractVector, camera; projection = camera, raw_scale::Integer, circle, tone_percentile::Real, detector_margin_px::Real,
                             asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
@@ -79,6 +83,7 @@ function register_rotations(frames::AbstractVector, camera; raw_scale::Integer, 
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
                             bundle_xtol::Real, say = _ -> nothing)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("register_rotations: pairs = :$pairs is not :all or :lag_overlap"))
+    _forward_map(projection)                                                 # refused before the features, not after
     K = length(frames)
     desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections)
     match = VgtkFeatures.LoMaMatcher(matcher)
@@ -131,7 +136,7 @@ function register_rotations(frames::AbstractVector, camera; raw_scale::Integer, 
     ts, dropped = chain_tracks(inlier_matches)
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
     obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts]
-    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; loss = bundle_loss, scale_multiple = bundle_scale_multiple,
+    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; projection, loss = bundle_loss, scale_multiple = bundle_scale_multiple,
                               iterations = bundle_iterations, max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, $(bundle.retcode)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]

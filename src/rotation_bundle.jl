@@ -33,9 +33,11 @@ if _SCHUR
     NLLSsolver.iseliminable(::Type{<:_TrackDirection{true}}) = static(true)
 end
 
-# One observation: √w (π(R_kᵀ d_j) − x_jk), pixels, through the fixed camera.
-struct _Observation{E, C, L} <: NLLSsolver.AbstractResidual
+# One observation: √w (π(R_kᵀ d_j) − x_jk), pixels, through the fixed camera: `projection` its forward map π (`_forward_map`),
+# `camera` its back-projection (the Jacobian's).
+struct _Observation{E, C, P, L} <: NLLSsolver.AbstractResidual
     camera::C
+    projection::P
     x::SVector{2, Float64}
     varind::SVector{2, Int}
     kernel::L
@@ -49,14 +51,8 @@ Base.eltype(::_Observation) = Float64
 
 @inline _camera_direction(ch::VgtkCore.RotationChart, d::_TrackDirection) = SMatrix{3, 3}(ch.R)' * VgtkCore.model(d.ch)
 
-# π(f) through any camera: a generic model's projection is a pixel-space LM, started at the guess `x` (the observed pixel in the
-# bundle, the cell's predicted pixel in `sample_cells`); a parametric model projects in closed form and takes no guess.
-@inline _project_with(camera::VgtkCore.CentralGenericModel, f, x) = VgtkCore.project(camera, f; init = x)
-@inline _project_with(camera, f, x) = VgtkCore.project(camera, f)
-@inline function _project(r::_Observation, f)
-    u = _project_with(r.camera, f, r.x)
-    return u === nothing ? SVector(NaN, NaN) : SVector(u[1], u[2])
-end
+# π(f): the forward map in closed form (NaN where it does not image).
+@inline _project(r::_Observation, f) = (u = r.projection(f); SVector(u[1], u[2]))
 
 NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::_TrackDirection) = _project(r, _camera_direction(ch, d)) - r.x
 
@@ -93,12 +89,17 @@ struct RotationBundleMetadata
 end
 
 """
-    refine_rotations(camera, rotations, tracks; loss, scale_multiple, iterations, max_iter, ftol, xtol, eliminate = true)
-        -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+    refine_rotations(camera, rotations, tracks; projection = camera, loss, scale_multiple, iterations, max_iter, ftol, xtol,
+                     eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
-(any camera with `project(camera, f; init)` and `backproject_with_jacobian`,
-fixed): the rotations `R_k` (`d = R_k·f_k`) of every frame but the first of
+(fixed; its `backproject` and `backproject_with_jacobian` give the start and
+the Jacobian), projected through `projection`, the camera's closed-form forward
+map π: the `camera` itself when it is a `CameraModel` (its
+`imaging_transform`), or a `SplineProjection` — for a grid model, which has no
+closed-form forward map, its `VisualGeometryToolkitEstimation.fit_camera(SplineProjection,
+grid, region; tolerance)` (an `ArgumentError` names it when missing). The
+rotations `R_k` (`d = R_k·f_k`) of every frame but the first of
 the sorted keys of `rotations` (the gauge, held fixed) and one direction `d_j`
 per track minimizing the robust sum of the pixel reprojection errors
 `π(R_kᵀ d_j) − x_jk` of every observation. A refine: it starts from
@@ -116,9 +117,10 @@ bearing in the common frame.
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
 """
-function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector;
+function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector; projection = camera,
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
                           max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true) where {K}
+    fwd = _forward_map(projection); C = typeof(camera); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
     E = eliminate && _SCHUR
@@ -137,7 +139,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     end
     unfixed = trues(length(vars)); unfixed[1] = false                       # the gauge frame
     width = NaN
-    residual_norms() = [[norm(NLLSsolver.computeresidual(_Observation{E, typeof(camera), Nothing}(camera, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), nothing),
+    residual_norms() = [[norm(NLLSsolver.computeresidual(_Observation{E, C, P, Nothing}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), nothing),
                                                          vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::_TrackDirection{E})) for o in t]
                         for (j, t) in enumerate(tracks)]
     result = nothing
@@ -146,12 +148,12 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         σ = Statistics.median(filter(isfinite, rn)) / sqrt(VgtkCore.chisq_median(2))
         width = scale_multiple * σ
         kernel = VgtkCore.loss_robustifier(loss, width)
-        problem = NLLSsolver.NLLSProblem(V, _Observation{E, typeof(camera), typeof(kernel)})
+        problem = NLLSsolver.NLLSProblem(V, _Observation{E, C, P, typeof(kernel)})
         for v in vars
             NLLSsolver.addvariable!(problem, v)
         end
         for (j, t) in enumerate(tracks), o in t
-            NLLSsolver.addcost!(problem, _Observation{E, typeof(camera), typeof(kernel)}(camera, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), kernel))
+            NLLSsolver.addcost!(problem, _Observation{E, C, P, typeof(kernel)}(camera, fwd, SVector{2, Float64}(last(o)), SVector(fid[first(o)], length(frames) + j), kernel))
         end
         result = NLLSsolver.optimize!(problem, VgtkCore.nlls_options(; max_iter, ftol, xtol), unfixed)
         vars = problem.variables

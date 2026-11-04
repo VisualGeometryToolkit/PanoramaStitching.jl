@@ -1,5 +1,5 @@
 # =============================================================================
-# The equirectangular panorama of per-frame cell values
+# The panorama: the reverse warp of the frames through a view's pixel → ray map (Core's image_warp)
 # =============================================================================
 
 """
@@ -27,52 +27,169 @@ function up_frame(pitch::Real, roll::Real)
     return hcat(cross(yt, zt), yt, zt)
 end
 
-# The index of the world cell of the grid (`world_cells`) holding (lat, lon), degrees.
-function _cell_lookup(cells::AbstractMatrix)
-    lo = cells[:, 1]; bands = sort(unique(lo)); cell = bands[2] - bands[1]
-    start = [searchsortedfirst(lo, b - 1.0e-9) for b in bands]; nb = diff(vcat(start, size(cells, 1) + 1))
-    return function (lat, lon)
-        b = clamp(floor(Int, (lat - bands[1]) / cell), 0, length(bands) - 1) + 1
-        return start[b] + clamp(floor(Int, (lon + 180) / (360 / nb[b])), 0, nb[b] - 1)
-    end
+"""
+    PanoramaView
+
+The raster a panorama is rendered into: `rays`, its pixel → ray map (a
+`Transformation` from the raster's COLMAP pixel `(x, y)` to the direction in
+the common frame), `size` (rows, columns) and `extent` (`(lon₀, lon₁, lat₀,
+lat₁)` degrees of a cylindrical-family raster, `nothing` for a virtual
+camera). Built by [`panorama_view`](@ref).
+"""
+struct PanoramaView{M, E}
+    rays::M
+    size::Tuple{Int, Int}
+    extent::E
+end
+
+# The vertical coordinate of a latitude (degrees) under a panorama projection, and back: the latitude for `Equirectangular`,
+# tan(latitude) for `Cylindrical`, sin for `CylindricalEqualArea`, asinh(tan) for `Mercator`.
+_vertical(projection, lat) = VgtkCore.project(projection, world_direction(lat, 0.0))[2]
+_latitude(projection, v) = rad2deg(VgtkCore.project(VgtkCore.Equirectangular(), VgtkCore.backproject(projection, SVector(0.0, v)))[2])
+
+"""
+    panorama_view(projection, extent, deg_per_pixel; up = I) -> PanoramaView
+    panorama_view(camera, width, height; rotation = I) -> PanoramaView
+
+The raster of a panorama and its pixel → ray map.
+
+- A cylindrical-family `projection` (Core's `Equirectangular()`, `Cylindrical()`, `CylindricalEqualArea()`, `Mercator()`):
+  the raster spans `extent = (lon₀, lon₁, lat₀, lat₁)` degrees, `deg_per_pixel` along the longitude (its columns, from
+  lon₀) and the same step in the projection's vertical coordinate (its rows, from lat₁ at the top: radians of latitude for
+  the equirectangular, of `tan φ`, `sin φ` or `asinh(tan φ)` for the others), in the frame `up` (`d = up·d_up`,
+  [`up_frame`](@ref) for a true-up panorama). Its pixel → ray map is `LinearMap(up) ∘ inv(projection) ∘ raster`, and its
+  `extent` the raster's own (the latitudes of its row edges).
+- An azimuthal view, a virtual `camera` (a Core `CameraModel`): its `width × height` pixels, their rays
+  `LinearMap(rotation) ∘ Backprojection(camera)` (`d = rotation·f`, `f` the virtual camera's ray). No new projection type:
+  the lens chooses the view.
+
+```julia
+using VisualGeometryToolkitCore: CameraModel, Lens, Perspective, Equidistant, Stereographic, Cylindrical, px
+cyl = panorama_view(Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.05)                       # cylindrical
+rect = panorama_view(CameraModel(1000.0px, SA[960.0px, 540.0px]; lens = Lens(Perspective())), 1920, 1080)   # rectilinear
+down = SMatrix{3, 3}(1.0, 0, 0, 0, 0, -1, 0, 1, 0)                                           # looking along +y (down)
+planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(Stereographic())), 2000, 2000; rotation = down)   # 'little planet'
+```
+"""
+function panorama_view(projection::VgtkCore.AbstractPanoramaProjection, extent, deg_per_pixel::Real;
+                       up::AbstractMatrix = SMatrix{3, 3}(1.0I))
+    lon0, lon1, lat0, lat1 = Float64.(extent); δ = deg2rad(Float64(deg_per_pixel))
+    v0, v1 = _vertical(projection, lat0), _vertical(projection, lat1)
+    nλ = round(Int, deg2rad(lon1 - lon0) / δ); nv = round(Int, (v1 - v0) / δ)
+    raster = AffineMap(SMatrix{2, 2, Float64, 4}(δ, 0.0, 0.0, -δ), SVector(deg2rad(lon0), v1))
+    rays = LinearMap(SMatrix{3, 3, Float64, 9}(up)) ∘ inv(projection) ∘ raster
+    return PanoramaView(rays, (nv, nλ), (lon0, lon0 + rad2deg(nλ * δ), _latitude(projection, v1 - nv * δ), lat1))
+end
+function panorama_view(camera::VgtkCore.CameraModel, width::Integer, height::Integer; rotation::AbstractMatrix = SMatrix{3, 3}(1.0I))
+    rays = LinearMap(SMatrix{3, 3, Float64, 9}(rotation)) ∘ VgtkCore.Backprojection(camera)
+    return PanoramaView(rays, (Int(height), Int(width)), nothing)
 end
 
 """
-    render_panorama(cells, values, ok, gains; up = I) -> (image, extent, composite)
+    render_panorama(camera, frames, rotations, view; vignetting, circle, raw_scale, rim_margin_px, fov_deg, saturated)
+        -> (; image, owner, coverage, extent)
 
-The equirectangular panorama of per-frame cell values, composited in capture order:
-each cell takes the value of the LAST frame `k` that saw it (`ok[k, i]`), divided by
-that frame's gain `exp(gains[k, c])` (`values` is K × N × C linear, `gains` K × C in
-ln; the frames' own corrections, a vignetting for one, are the caller's, applied to
-`values`). The raster is in the frame `up` (`d = up·d_up`: [`up_frame`](@ref) for a
-true-up panorama), its rows the elevation from the top, its columns the azimuth, one
-pixel per cell size, the nearest world cell (Core's `Equirectangular` for both
-directions), spanning the cells seen plus one cell; NaN where no frame saw the cell.
-`extent` is `(lon₀, lon₁, lat₀, lat₁)` in degrees, `composite` the N × C per-cell
-values.
+The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the REVERSE warp, Core's
+`image_warp`/`image_warp!`: every pixel's ray `d` (the view's pixel → ray map) is rotated into each frame `k`
+(`f = R_kᵀ·d`, `rotations[k]` with `d = R_k·f`), projected through the calibrated `camera` to a sensor point between pixels
+(a `CameraModel` through its `imaging_transform`, a `SplineProjection` — a grid model's forward map,
+`fit_camera(SplineProjection, grid, region; tolerance)`), and sampled there bilinearly — one fused map
+`camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
+(camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
+ray's direction (a field angle) reads `f`. No exposure gain, no seam, no blend: the frames are taken as one exposure, and
+each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.
+
+A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside `circle`
+(a Core `Circle` or `Ellipse` in camera pixels, `WholePlane()` when the lens has no image circle) less `rim_margin_px` and
+at least 2 px inside the sensor, and no `saturated` pixel is among the four its value blends — the masks of
+[`sample_frames`](@ref), evaluated as batches at the warp's own sensor points. `frames` are `H × W × 3` linear images with
+`raw_scale` camera pixels per frame pixel, `saturated` their `H × W` masks.
+
+Every step runs on the backend that owns `frames` (GPU arrays: one kernel per warp, mask and update; the same code on the
+host); for device arrays `vignetting` must be kernel-lawful. The warp's math is in the frames' element type.
+
+Returns `image` (rows × columns × 3, NaN where no frame sees the pixel), `owner` (the frame whose value a pixel holds, 0 for
+none), `coverage` (how many frames see each pixel), all on the frames' backend, and the view's `extent`.
 """
-function render_panorama(cells::AbstractMatrix, values::AbstractArray{<:Real, 3}, ok::AbstractMatrix{Bool}, gains::AbstractMatrix{<:Real};
-                         up::AbstractMatrix = SMatrix{3, 3}(1.0I))
-    K, N, C = size(values)
-    size(ok) == (K, N) && size(gains) == (K, C) && size(cells, 1) == N || throw(DimensionMismatch("render_panorama: cells, values, ok and gains disagree"))
-    R = SMatrix{3, 3, Float64, 9}(up); E = VgtkCore.Equirectangular()
-    cell = cells[1, 2] - cells[1, 1]
-    seen = vec(any(ok; dims = 1))
-    composite = fill(NaN, N, C)
-    for i in findall(seen)
-        k = findlast(view(ok, :, i))
-        for c in 1:C
-            composite[i, c] = values[k, i, c] / exp(gains[k, c])
+function render_panorama(camera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView; vignetting, circle,
+                         raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, saturated::AbstractVector)
+    K = length(frames)
+    length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("render_panorama: frames, rotations and saturated disagree"))
+    Hf, Wf, C = size(frames[1])
+    C == 3 || throw(DimensionMismatch("render_panorama: frames are H × W × 3, got $(size(frames[1]))"))
+    T = float(eltype(frames[1])); s = raw_scale
+    fwd = _forward_map(camera)
+    sees = _Sees(_frame_region(circle, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
+    nv, nλ = view.size
+    rect = VgtkCore.Rect(0, 0, nλ, nv)
+    proto = frames[1]
+    image = fill!(similar(proto, T, nv, nλ, 3), T(NaN)); owner = fill!(similar(proto, Int, nv, nλ), 0)
+    coverage = fill!(similar(proto, Int, nv, nλ), 0)
+    U = similar(proto, SVector{2, T}, nv, nλ); F = similar(proto, SVector{3, T}, nv, nλ)
+    ok = similar(proto, Bool, nv, nλ); V = similar(proto, T, nv, nλ); w = similar(proto, T, nv, nλ)
+    idx = CartesianIndices((nv, nλ))
+    scale = LinearMap(SMatrix{2, 2, Float64, 4}(1 / s, 0.0, 0.0, 1 / s))        # camera pixels → the binned frame's
+    for k in 1:K
+        Rt = LinearMap(SMatrix{3, 3, Float64, 9}(rotations[k])')
+        # frame k's warp: the output (row, col) → the frame's (row, col); the same chain without the camera, the rays f
+        bm = VgtkCore.image_warp(T, scale ∘ fwd ∘ Rt ∘ view.rays, rect)
+        fk = Rt ∘ view.rays
+        VgtkCore.pointwise!(I -> (q = bm(SVector{2, T}(I[1], I[2])); SVector{2, T}(s * (q[2] - T(0.5)), s * (q[1] - T(0.5)))), U, idx)
+        VgtkCore.pointwise!(I -> SVector{3, T}(fk(SVector(I[2] - 0.5, I[1] - 0.5))), F, idx)
+        VgtkCore.image_warp!(w, bm, T.(saturated[k]))
+        VgtkCore.pointwise!(sees, ok, U, F, w)
+        VgtkCore.pointwise!(_Vignetting(vignetting, T), V, ok, U, F)
+        for c in 1:3
+            VgtkCore.image_warp!(w, bm, Base.view(frames[k], :, :, c))
+            img = Base.view(image, :, :, c)
+            img .= ifelse.(ok, w ./ V, img)
         end
+        owner .= ifelse.(ok, k, owner); coverage .+= ok
     end
-    lat, lon = cell_centres(cells)
-    pt = [VgtkCore.project(E, R' * world_direction(a, b)) for (a, b) in zip(lat[seen], lon[seen])]
-    lat_rng = (minimum(p -> rad2deg(p[2]), pt) - cell, maximum(p -> rad2deg(p[2]), pt) + cell)
-    lon_rng = (minimum(p -> rad2deg(p[1]), pt) - cell, maximum(p -> rad2deg(p[1]), pt) + cell)
-    lats = collect((lat_rng[2] - cell / 2):(-cell):lat_rng[1]); lons = collect((lon_rng[1] + cell / 2):cell:lon_rng[2])
-    lats = lats[lats .> lat_rng[1]]; lons = lons[lons .< lon_rng[2]]
-    lookup = _cell_lookup(cells)
-    idx = [(p = VgtkCore.project(E, R * world_direction(la, lo)); lookup(rad2deg(p[2]), rad2deg(p[1]))) for la in lats, lo in lons]
-    image = cat([composite[idx, c] for c in 1:C]...; dims = 3)
-    return image, (lons[1] - cell / 2, lons[end] + cell / 2, lats[end] - cell / 2, lats[1] + cell / 2), composite
+    return (; image, owner, coverage, view.extent)
+end
+
+# The six faces of a cube map: (name, R) with the face camera's ray f mapped to the common frame by d = R·f, R's columns the
+# face's image right, image down and optical axis.
+const CUBE_FACES = (
+    front = SMatrix{3, 3, Float64, 9}(1, 0, 0, 0, 1, 0, 0, 0, 1),        # axis +z, right +x, down +y
+    right = SMatrix{3, 3, Float64, 9}(0, 0, -1, 0, 1, 0, 1, 0, 0),       # axis +x, right −z
+    back = SMatrix{3, 3, Float64, 9}(-1, 0, 0, 0, 1, 0, 0, 0, -1),       # axis −z, right −x
+    left = SMatrix{3, 3, Float64, 9}(0, 0, 1, 0, 1, 0, -1, 0, 0),        # axis −x, right +z
+    up = SMatrix{3, 3, Float64, 9}(1, 0, 0, 0, 0, 1, 0, -1, 0),          # axis −y, right +x, image down towards +z (front)
+    down = SMatrix{3, 3, Float64, 9}(1, 0, 0, 0, 0, -1, 0, 1, 0),        # axis +y, right +x, image down towards −z (back)
+)
+
+"""
+    render_cube_map(camera, frames, rotations, width; up = I, kwargs...) -> (; faces, cross)
+
+The cube map of the panorama: six `width × width` 90° rectilinear views (a `Lens(Perspective())` virtual camera of focal
+length `width/2` px, principal point at the face's centre), each a [`render_panorama`](@ref) (`kwargs` are its keywords) of
+the [`panorama_view`](@ref) aimed by `up·R_face`. The faces, in the common frame `up` (x right, y down, z forward):
+
+| face | optical axis | image right | image down |
+|---|---|---|---|
+| `front` | +z | +x | +y |
+| `right` | +x | −z | +y |
+| `back` | −z | −x | +y |
+| `left` | −x | +z | +y |
+| `up` | −y | +x | +z |
+| `down` | +y | +x | −z |
+
+`faces` is a NamedTuple of the six renders in that order; `cross` is the horizontal cross, `3·width × 4·width × 3`
+(NaN off the cross) — `up` above `front`, the row `left, front, right, back`, `down` below `front` — in which every
+shared edge of two faces is adjacent: the side faces' tops meet `up`'s edges and their bottoms `down`'s.
+"""
+function render_cube_map(camera, frames::AbstractVector, rotations::AbstractVector, width::Integer;
+                         up::AbstractMatrix = SMatrix{3, 3}(1.0I), kwargs...)
+    c = width / 2
+    face = VgtkCore.CameraModel(c * VgtkCore.px, SVector(c * VgtkCore.px, c * VgtkCore.px); lens = VgtkCore.Lens(VgtkCore.Perspective()))
+    U = SMatrix{3, 3, Float64, 9}(up)
+    faces = map(R -> render_panorama(camera, frames, rotations, panorama_view(face, width, width; rotation = U * R); kwargs...), CUBE_FACES)
+    n = Int(width); T = eltype(faces.front.image)
+    cross = fill!(similar(faces.front.image, T, 3n, 4n, 3), T(NaN))
+    place(img, i, j) = (cross[((i - 1) * n + 1):(i * n), ((j - 1) * n + 1):(j * n), :] .= img; nothing)
+    place(faces.up.image, 1, 2); place(faces.left.image, 2, 1); place(faces.front.image, 2, 2)
+    place(faces.right.image, 2, 3); place(faces.back.image, 2, 4); place(faces.down.image, 3, 2)
+    return (; faces, cross)
 end
