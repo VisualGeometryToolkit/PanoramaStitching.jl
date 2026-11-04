@@ -368,6 +368,7 @@ end
 struct _RayJacobian{C}
     camera::C
 end
+Adapt.@adapt_structure _RayJacobian          # a grid model's control grid moved to the device (Core's adapt rule)
 @inline (r::_RayJacobian)(u) = SMatrix{3, 2, Float64, 6}(VgtkCore.backproject_with_jacobian(r.camera, u)[2])
 
 # The minimum over a batch of rays of the cosine to `c` after the rotation R: the chart's extent.
@@ -764,7 +765,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     rayJ = nothing                                                        # the rays' back-projection Jacobians (Sampson's G_x)
     if sampson
         rayJ = similar(upix, SMatrix{3, 2, Float64, 6})
-        VgtkCore.pointwise!(_RayJacobian(VgtkCore.model(camera)), rayJ, upix)
+        VgtkCore.pointwise!(_RayJacobian(VgtkCore.model(camera)), rayJ, upix; exec = VgtkCore.OnBackend(be))   # the camera moved too
     end
     seconds[:backproject] = _elapsed(be, t0)
 
