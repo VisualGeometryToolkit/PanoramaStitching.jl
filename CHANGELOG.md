@@ -46,6 +46,9 @@ host).
   observations whose residual or Jacobian is not finite at the start, a start prediction outside the lens's domain),
   `:not_run` (no iteration) or the retcode — and `start_nonfinite`, that count. The example records both in rotations.json
   (its cache format v2) and summary.md.
+- `refine_rotations` with a grid model: an observation predicted off the grid's imaged region now has a NaN residual, as its
+  Jacobian already had (its `SplineProjection` extrapolates there). Before, such an iterate was accepted with a finite cost and
+  NLLSsolver's Levenberg–Marquardt trial loop never returned on the NaN linear system it gave.
 - `score_seams(camera, frames, rotations, view; …)`: per raster pixel measured by two frames or more, the median log ratio of
   the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.
 - `sample_frames`, `render_panorama` (and so `score_seams`) move the camera's forward map to the frames' backend (Adapt): a
