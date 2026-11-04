@@ -71,8 +71,9 @@ penalty_weight = 0.01                              # λ, in units of one row of 
 vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's controls, relative to the V block's mean diagonal
 # Per-frame exposure gains (g₁ = 1): ON. The exposure is fixed (1/1600 s, f/5.6, ISO 100), but the daylight changed during the
 # sweep: measured 2026-11-04 from the radial fit without gains, the frames' median log ratios at 400k directions gave
-# g = exp(0, .002, .093, .119, .147, .165, .161, .162, .159, .114) (pairwise consistency rms 0.003; RC's cell fit of record had
-# found the same). Without them V absorbs the differences: 7 % too dark at ρ = 1000 px, residual 1.4826·MAD 0.139 against 0.112.
+# g = exp(0, .002, .093, .119, .147, .165, .161, .162, .159, .114) (pairwise consistency rms 0.003; RC's binned fit of record had
+# found the same; the fit's own gains of record, 2026-11-04: 1, 0.996, 1.088, 1.118, 1.146, 1.162, 1.156, 1.156, 1.152, 1.098, and
+# the seam spread 1.4826·MAD 0.106 → 0.081 with them). Without them V absorbs the differences: 7 % too dark at ρ = 1000 px, residual 1.4826·MAD 0.139 against 0.112.
 frame_gains = true
 solver = "cg"                                    # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
 cg_tolerance = 1.0e-9                              # the CG's relative residual
