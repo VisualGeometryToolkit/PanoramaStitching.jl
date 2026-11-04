@@ -112,6 +112,16 @@ Under `$VGTK_DATA_ROOT`:
 | `cylindrical_*.png`, `equal_area_*.png`, `rectilinear_*.png` | the renders, `_corrected` and `_uncorrected` at the same exposure |
 | `summary.md`, `run.log` | the numbers: registration, the fits (retcode, residual spread, V's range, maximum and asymmetry), the seam spreads, the wall times |
 
+**Viewing a run.** `compare_makie.jl` shows a run's uncorrected and corrected outputs in GLMakie, one above the other with
+linked axes (pan and zoom move both), and a menu to switch between the projections and the seam maps:
+
+```bash
+julia --project=examples/panorama_vignetting examples/panorama_vignetting/compare_makie.jl examples/panorama_vignetting/out/fx3_14mm_indoor
+```
+
+From a REPL: `include("compare_makie.jl"); compare_makie("out/fx3_14mm_indoor")`. `save_comparison(path, dir; view)` writes
+the figure as a PNG.
+
 **The decode cache.** The linear image is stored as the photosite code sums rather than 16-bit rounded linear values, so it
 is lossless: the linear value is `(code/2 − black_p)/(white − black_p)·gain`, and reading the cache back gives load_raw's
 values exactly (in the Float32 the pipeline uses). The mask is a separate file next to it; the render steps read only the
