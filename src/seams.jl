@@ -2,6 +2,15 @@
 # score_seams — how well a vignetting makes the frames agree where they overlap
 # =============================================================================
 
+# The frames' gains of `score_seams` and `render_panorama`: `nothing`, or a K × C matrix (per frame and colour plane, as
+# `fit_vignetting`'s `metadata.gains`).
+function _check_gains(f, gains, K, C)
+    gains === nothing && return nothing
+    gains isa AbstractMatrix && size(gains) == (K, C) ||
+        throw(DimensionMismatch("$f: gains are a $K × $C matrix (per frame and colour plane: fit_vignetting's metadata.gains), got $(summary(gains))"))
+    return nothing
+end
+
 # Whether frame k holds a measurement of direction i: seen (the masks, saturation included) with a positive value and
 # vignetting.
 @inline _measured(vals, vig, seen, i, k) = seen[i, k] && vals[i, k] > 0 && vig[i, k] > 0
@@ -63,10 +72,10 @@ least two frames measure it, `ratio` is the median over the other frames of
 noise, misregistration and parallax; a wrong one leaves a step at every frame
 boundary. The score is the ratio's spread over the pixels measured twice or
 more: `rms` and the robust `mad` (Core's `mad_scale`, the 1.4826·MAD; misalignment and moving content
-inflate the rms), over `n` pixels. `gains` (optional, one per frame:
-[`fit_vignetting`](@ref)'s `metadata.gains`) divides each frame's exposure
-gain out as well, `log(I_k/(g_k·V_k))`; `nothing` takes the frames as one
-exposure.
+inflate the rms), over `n` pixels. `gains` (optional, `K × 3`, per frame and
+colour plane: [`fit_vignetting`](@ref)'s `metadata.gains`) divides each
+frame's exposure gain of `plane` out as well, `log(I_k/(g_k,plane·V_k))`;
+`nothing` takes the frames as one exposure.
 
 The camera and the masks are [`sample_frames`](@ref)'s (`camera` its forward
 map: a `CameraModel` or a grid's `SplineProjection`). The raster is sampled in
@@ -80,14 +89,14 @@ function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, 
     K = length(frames)
     1 <= plane <= 3 || throw(ArgumentError("score_seams: plane $plane of a 3-plane frame"))
     chunk > 0 || throw(ArgumentError("score_seams: chunk must be positive, got $chunk"))
-    gains === nothing || length(gains) == K || throw(DimensionMismatch("score_seams: $K frames and $(length(gains)) gains"))
+    _check_gains("score_seams", gains, K, size(frames[1], 3))
     nv, nλ = view.size; N = nv * nλ
     proto = frames[1]; be = KA.get_backend(proto)
     D = similar(proto, SVector{3, Float64}, nv, nλ)
     VgtkCore.pointwise!(_RayAt{Float64}(view.rays), D, CartesianIndices((nv, nλ)))
     D = vec(D)
     ratio = fill!(similar(proto, Float64, N), NaN)
-    G = gains === nothing ? nothing : reshape(Adapt.adapt(be, Float64.(collect(gains))), 1, K)
+    G = gains === nothing ? nothing : reshape(Adapt.adapt(be, Float64.(collect(gains[:, plane]))), 1, K)
     exec = VgtkCore.OnBackend(be)
     for lo in 1:chunk:N
         hi = min(lo + chunk - 1, N)

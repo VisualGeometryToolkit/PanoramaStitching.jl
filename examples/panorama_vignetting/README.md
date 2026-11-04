@@ -82,8 +82,10 @@ Under `$VGTK_DATA_ROOT`:
    σ of log I; `sampson_solves` the solves after the I² one). Its normal equations are accumulated on the GPU, and it is
    solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
    log V = 0 over the domain — no special point is pinned.
-   *The frames' exposure gains* (`vignetting.gain_correction`, required): with `true` each frame has its own gain g_k
-   (`I_k = g_k·L·V`, g₁ = 1), divided out by the seam score and the corrected renders as well. Both configs fit them: the
+   *The frames' exposure gains* (`vignetting.gain_correction`, required: `"none"`, `"frame"` or `"channel"`): with
+   `"frame"` each frame has its own gain g_k (`I_k = g_k·L·V`, g₁ = 1), with `"channel"` one per frame and colour plane
+   (`g_kc`, g_1c = 1: a white balance that drifts too; V is one for all planes), divided out by the seam score and the
+   corrected renders as well (per plane). Both configs fit them: the
    rooftop's daylight changed during the sweep (gains up to +18 %; without them V came out 7 % too dark at the domain's edge),
    and the 14 mm frames drift by up to 6.7 % (with the gains the seams' 1.4826·MAD fell from 0.107 to 0.102).
    *Why radial for the rooftop:* a sweep that turns mostly about the vertical cannot see a 2-D V's vertical tilt (a field
@@ -107,6 +109,20 @@ Under `$VGTK_DATA_ROOT`:
    axis (a roll-free sweep), which holds whatever the frames' pitch.
    The renders show the REAL images: saturated pixels keep their clipped values (bright windows stay bright), the masks are
    only used by the fit and the seam score.
+
+## The comparison of the fit's settings
+
+`arms.toml` is the comparison of record of `fit_vignetting`'s settings: twelve arms, V `"free"` (self-calibration) or
+`"fixed"` (held at the V of record, the `fixed_from` arm's fit: the record's settings, frame gains and I² weights) × the
+`gain_correction` (`"none"`, `"frame"`, `"channel"`) × the `weights` (`"intensity"`, `"sampson"`), each on both sets
+(`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode, registration, domain, radial model and solver).
+
+    julia --project=<env> examples/panorama_vignetting/compare_arms.jl examples/panorama_vignetting/arms.toml
+
+Per set, a run keyed by `arms.toml`, the set's config and its registration record writes
+`out/<name>/arms/<key>/results.json` and `results.md`: per arm the seams' 1.4826·MAD per colour plane and pooled over the
+planes, their rms, the gains (`K × 3`), V's range, asymmetry and ring profile (100 px rings about the circle's centre), and
+the warm fit time. A key that exists is reused. The configs of record keep their settings until the table decides.
 
 ## Outputs (`out/<name>/`)
 

@@ -13,8 +13,10 @@ export vignetting_sequence
 # the scene: a smooth log radiance on the sphere (wavelengths of about 30°; Cartesian, so no pole is singular)
 scene(d) = 0.05 * exp(0.6 * sin(3d[1] + 2d[2]) * cos(2d[3]) + 0.3 * sin(9d[1] - 7d[3] + 5d[2]))
 
-# `gains`: the frames' exposure gains g_k (I_k = g_k·L·V; all 1 by default)
+# `gains`: the frames' exposure gains, one per frame g_k or one per frame and colour plane g_kc (a K × 3 matrix): I_kc = g_kc·t_c·L·V,
+# t = (0.8, 1, 1.3) the scene's colour (all 1 by default)
 function vignetting_sequence(logV; gains = ones(6))
+    G = gains isa AbstractMatrix ? gains : repeat(gains, 1, 3); tint = (0.8, 1.0, 1.3)
     W = H = 800; s = 2; Wf, Hf = W ÷ s, H ÷ s
     model = CameraModel(260.0px, SA[400.0px, 400.0px]; lens = KannalaBrandt(-0.02))
     circle = Circle(Point2(400.0, 400.0), 390.0)
@@ -26,7 +28,9 @@ function vignetting_sequence(logV; gains = ones(6))
             u = SVector((j - 0.5) * s, (i - 0.5) * s)
             hypot(u[1] - 400.0, u[2] - 400.0) < 390.0 || continue
             f = backproject(model, u)
-            img[i, j, :] .= Float32(gains[k] * scene(Rk * f) * exp(logV(u)))
+            for c in 1:3
+                img[i, j, c] = Float32(G[k, c] * tint[c] * scene(Rk * f) * exp(logV(u)))
+            end
         end
         img
     end
@@ -53,7 +57,7 @@ end
     end
     kw = (; circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
           plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
-          vignetting_penalty_weight = 1.0e-6, gain_correction = false)
+          vignetting_penalty_weight = 1.0e-6, gain_correction = nothing)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
 
     # a radial V about a centre 30 px off the image's centre, smooth at the centre (the pole-regular subspace)
@@ -103,7 +107,7 @@ end
     using PanoramaStitching: fit_vignetting, score_seams, panorama_view, ConjugateGradient
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
-    using PanoramaStitching: SampsonWeights
+    using PanoramaStitching: SampsonWeights, ChannelGains
     if !CUDA.functional()
         @test_skip "no CUDA device"
     else
@@ -113,7 +117,7 @@ end
         v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
         kw = (; circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
               plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
-              vignetting_penalty_weight = 1.0e-6, gain_correction = true, free_directions = pole_regular_basis(v0),
+              vignetting_penalty_weight = 1.0e-6, gain_correction = ChannelGains(), free_directions = pole_regular_basis(v0),
               solver = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000))
         h = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, kw...)
         df, ds = CuArray.(q.frames), CuArray.(q.saturated)
@@ -134,7 +138,7 @@ end
         sh = score_seams(q.model, q.frames, q.R, view; saturated = q.saturated, sk...)
         sd = score_seams(q.model, df, q.R, view; saturated = ds, sk...)
         @test sh.n == sd.n && abs(sh.rms - sd.rms) < 1.0e-9 && abs(sh.mad - sd.mad) < 1.0e-9
-        @test maximum(abs.(d.metadata.gains .- h.metadata.gains)) < 1.0e-8 && d.metadata.gains[1] == 1.0
+        @test maximum(abs.(d.metadata.gains .- h.metadata.gains)) < 1.0e-8 && all(==(1.0), d.metadata.gains[1, :])
     end
 end
 
@@ -145,7 +149,7 @@ end
 @testitem "fit_vignetting: the frames' exposure gains recovered (gauge g₁ = 1), V free or held fixed; score_seams and render_panorama divide them out" setup = [VignettingSequence] begin
     using Test, Statistics, StaticArrays
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient,
-        SparseCholesky, SampsonWeights, IntensityWeights
+        SparseCholesky, SampsonWeights, IntensityWeights, FrameGains
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, n_control_points, with_control_points
     c = SVector(430.0, 390.0)
@@ -163,15 +167,16 @@ end
         return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
     end
     Z = pole_regular_basis(v0)
-    with = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = true, solver = cgs, kw...)
-    chol = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = true, solver = SparseCholesky(), kw...)
-    without = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = false, solver = cgs, kw...)
-    gw = with.metadata.gains
+    with = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = cgs, kw...)
+    chol = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = SparseCholesky(), kw...)
+    without = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = nothing, solver = cgs, kw...)
+    G = with.metadata.gains; gw = G[:, 2]
+    @test size(G) == (6, 3) && G[:, 1] == G[:, 2] == G[:, 3]          # FrameGains: one per frame, every plane
     @info "frame gains: recovered $(round.(gw; digits = 5)) (true $g); V error with $(v_error(VgtkCore.estimate(with))), without $(v_error(VgtkCore.estimate(without)))"
     @test VgtkCore.retcode(with) === :converged
     @test gw[1] === 1.0 && length(gw) == length(g)                    # the gauge: the first frame's gain is 1 exactly
     @test maximum(abs.(gw ./ g .- 1)) < 1.0e-3
-    @test maximum(abs.(chol.metadata.gains .- gw)) < 1.0e-5           # CG and Cholesky solve the same system
+    @test maximum(abs.(chol.metadata.gains .- G)) < 1.0e-5            # CG and Cholesky solve the same system
     @test v_error(VgtkCore.estimate(with)) < 2.0e-3
     @test v_error(VgtkCore.estimate(without)) > 5 * v_error(VgtkCore.estimate(with))
     @test all(==(1.0), without.metadata.gains)
@@ -179,21 +184,21 @@ end
 
     # gain compensation: V held fixed at the fitted one (no free direction), the gains alone, one linear solve
     fixed = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
-                           gain_correction = true, solver = SparseCholesky(), kw...)
+                           gain_correction = FrameGains(), solver = SparseCholesky(), kw...)
     @test VgtkCore.estimate(fixed) === VgtkCore.estimate(with) && fixed.metadata.outer_iterations == 1
-    @test maximum(abs.(fixed.metadata.gains ./ g .- 1)) < 1.0e-3
-    @test maximum(abs.(fixed.metadata.gains .- gw)) < 1.0e-5
+    @test maximum(abs.(fixed.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
+    @test maximum(abs.(fixed.metadata.gains .- G)) < 1.0e-5
 
     # the Sampson weights (the observation's constraint whitened with the sensor point's noise): frames that follow the model
     # exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
     sw = SampsonWeights(; point_scale = 1.5, solves = 2)
-    sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = true, solver = SparseCholesky(),
+    sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = SparseCholesky(),
                          weights = sw, kw...)
     @test sam.metadata.outer_iterations == 3 && sam.metadata.weights === sw
-    @test maximum(abs.(sam.metadata.gains ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
+    @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
     sf = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
-                        gain_correction = true, solver = SparseCholesky(), weights = SampsonWeights(; point_scale = 1.5), kw...)
-    @test sf.metadata.outer_iterations == 2 && maximum(abs.(sf.metadata.gains ./ g .- 1)) < 1.0e-3
+                        gain_correction = FrameGains(), solver = SparseCholesky(), weights = SampsonWeights(; point_scale = 1.5), kw...)
+    @test sf.metadata.outer_iterations == 2 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
     @test_throws ArgumentError SampsonWeights()                                         # the point's noise is required
     @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, point_covariance = [1.0 0; 0 1])
     @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, solves = 3)
@@ -202,7 +207,7 @@ end
     # the observation's constraint (Core's protocol): G_x is the model's exact gradient in u, and the weight is Core's whitening
     m = with.metadata
     cL = replace(m.scene, NaN => 0.0)
-    obs = PanoramaStitching._LogIntensityModel(VgtkCore.estimate(with), m.chart, cL, q.R[3], log(m.gains[3]))
+    obs = PanoramaStitching._LogIntensityModel(VgtkCore.estimate(with), m.chart, cL, q.R[3], log(m.gains[3, 2]))
     for u in (SVector(300.0, 420.0), SVector(520.0, 260.0), SVector(410.0, 395.0))
         f, M = VgtkCore.backproject_with_jacobian(q.model, u)
         x = SVector(u[1], u[2], -2.0)
@@ -221,16 +226,80 @@ end
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
     sk = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
           chunk = 20_000, vignetting = VgtkCore.estimate(with))
-    sg = score_seams(q.model, q.frames, q.R, view; gains = gw, sk...)
+    sg = score_seams(q.model, q.frames, q.R, view; gains = G, sk...)
     s1 = score_seams(q.model, q.frames, q.R, view; sk...)
     @info "score_seams with the gains: rms $(sg.rms) mad $(sg.mad); without: rms $(s1.rms) mad $(s1.mad)"
     @test sg.rms < 0.1 * s1.rms                                       # (the MAD can stay small: a gain step is constant per frame region)
-    @test_throws DimensionMismatch score_seams(q.model, q.frames, q.R, view; gains = gw[1:3], sk...)
+    @test_throws DimensionMismatch score_seams(q.model, q.frames, q.R, view; gains = G[1:3, :], sk...)
+    @test_throws DimensionMismatch score_seams(q.model, q.frames, q.R, view; gains = gw, sk...)      # K × 3, not a vector
 
     # the render: dividing by g_k·V makes every frame show the same scene value
     rk = (; vignetting = VgtkCore.estimate(with), circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
-    a = render_panorama(q.model, q.frames, q.R, view; gains = gw, rk...)
+    a = render_panorama(q.model, q.frames, q.R, view; gains = G, rk...)
     b = render_panorama(q.model, q.frames, q.R, view; rk...)
     o = a.owner; m = o .> 0
     @test all(i -> a.image[i, 2] * gw[o[i]] ≈ b.image[i, 2], findall(m)[1:97:end])
+end
+
+# The gain modes × the V modes: frames whose every colour plane has its own exposure gain, I_kc = g_kc·t_c·L·V (a white balance
+# that drifts from frame to frame). gain_correction = nothing, FrameGains() or ChannelGains(), each with V fitted (a LogVignetting
+# along its free directions) and with V held fixed (the true V as a plain callable: its log V(u) the fixed numbers). ChannelGains
+# recovers every plane's gains and V; FrameGains the fitted plane's gains, every column the same; nothing, ones. score_seams and
+# render_panorama read the K × 3 gains per plane.
+@testitem "fit_vignetting: gain_correction none / frame / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence] begin
+    using Test, Statistics, StaticArrays
+    using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, FrameGains, ChannelGains,
+        GAIN_CORRECTIONS
+    import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
+    c = SVector(430.0, 390.0)
+    radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
+    G = [1.0 1.0 1.0; 1.10 1.12 1.15; 0.93 0.90 0.86; 1.25 1.20 1.12; 0.97 0.95 0.99; 1.02 1.07 1.11]   # g_1c = 1: the gauge
+    q = vignetting_sequence(radial; gains = G)
+    circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0)
+    v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
+    truth(u, f) = exp(radial(u))                                     # a V given as any callable
+    kw = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+          chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
+    function v_error(v)
+        us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([SVector((j - 0.5) * 2, (i - 0.5) * 2) for j in 1:400, i in 1:400]))
+        a = [log(v(u, nothing)) for u in us]; b = [radial(u) for u in us]
+        return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
+    end
+    modes = (("fitted", v0, pole_regular_basis(v0)), ("held", truth, zeros(0, 0)))
+    for (vm, v, Z) in modes, gc in (nothing, FrameGains(), ChannelGains())
+        r = fit_vignetting(v, q.model, q.frames, q.R; free_directions = Z, gain_correction = gc, kw...)
+        g = r.metadata.gains
+        @info "gain_correction $(gc === nothing ? "none" : nameof(typeof(gc))), V $vm: gains error per plane " *
+              "$(round.(vec(maximum(abs.(g ./ G .- 1); dims = 1)); sigdigits = 2))"
+        @test size(g) == (6, 3) && all(==(1.0), g[1, :])                 # the gauge, exactly
+        if gc === nothing
+            @test all(==(1.0), g)
+        elseif gc isa FrameGains
+            @test g[:, 1] == g[:, 2] == g[:, 3] && maximum(abs.(g[:, 2] ./ G[:, 2] .- 1)) < 1.0e-3
+        else
+            @test maximum(abs.(g ./ G .- 1)) < 1.0e-3                     # every plane's own gains
+        end
+        vm == "fitted" && gc !== nothing && @test v_error(VgtkCore.estimate(r)) < 2.0e-3
+        vm == "held" && @test VgtkCore.estimate(r) === truth
+    end
+    @test GAIN_CORRECTIONS["channel"] === ChannelGains && GAIN_CORRECTIONS["frame"] === FrameGains && GAIN_CORRECTIONS["none"] === nothing
+    @test_throws ArgumentError GAIN_CORRECTIONS["per_channel"]
+
+    # the seams and the render read each plane's gains: with ChannelGains every plane's seams vanish, with FrameGains only the fitted
+    # plane's
+    ch = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), kw...)
+    fr = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = FrameGains(), kw...)
+    view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
+    sk = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane_offsets = nothing, chunk = 20_000)
+    for p in (1, 3)
+        sc = score_seams(q.model, q.frames, q.R, view; vignetting = VgtkCore.estimate(ch), gains = ch.metadata.gains, plane = p, sk...)
+        sf = score_seams(q.model, q.frames, q.R, view; vignetting = VgtkCore.estimate(fr), gains = fr.metadata.gains, plane = p, sk...)
+        @test sc.rms < 0.1 * sf.rms
+    end
+    rk = (; vignetting = VgtkCore.estimate(ch), circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+    a = render_panorama(q.model, q.frames, q.R, view; gains = ch.metadata.gains, rk...)
+    b = render_panorama(q.model, q.frames, q.R, view; rk...)
+    o = a.owner; m = findall(o .> 0)[1:97:end]
+    @test all(i -> all(cc -> a.image[i, cc] * ch.metadata.gains[o[i], cc] ≈ b.image[i, cc], 1:3), m)
 end

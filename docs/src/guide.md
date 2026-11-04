@@ -145,8 +145,10 @@ back-projection (computed once: every frame shares the pixel grid), the scene `l
 its gauge is mean log V = 0 over the domain. The weights are I² ([`IntensityWeights`](@ref), the default) or
 [`SampsonWeights`](@ref): each row the implicit constraint of its measurement (sensor point, log I) whitened by that
 measurement's noise — the sensor point's from the registration's residual scale — at the I² solve's model, so a row where the
-scene's log I changes fast across the sensor counts less. `gain_correction = true` adds an exposure gain per frame, `I_k = g_k·L·V` (gauge `g₁ = 1`): a fixed
-exposure under changing light needs it, or V absorbs the frames' differences. `free_directions` says how V's control points
+scene's log I changes fast across the sensor counts less. `gain_correction = FrameGains()` adds an exposure gain per frame,
+`I_k = g_k·L·V` (gauge `g₁ = 1`), and [`ChannelGains`](@ref)`()` one per frame and colour plane, `I_kc = g_kc·L_c·V` (a white
+balance or a light colour that drifts too; V stays one for all planes): a fixed exposure under changing light needs them, or V
+absorbs the frames' differences. `nothing` takes the frames at one exposure. `free_directions` says how V's control points
 may move: a radial profile's pole-regular subspace (smooth at its centre), every control point of a tensor surface, or none
 (`zeros(n, 0)`) to hold a given V fixed, a calibration's — the same solve is then the frames' gain compensation.
 The normal equations are accumulated by atomic scatter-add on the frames' backend (GPU arrays on the device) and solved by
@@ -156,13 +158,13 @@ conjugate gradients there, or by a host Cholesky factorization:
 s = VgtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
 v0 = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
 res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCore.pole_regular_basis(v0),
-                     gain_correction = true, saturated, circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
+                     gain_correction = ChannelGains(), saturated, circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
                      plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
 # or weights = SampsonWeights(; point_scale = σ_u): σ_u the registration bundle's core scale (loss width / scale multiple), px
 V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
-g = res.metadata.gains            # the frames' exposure gains g_k (g₁ = 1)
+g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)
 ```
 
 A sweep about one axis does not observe a 2-D V's tilt across it (a field that varies only with the ray's height is unchanged

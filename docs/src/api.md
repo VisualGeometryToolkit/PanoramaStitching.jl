@@ -51,5 +51,8 @@ ConjugateGradient
 SparseCholesky
 IntensityWeights
 SampsonWeights
+FrameGains
+ChannelGains
+PanoramaStitching.GAIN_CORRECTIONS
 score_seams
 ```

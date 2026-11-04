@@ -308,15 +308,18 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
     s = v["solver"]
     solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
-    return fit_vignetting(m, lens.camera, dev.frames, rotations; free_directions = Z, gain_correction = v["gain_correction"],
+    gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "frame" or "channel" (an ArgumentError otherwise)
+    return fit_vignetting(m, lens.camera, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
                           saturated = dev.saturated, circle = lens.circle, raw_scale = 2,
                           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_offsets = dev.plane_offsets,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
                           weights = fit_weights(v, point_scale_px))
 end
-# The frames' exposure gains of a fit, for the seam score and the renders: its metadata's when it fitted them, else none.
-fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] ? res.metadata.gains : nothing
+# The frames' exposure gains of a fit (K × 3), for the seam score and the renders: its metadata's when it fitted them, else none.
+fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] == "none" ? nothing : res.metadata.gains
+# A K × 3 gain matrix as text, one frame per row: g_k,R / g_k,G / g_k,B.
+gains_text(G; d = 4) = join([join(round.(G[k, :]; digits = d), " / ") for k in axes(G, 1)], ", ")
 
 # ----------------------------------------------------------------------------- views, renders, images
 
@@ -437,7 +440,8 @@ function run_example(config_path)
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
     say(log, "  weights $(m.weights), $(m.outer_iterations) solves (the model's log I moved by $(m.log_change) in the last); " *
              "stages (s): $(m.seconds)")
-    C.cfg["vignetting"]["gain_correction"] && say(log, "  frame gains g_k (g₁ = 1): $(join(round.(m.gains; digits = 4), ", "))")
+    C.cfg["vignetting"]["gain_correction"] == "none" ||
+        say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
     M = write_vignetting(C, "vignetting", res, W, H)
 
     # the seam scores, before and after
@@ -543,7 +547,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                         "$(f(v.max_offset_px; d = 0)) | $(f(100v.asymmetry; d = 1)) % |")
         end
         println(io, "\nFrame gains (vignetting.gain_correction = $(C.cfg["vignetting"]["gain_correction"])): " *
-                    (C.cfg["vignetting"]["gain_correction"] ? "g_k of the fit of record (g₁ = 1) $(join(f.(rows[1][2].metadata.gains), ", ")); the seam score and the corrected renders divide them out." :
+                    (C.cfg["vignetting"]["gain_correction"] != "none" ? "g_k R / G / B of the fit of record (g₁ = 1) $(gains_text(rows[1][2].metadata.gains)); the seam score and the corrected renders divide them out." :
                      "none fitted, the frames taken at one exposure."))
         println(io, "\nStage times of the fit of record (s): $(rows[1][2].metadata.seconds)\n")
         println(io, "## Wall times (s)\n")

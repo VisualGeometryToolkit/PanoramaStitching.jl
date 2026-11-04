@@ -121,8 +121,8 @@ The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the R
 `camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
 (camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
 ray's direction (a field angle) reads `f`; a Core `AbstractVignetting` reads `u` — and by the frame's exposure gain
-`gains[k]` when `gains` is given (one per frame: [`fit_vignetting`](@ref)'s `metadata.gains`; `nothing`, the frames taken as
-one exposure). No seam, no blend, and
+`gains[k, c]` of each colour plane c when `gains` is given (`K × 3`, per frame and plane: [`fit_vignetting`](@ref)'s
+`metadata.gains`; `nothing`, the frames taken as one exposure). No seam, no blend, and
 each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.
 
 A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside `circle`
@@ -150,9 +150,9 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
     offsets = _plane_offsets(plane_offsets)
     K = length(frames)
     length(rotations) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(rotations)) rotations"))
-    gains === nothing || length(gains) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(gains)) gains"))
     Hf, Wf, C = size(frames[1])
     C == 3 || throw(DimensionMismatch("render_panorama: frames are H × W × 3, got $(size(frames[1]))"))
+    _check_gains("render_panorama", gains, K, C)
     T = float(eltype(frames[1])); s = raw_scale
     fwd = _forward_map(camera, frames[1])
     sees = _Sees(_frame_region(circle, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
@@ -174,13 +174,13 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
         VgtkCore.pointwise!(_RayAt{Float64}(fk), F, idx)
         VgtkCore.pointwise!(sees, ok, U, F)
         VgtkCore.pointwise!(_WhereSeen(vignetting, T), V, ok, U, F)
-        gains === nothing || (V .*= T(gains[k]))                           # the frame's exposure divided out with V
         for c in 1:3
             # a plane whose samples sit at o_c (frame pixels) is read at the frame point less o_c
             bmc = iszero(offsets[c]) ? bm : VgtkCore.image_warp(Float64, Translation(-offsets[c]) ∘ scale ∘ fwd ∘ fk, rect)
             VgtkCore.image_warp!(w, bmc, Base.view(frames[k], :, :, c))
             img = Base.view(image, :, :, c)
-            img .= ifelse.(ok, w ./ V, img)
+            g = gains === nothing ? one(T) : T(gains[k, c])                   # the frame's exposure in this plane, divided out with V
+            img .= ifelse.(ok, w ./ (g .* V), img)
         end
         owner .= ifelse.(ok, k, owner); coverage .+= ok
     end

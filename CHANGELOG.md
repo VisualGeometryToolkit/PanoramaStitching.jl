@@ -17,8 +17,14 @@
   a radial profile (V′(0) = 0: smooth at its centre, which the earlier log-V profile did not impose), the identity for a
   tensor surface, `zeros(n, 0)` to hold a given V fixed — a calibration's — when the same solve is the frames' gain
   compensation.
-- `frame_gains` is `gain_correction` (`Bool`, required; the example's `vignetting.gain_correction`).
-- `score_seams` and `render_panorama` keep `gains` (one per frame, `nothing` for one exposure).
+- `frame_gains` is `gain_correction` (required): `nothing`, `FrameGains()` (one gain per frame, the release before's `true`)
+  or `ChannelGains()` (new: one per frame and colour plane, `I_kc = g_kc·L_c·V`, the gauge `g_1c = 1` per plane: a frame's
+  white balance or the light's colour drifting too). V stays one, shared by the planes: fitted (or held fixed) on `plane`
+  with its gains, then each other plane's gains solved under that V. Both V modes take every gain mode. TOML: the tags of
+  `PanoramaStitching.GAIN_CORRECTIONS` (a VisualGeometryToolkitCore `TagRegistry`: `"none"`, `"frame"`, `"channel"`; the
+  example's `vignetting.gain_correction`, both configs `"channel"`). `VignettingMetadata.gains` is `K × 3`.
+- `score_seams` and `render_panorama` keep `gains`, now the `K × 3` matrix of `metadata.gains` (one per frame and plane;
+  `nothing` for one exposure): a vector is refused (`DimensionMismatch`).
 - `fit_vignetting` back-projects the pixels through Core's batched `backproject` (a `CameraModel`, a `CentralGenericModel`
   or a `BoundedCamera` of one). `score_seams`'s per-direction ratio is a `pointwise!` functor of Core's.
 

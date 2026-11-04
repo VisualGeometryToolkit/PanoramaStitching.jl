@@ -79,7 +79,7 @@ vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's contro
 # Per-frame exposure gains (g₁ = 1): ON. Measured 2026-11-04, both ways on these frames: the gains came out 0.93–0.99 (the
 # indoor light or the exposure drifted by up to 6.7 %); with them the seam spread fell from 1.4826·MAD 0.1066 (rms 0.4042) to
 # 0.1021 (rms 0.3998) and the residual MAD from 0.168 to 0.164, and V moved by under 1 % at ρ = 200 … 1400 px (summary.md).
-gain_correction = true
+gain_correction = "channel"                        # "none", "frame" (one gain per frame) or "channel" (per frame and colour plane)
 weights = "intensity"                              # "intensity" (I², one solve) or "sampson" (the observation's Sampson whitening:
                                                    # the sensor point's σ the registration bundle's core scale, loss width / scale multiple)
 log_intensity_scale = 0.01                         # Sampson: σ of log I (a constant floor)

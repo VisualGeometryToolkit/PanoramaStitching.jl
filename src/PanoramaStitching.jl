@@ -51,8 +51,9 @@ export ViewGraph, chain_tracks, refine_rotations, RotationBundleMetadata
 export world_direction, FrameSamples, sample_frames, fibonacci_directions
 export true_up, up_frame, PanoramaView, panorama_view, render_panorama, render_cube_map
 export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, IntensityWeights, SampsonWeights
+export FrameGains, ChannelGains
 export score_seams
-public FrameFeatures, detect_features, pair_bearings, LOMA_SIZE, CUBE_FACES
+public FrameFeatures, detect_features, pair_bearings, LOMA_SIZE, CUBE_FACES, GAIN_CORRECTIONS
 
 include("view_graph.jl")
 include("sampling.jl")

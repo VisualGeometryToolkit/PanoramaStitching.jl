@@ -112,6 +112,38 @@ function SampsonWeights(; point_covariance = nothing, point_scale = nothing, log
     solves in (1, 2) || throw(ArgumentError("SampsonWeights: solves is 1 or 2, got $solves"))
     return SampsonWeights(Σ, Float64(log_intensity_scale), Int(solves))
 end
+"""
+    FrameGains()
+
+[`fit_vignetting`](@ref)'s `gain_correction`: one exposure gain per frame,
+`log I_kc = log g_k + log L_c(d) + log V(u)`, `K − 1` unknowns with the gauge
+`g₁ = 1`, fitted on the fitted `plane` and taken for every colour plane.
+"""
+struct FrameGains end
+
+"""
+    ChannelGains()
+
+[`fit_vignetting`](@ref)'s `gain_correction`: one exposure gain per frame and
+colour plane, `log I_kc = log g_kc + log L_c(d) + log V(u)`, the gauge
+`g_1c = 1` per plane: a frame's exposure and its white balance or colour shift.
+V is one, shared by the planes: fitted (or held) on `plane` with that plane's
+gains, then each other plane's gains solved under that V (the same system with
+V held fixed, its own scene L_c).
+"""
+struct ChannelGains end
+
+"""
+    GAIN_CORRECTIONS
+
+The TOML tags of [`fit_vignetting`](@ref)'s `gain_correction` (a
+VisualGeometryToolkitCore `TagRegistry`, family suffix `Gains`): `"none"`
+(`nothing`: every frame at one exposure), `"frame"` ([`FrameGains`](@ref)) and
+`"channel"` ([`ChannelGains`](@ref)); the example's `vignetting.gain_correction`.
+"""
+const GAIN_CORRECTIONS = VgtkCore.TagRegistry(:gain_correction, "Gains", "none" => nothing, "frame" => FrameGains,
+                                              "channel" => ChannelGains; paths = [r"^vignetting\.gain_correction$"])
+
 # The measurement covariance Σ_x over (u₁, u₂, log I).
 function _measurement_covariance(w::SampsonWeights)
     Σ = w.point_covariance; s2 = w.log_intensity_scale^2
@@ -194,8 +226,10 @@ end
 The metadata of [`fit_vignetting`](@ref)'s `FitResult`: `chart` (the scene's
 [`AzimuthalChart`](@ref)), `scene` (log L's `n²` controls, host, the chart's
 column-major order; `NaN` where no observation reached a control), `gains`
-(the frames' exposure gains `g_k` of `I_k = g_k·L·V`, one per frame, `g₁ = 1`;
-all 1 without `gain_correction`), the residual spread of log I over the rows
+(`K × 3`: the frames' exposure gains `g_kc` of `I_kc = g_kc·L_c·V`, one per frame
+and colour plane, `g_1c = 1`; all 1 without gain correction, and one per frame
+— every column the same — with [`FrameGains`](@ref)), the residual spread of
+log I of the fitted `plane` over the rows
 (`residual_rms` unweighted, `residual_mad` Core's `mad_scale`, the
 1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the
 result's `rms` is the one weighted by the last solve's weights),
@@ -211,7 +245,7 @@ times, summed over the solves).
 struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityWeights, SampsonWeights}}
     chart::AzimuthalChart
     scene::Vector{Float64}
-    gains::Vector{Float64}
+    gains::Matrix{Float64}
     residual_rms::Float64
     residual_mad::Float64
     residual_quantiles::NTuple{3, Float64}
@@ -613,14 +647,18 @@ V and the gains.
   identity for a tensor surface, `zeros(n, 0)` to hold the given V fixed —
   then the fit is gain compensation under that V (a calibration's), the same
   system without V's block.
-- `gain_correction`: with `true`, every frame has its own exposure gain,
-  `log I_k = log g_k + log L(d) + log V(u)`, `K − 1` unknowns `log g_k` with
-  the gauge `g₁ = 1` (L carries the first frame's exposure). Use it when the
-  exposure or the light can change between frames: a fixed shutter under a
-  drifting sky changes every frame's level, and the fit then puts the
-  difference into V (on the rooftop sweep the gains reached +18 % and V at the
-  domain's edge came out 7 % too dark without them). With `false` every frame
-  is taken at one exposure (`g_k = 1`). Required, no default.
+- `gain_correction`: `nothing` (every frame at one exposure, `g = 1`),
+  [`FrameGains`](@ref)`()` (one gain per frame, `log I_k = log g_k + log L(d)
+  + log V(u)`, `K − 1` unknowns with the gauge `g₁ = 1`: L carries the first
+  frame's exposure) or [`ChannelGains`](@ref)`()` (one per frame and colour
+  plane, the gauge `g_1c = 1`: each other plane's gains solved under the fitted
+  V, which stays one for all planes). In both modes of V — fitted, or held
+  fixed. Use gains when the exposure or the light can change between frames: a
+  fixed shutter under a drifting sky changes every frame's level, and the fit
+  then puts the difference into V (on the rooftop sweep the gains reached
+  +18 % and V at the domain's edge came out 7 % too dark without them); per
+  channel when the white balance or the light's colour can change too.
+  Required, no default (TOML: [`GAIN_CORRECTIONS`](@ref)).
 - The fit domain: every pixel of the `H × W × 3` `frames` (`raw_scale` camera
   pixels per frame pixel) whose sensor point lies inside `circle` (a Core
   `Circle` or `Ellipse` in camera pixels, `WholePlane()` for a lens without
@@ -660,14 +698,36 @@ the given model when V is held fixed), `retcode` `:converged` or
 `iterations` the CG's summed over the solves (0 for Cholesky),
 `rms` the rms of the log residual over `n` rows weighted by the last solve's
 weights, and
-[`VignettingMetadata`](@ref) (its `gains`, the frames' `g_k`: the `gains`
-keyword of [`score_seams`](@ref) and [`render_panorama`](@ref)).
+[`VignettingMetadata`](@ref) (its `gains`, the frames' `K × 3` `g_kc`: the
+`gains` keyword of [`score_seams`](@ref) and [`render_panorama`](@ref); the
+residuals and the solves are the fitted `plane`'s).
 """
 function fit_vignetting(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
-                        free_directions::AbstractMatrix, gain_correction::Bool, saturated::AbstractVector, circle, raw_scale::Integer,
-                        rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_offsets, chart_spacing_deg::Real,
-                        penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
-                        solver::Union{ConjugateGradient, SparseCholesky}, weights::Union{IntensityWeights, SampsonWeights} = IntensityWeights())
+                        gain_correction::Union{Nothing, FrameGains, ChannelGains}, plane::Integer, kw...)
+    r = _fit_plane(vignetting, camera, frames, rotations; gains = gain_correction !== nothing, plane, kw...)
+    m = r.metadata; g = m.gains
+    C = size(frames[1], 3)
+    G = repeat(g, 1, C)                                                   # nothing, FrameGains: the fitted plane's, every plane
+    if gain_correction isa ChannelGains
+        # each other plane's gains under the fitted V (held fixed: its log V(u) the fixed numbers), its own scene
+        held = merge(NamedTuple(kw), (; free_directions = zeros(0, 0)))
+        for c in 1:C
+            c == plane && continue
+            G[:, c] .= vec(_fit_plane(VgtkCore.estimate(r), camera, frames, rotations; gains = true, plane = c, held...).metadata.gains)
+        end
+    end
+    meta = VignettingMetadata(m.chart, m.scene, G, m.residual_rms, m.residual_mad, m.residual_quantiles, m.relative_residual,
+                              m.solver, m.weights, m.outer_iterations, m.log_change, m.n_pixels, m.n_active, m.seconds)
+    return VgtkCore.FitResult(VgtkCore.estimate(r), VgtkCore.retcode(r), r.iterations, r.rms, r.n, meta)
+end
+
+# One plane's fit (`fit_vignetting`'s system): its gains a K × 1 column (`gains`: K − 1 free, g₁ = 1; else all 1).
+function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
+                    free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, circle, raw_scale::Integer,
+                    rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_offsets, chart_spacing_deg::Real,
+                    penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
+                    solver::Union{ConjugateGradient, SparseCholesky}, weights::Union{IntensityWeights, SampsonWeights} = IntensityWeights())
+    gain_correction = gains
     penalty_order in (2, 3) || throw(ArgumentError("fit_vignetting: penalty_order must be 2 or 3, got $penalty_order"))
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("fit_vignetting: frames, rotations and saturated disagree"))
@@ -875,7 +935,7 @@ function fit_vignetting(vignetting, camera, frames::AbstractVector, rotations::A
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = copy(cL); scene[.!active] .= NaN
-    meta = VignettingMetadata(ch, scene, exp.(log_gains), sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
+    meta = VignettingMetadata(ch, scene, reshape(exp.(log_gains), :, 1),sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               weights, nsolves, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
     return VgtkCore.FitResult(v, retcode, iters, sqrt(swr / sw), length(R_all), meta)
