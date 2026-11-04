@@ -62,13 +62,13 @@ struct _Sees{R, T}
 end
 @inline (s::_Sees)(u, f) = all(isfinite, u) && VgtkCore.Point2(u[1], u[2]) ∈ s.region && f[3] > s.cosmax * LinearAlgebra.norm(f)
 
-# The vignetting model where the frame sees the point, NaN elsewhere: the model is evaluated only at seen points (a grid's
-# back-projection, say, has no ray off its domain).
-struct _Vignetting{F, T}
-    model::F
+# A caller's per-point callable `g(u, f)` where the frame sees the point, NaN elsewhere: it is evaluated only at seen points (a
+# grid's back-projection, say, has no ray off its domain). The vignetting keyword is read through it.
+struct _WhereSeen{F, T}
+    g::F
 end
-_Vignetting(model::F, ::Type{T}) where {F, T} = _Vignetting{F, T}(model)
-@inline (v::_Vignetting{F, T})(ok, u, f) where {F, T} = ok ? T(v.model(u, f)) : T(NaN)
+_WhereSeen(g::F, ::Type{T}) where {F, T} = _WhereSeen{F, T}(g)
+@inline (v::_WhereSeen{F, T})(ok, u, f) where {F, T} = ok ? T(v.g(u, f)) : T(NaN)
 
 """
     FrameSamples
@@ -102,9 +102,10 @@ array): for every frame `k` and direction `d`, the ray `f = R_kᵀ·d`
 there by bilinear sampling (Core's `image_sample!`, no smoothing) and the
 vignetting model evaluated continuously there, `vignetting(u, f)` (a model
 defined on the sensor reads `u`, one defined on the ray's direction reads
-`f`). These are the observations of a vignetting validation (`I_k / V_k` must
-agree across the frames that see a direction: their spread is the model's
-error) and of a panorama vignetting fit (`I_k = L(d)·V(u_k)`).
+`f`; a calibration's vignetting, or `(u, f) -> 1.0` for none). These are the
+observations of a vignetting validation (`I_k / V_k` must agree across the
+frames that see a direction: their spread is the model's error) and of the
+frames' gain compensation ([`fit_vignetting`](@ref) under a given V).
 
 A frame sees a direction by [`render_panorama`](@ref)'s masks: the ray within
 `fov_deg` of the camera frame's z axis, the sensor point inside `circle` (a
@@ -153,7 +154,7 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
             VgtkCore.image_sample!(w, saturated[k], Uc)                   # the tap converts the mask: no float copy of it
             ok .&= iszero.(w)
         end
-        VgtkCore.pointwise!(_Vignetting(vignetting, T), view(vig, :, k), ok, U, F)
+        VgtkCore.pointwise!(_WhereSeen(vignetting, T), view(vig, :, k), ok, U, F)
         for c in 1:3
             v = view(values, :, k, c)
             Uc .= Uf .- Ref(SVector{2, T}(offsets[c]))                      # the plane's samples sit at its offset

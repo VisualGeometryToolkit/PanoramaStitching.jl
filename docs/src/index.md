@@ -13,7 +13,7 @@ from the same frames, with no flat field. All geometry is on unit bearings, and 
 | the rotation of every frame | [`register_rotations`](@ref) | a [`Registration`](@ref): rotations, view graph, tracks, bundle |
 | the frames sampled at directions | [`sample_frames`](@ref) | [`FrameSamples`](@ref) |
 | the panorama in a view | [`panorama_view`](@ref), [`render_panorama`](@ref), [`render_cube_map`](@ref) | `(; image, owner, coverage, extent)` |
-| the vignetting from the frames alone | [`fit_vignetting`](@ref) | a `FitResult` of a [`SplineVignetting`](@ref) |
+| the vignetting from the frames alone, or the gains under a given one | [`fit_vignetting`](@ref) | a `FitResult` of a VisualGeometryToolkitCore vignetting model |
 | the seams a vignetting leaves | [`score_seams`](@ref) | `(; ratio, rms, mad, n)` |
 
 The sampling, the render and the vignetting fit run as KernelAbstractions kernels (the first two through
@@ -22,11 +22,10 @@ VisualGeometryToolkitCore's warping machinery): GPU arrays run on the device, ho
 ## Installation
 
 PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the packages it is built
-on are in General. Julia 1.12 or later. Add both registries once (naming General keeps it in a new depot), then the
-package and the two packages the example also loads:
+on are in General. Julia 1.12 or later. With CauRegistry added to your depot, add the package and the two packages the
+example also loads:
 
 ```julia-repl
-pkg> registry add General https://github.com/prittjam/CauRegistry.jl
 pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
 ```
 

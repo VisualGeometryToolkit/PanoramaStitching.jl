@@ -45,13 +45,11 @@ PanoramaStitching.CUBE_FACES
 
 ```@docs
 fit_vignetting
-RadialVignetting
-TensorVignetting
-SplineVignetting
-log_vignetting
 AzimuthalChart
 VignettingMetadata
 ConjugateGradient
 SparseCholesky
+IntensityWeights
+SampsonWeights
 score_seams
 ```

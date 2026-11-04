@@ -120,8 +120,9 @@ The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the R
 `fit_camera(SplineProjection, grid, region; tolerance)`), and sampled there bilinearly — one fused map
 `camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
 (camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
-ray's direction (a field angle) reads `f` — and by the frame's exposure gain `gains[k]` when `gains` is given (one per
-frame: [`fit_vignetting`](@ref)'s `metadata.gains`; `nothing`, the frames taken as one exposure). No seam, no blend, and
+ray's direction (a field angle) reads `f`; a Core `AbstractVignetting` reads `u` — and by the frame's exposure gain
+`gains[k]` when `gains` is given (one per frame: [`fit_vignetting`](@ref)'s `metadata.gains`; `nothing`, the frames taken as
+one exposure). No seam, no blend, and
 each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.
 
 A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside `circle`
@@ -172,7 +173,7 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
         VgtkCore.pointwise!(_SensorPoint{Float64}(bm, s), U, idx)
         VgtkCore.pointwise!(_RayAt{Float64}(fk), F, idx)
         VgtkCore.pointwise!(sees, ok, U, F)
-        VgtkCore.pointwise!(_Vignetting(vignetting, T), V, ok, U, F)
+        VgtkCore.pointwise!(_WhereSeen(vignetting, T), V, ok, U, F)
         gains === nothing || (V .*= T(gains[k]))                           # the frame's exposure divided out with V
         for c in 1:3
             # a plane whose samples sit at o_c (frame pixels) is read at the frame point less o_c

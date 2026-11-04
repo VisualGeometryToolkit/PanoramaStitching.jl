@@ -12,11 +12,10 @@ vignetting from the same frames, with no flat field. It is part of the
 ## Installation
 
 PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the packages it is built
-on are in General. Julia 1.12 or later. Add both registries once (naming General keeps it in a new depot), then the
-package and the two packages the example also loads:
+on are in General. Julia 1.12 or later. With CauRegistry added to your depot, add the package and the two packages the
+example also loads:
 
 ```julia-repl
-pkg> registry add General https://github.com/prittjam/CauRegistry.jl
 pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
 ```
 

@@ -24,7 +24,7 @@
     @test landing == example                                    # one example, shown twice
     @test length(guide) == 6 && count(illustrative, guide_all) == 1
 
-    # The install line adds exactly the packages the examples load; the registry that holds the package comes first.
+    # The install line adds exactly the packages the examples load, and no registry line precedes it.
     install = [m[1] for m in eachmatch(r"^pkg> add (.+)$"m, readme)]
     @test length(install) == 1
     packages = split(only(install))
@@ -38,7 +38,7 @@
     @test Set(filter(!stdlib, loaded)) == Set(packages)
     @test occursin("pkg> add $(only(install))", index)
     for text in (readme, index)
-        @test occursin(r"^pkg> registry add General https://github\.com/prittjam/CauRegistry\.jl$"m, text)
+        @test !occursin(r"^pkg> registry add"m, text)      # the install block is the add line alone
     end
 
     env = mktempdir()

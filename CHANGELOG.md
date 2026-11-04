@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.3.0
+
+### Breaking
+
+- The vignetting model is VisualGeometryToolkitCore's (0.5.5): `RadialVignetting`, `TensorVignetting` and `SplineVignetting`
+  and `log_vignetting` are gone from PanoramaStitching. `fit_vignetting(vignetting, camera, frames, rotations; …)` takes a
+  Core `LogVignetting` (V = exp(s), `s` a `RadialVignetting` or `TensorVignetting` spline of log V: the model of earlier
+  releases, linear in log V) as V's model and start, and its estimate is the fitted Core model (callable `v(u)`, isbits: the
+  `vignetting` keyword of `render_panorama`, `sample_frames` and `score_seams` on the host or a device, which still take any
+  `vignetting(u, f)` as well). The fit is the one linear solve in log V of earlier releases. A V held fixed is any
+  vignetting, a V-form `RadialVignetting` or `TensorVignetting` included. The model's knots are clamped (Core's), on the
+  same breakpoints as before (a radial profile on `[0, radius]`, a tensor surface over the box). `VignettingMetadata` gains
+  `weights` (the fit's) and `outer_iterations` and `log_change` (the solves, and the model's change in the last).
+- The new required `free_directions` (`n_control_points × m`): how V's control points move. Core's `pole_regular_basis` for
+  a radial profile (V′(0) = 0: smooth at its centre, which the earlier log-V profile did not impose), the identity for a
+  tensor surface, `zeros(n, 0)` to hold a given V fixed — a calibration's — when the same solve is the frames' gain
+  compensation.
+- `frame_gains` is `gain_correction` (`Bool`, required; the example's `vignetting.gain_correction`).
+- `score_seams` and `render_panorama` keep `gains` (one per frame, `nothing` for one exposure).
+- `fit_vignetting` back-projects the pixels through Core's batched `backproject` (a `CameraModel`, a `CentralGenericModel`
+  or a `BoundedCamera` of one). `score_seams`'s per-direction ratio is a `pointwise!` functor of Core's.
+
+### New
+
+- `fit_vignetting`'s `weights` keyword: `IntensityWeights()` (the default, I²: every earlier call and its numbers stand)
+  or `SampsonWeights(; point_scale | point_covariance, log_intensity_scale = 0.01, solves = 1)`. A row is the implicit
+  constraint `g = log I − log L(R_k·f(u)) − log V(u) − γ_k` on the measurement `(u, log I)`, through VisualGeometryToolkitCore's
+  `constraint_with_jacobians` protocol, and its weight Core's frozen whitening `whitening_factor(G_x, Σ_x)²` =
+  `1/(G_x·Σ_x·G_xᵀ)`, `G_x = [−∇_u(log L∘R_k∘f + log V), 1]` the model's exact gradient (ForwardDiff through the two
+  splines), `Σ_x = blockdiag(Σ_u, σ²)`. The weights are fixed per solve, at the previous solve's model: the I² solve, then
+  `solves` Sampson solves. The example takes `Σ_u` from the registration's rotation bundle (its core scale, loss width /
+  scale multiple, recorded in rotations.json as `bundle_loss_width_px`) and reads `vignetting.weights`,
+  `log_intensity_scale` and `sampson_solves`. New dependency ForwardDiff.
+- A noise model `var(I) = a·μ + b` (shot and read noise, measured on the frames) was tried as the weights during this
+  release and is not added: its outer iterations did not settle and moved the gains by up to 15 %.
+
+### Not added: a per-frame offset
+
+An additive offset per frame (`I_k = g_k·L·V + b_k`, a veil of flare) was tested and rejected. The closed-form table, with V
+held fixed at the radial fit's and the scene eliminated per direction (400k directions, the green plane, 1.4826·MAD of the
+seams after a trimmed second solve), gave on the rooftop sweep log gains 0.0807, an offset alone 0.0967 and both 0.0799 (one
+more parameter per frame for 1 %), and on the 14 mm indoor sweep log gains 0.0961, an offset 0.0936 and both 0.1676: an offset
+is not supported on the rooftop and buys 3 % indoors. Fitted jointly with V by Gauss–Newton, the offset diverged on the
+14 mm frames (b ≈ −2.8 after one iteration, then 10²–10⁵). The per-frame term is the exposure gain alone.
+
+### Documentation
+
+- The README's and the landing page's install block is the `pkg> add` line alone: the line
+  `pkg> registry add General https://github.com/prittjam/CauRegistry.jl` named CauRegistry's URL "General" and is removed.
+
 ## 0.2.2
 
 VisualGeometryToolkitCore 0.5.3 (compat `"0.5.3"`, for `stable_seed`); new dependency StableRNGs (Random dropped).

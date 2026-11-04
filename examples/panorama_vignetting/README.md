@@ -75,10 +75,14 @@ Under `$VGTK_DATA_ROOT`:
    point. The photo is read at its own pixel centres — no interpolation anywhere: the pixel's ray `f(p)` is the lens's
    back-projection, and the scene is a B-spline on the sphere (an azimuthal-equidistant chart, 1° controls, a Δ³ smoothness
    penalty) fitted together with V. log V is a cubic B-spline, RADIAL in the distance from a centre or a 2-D TENSOR spline
-   over the sensor. The least squares is weighted by I² (the log of a photon-limited value), its normal equations are
-   accumulated on the GPU, and it is solved by conjugate gradients there. V's scale is not observable (L can take any
-   factor), so V is reported with mean log V = 0 over the domain — no special point is pinned.
-   *The frames' exposure gains* (`vignetting.frame_gains`, required): with `true` each frame has its own gain g_k
+   over the sensor (VisualGeometryToolkitCore's `LogVignetting`). The model is linear in log L, log V and the log gains: one
+   linear least squares, weighted by I² (`vignetting.weights = "intensity"`) or by Sampson weights (`"sampson"`: each row
+   the constraint of its measurement — sensor point and log I — whitened by that measurement's noise, the sensor point's σ the
+   registration bundle's core scale, loss width / scale multiple, recorded in `rotations.json`; `log_intensity_scale` the
+   σ of log I; `sampson_solves` the solves after the I² one). Its normal equations are accumulated on the GPU, and it is
+   solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
+   log V = 0 over the domain — no special point is pinned.
+   *The frames' exposure gains* (`vignetting.gain_correction`, required): with `true` each frame has its own gain g_k
    (`I_k = g_k·L·V`, g₁ = 1), divided out by the seam score and the corrected renders as well. Both configs fit them: the
    rooftop's daylight changed during the sweep (gains up to +18 %; without them V came out 7 % too dark at the domain's edge),
    and the 14 mm frames drift by up to 6.7 % (with the gains the seams' 1.4826·MAD fell from 0.107 to 0.102).

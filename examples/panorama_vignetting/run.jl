@@ -136,7 +136,8 @@ function decoded_frames(C; masks::Bool, log = devnull)
                             "plane_offsets" => offsets, "daylight_wb" => wb, "raw_dir" => C.cfg["inputs"]["raw_dir"],
                             "frames" => new_entries), 2)
     end
-    return (; names = raws, frames, saturated = sats, plane_offsets = [SVector{2, Float64}(o...) for o in offsets], daylight_wb = wb)
+    return (; names = raws, frames, saturated = sats, plane_offsets = [SVector{2, Float64}(o...) for o in offsets], daylight_wb = wb,
+            levels = (; black = collect(blacks), white, gain))
 end
 
 # ----------------------------------------------------------------------------- the lens
@@ -180,12 +181,15 @@ function registration(C, inp, lens; log)
     path = joinpath(C.out, "rotations.json")
     if isfile(path)
         rec = JSON.parsefile(path)
+        # a record written before 2026-11-04 holds no bundle loss width: no point scale (the Sampson weights then refuse to run;
+        # delete the record to recompute it)
         if rec["key"] == key
             say(log, "registration: reused $(path)$(haskey(rec, "provenance") ? " ($(rec["provenance"]))" : "")")
             return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
                     pairs = rec["pairs"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
                     bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
-                    bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = get(rec, "provenance", nothing))
+                    bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = get(rec, "provenance", nothing),
+                    point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
         end
     end
     ep = r["execution_provider"]
@@ -213,10 +217,14 @@ function registration(C, inp, lens; log)
                # the bundle's outcome (RotationBundleMetadata): converged, nonfinite_start (its start not finite: a start prediction
                # outside the lens's domain), not_run, or another retcode; the observations not finite at the start
                "bundle_retcode" => string(reg.bundle.retcode), "bundle_outcome" => string(reg.bundle.metadata.outcome),
-               "bundle_start_nonfinite" => reg.bundle.metadata.start_nonfinite)
+               "bundle_start_nonfinite" => reg.bundle.metadata.start_nonfinite,
+               # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor point's σ of
+               # the Sampson weights
+               "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]))
     open(io -> JSON.print(io, rec, 2), path, "w")
     return (; rotations = Rs, pairs = length(reg.pairs), bundle_rms_px = reg.bundle.rms, seconds = secs, bundle_retcode = rec["bundle_retcode"],
-            bundle_outcome = rec["bundle_outcome"], bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = nothing)
+            bundle_outcome = rec["bundle_outcome"], bundle_start_nonfinite = rec["bundle_start_nonfinite"], provenance = nothing,
+            point_scale_px = reg.bundle.metadata.loss_width / r["bundle_scale_multiple"])
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -258,6 +266,8 @@ function domain_radius(lens, center, W, H, rim)
     return norm(SVector(c.center[1], c.center[2]) - center) + c.r - rim
 end
 
+# V's model and start (VisualGeometryToolkitCore's LogVignetting: a spline of log V, log V ≡ 0 at the start) and its free directions:
+# a radial profile's pole-regular subspace, every control point of a tensor surface.
 function vignetting_space(kind, C, lens, W, H)
     v = C.cfg["vignetting"]; rim = Float64(C.cfg["domain"]["rim_margin_px"])
     if kind == "radial"
@@ -265,38 +275,58 @@ function vignetting_space(kind, C, lens, W, H)
         center = rc == "principal_point" ? SVector{2, Float64}(principal_point(lens)) :
                  rc == "circle_center" ? SVector{2, Float64}(lens.circle.center[1], lens.circle.center[2]) : SVector{2, Float64}(rc...)
         radius = v["radial_radius"] == "domain" ? domain_radius(lens, center, W, H, rim) + 1.0 : Float64(v["radial_radius"])
-        return RadialVignetting(center, radius, v["radial_controls"])
+        s = VgtkCore.RadialVignetting(v["radial_controls"], center, radius; degree = 3)
+        m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(VgtkCore.n_control_points(s))))
+        return m, VgtkCore.pole_regular_basis(m)
     elseif kind == "tensor"
         v["tensor_box"] == "domain" || error("vignetting.tensor_box = $(v["tensor_box"]) is not \"domain\"")
         o, e = domain_box(lens, W, H, rim)
-        return TensorVignetting(o, e, Tuple(v["tensor_controls"]))
+        s = VgtkCore.TensorVignetting(Tuple(v["tensor_controls"]), VgtkCore.Rect(o[1], o[2], e[1], e[2]); degree = 3)
+        n = VgtkCore.n_control_points(s)
+        m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(n)))
+        return m, Matrix{Float64}(LinearAlgebra.I, n, n)
     end
     error("vignetting model \"$kind\" is not \"radial\" or \"tensor\"")
 end
 
-function fit(kind, C, lens, dev, rotations, W, H)
+# The fit's row weights of the config: I², or Sampson's with the sensor point's σ `point_scale_px` (the registration's).
+function fit_weights(v, point_scale_px)
+    w = v["weights"]
+    w == "intensity" && return IntensityWeights()
+    w == "sampson" || error("vignetting.weights = $w is not \"intensity\" or \"sampson\"")
+    point_scale_px === nothing && error("vignetting.weights = \"sampson\" needs the registration's point scale (its record " *
+                                        "rotations.json holds no bundle_loss_width_px: delete it to recompute the registration)")
+    return SampsonWeights(; point_scale = point_scale_px, log_intensity_scale = v["log_intensity_scale"], solves = v["sampson_solves"])
+end
+
+# One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
+# `point_scale_px` the sensor point's σ of the Sampson weights (the registration's `point_scale_px`).
+function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_scale_px = nothing)
     v = C.cfg["vignetting"]; d = C.cfg["domain"]
-    space = vignetting_space(kind, C, lens, W, H)
+    m, Z = vignetting === nothing ? vignetting_space(kind, C, lens, W, H) :
+           (vignetting, zeros(VgtkCore.n_control_points(vignetting), 0))
     s = v["solver"]
     solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
-    return fit_vignetting(space, lens.camera, dev.frames, rotations; saturated = dev.saturated, circle = lens.circle, raw_scale = 2,
+    return fit_vignetting(m, lens.camera, dev.frames, rotations; free_directions = Z, gain_correction = v["gain_correction"],
+                          saturated = dev.saturated, circle = lens.circle, raw_scale = 2,
                           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_offsets = dev.plane_offsets,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
-                          vignetting_penalty_weight = v["vignetting_penalty_weight"], frame_gains = v["frame_gains"], solver)
+                          vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
+                          weights = fit_weights(v, point_scale_px))
 end
 # The frames' exposure gains of a fit, for the seam score and the renders: its metadata's when it fitted them, else none.
-fit_gains(C, res) = C.cfg["vignetting"]["frame_gains"] ? res.metadata.gains : nothing
+fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] ? res.metadata.gains : nothing
 
 # ----------------------------------------------------------------------------- views, renders, images
 
-struct NoVignetting end
-(::NoVignetting)(u, f) = 1.0
+"No vignetting correction: V ≡ 1."
+no_vignetting(u, f) = 1.0
 
 "The covered (lon, lat) box in the up frame: a coarse equirectangular render's seen pixels."
 function coverage_extent(lens, frames, rotations, up; δ = 0.5)
     v = panorama_view(VgtkCore.Equirectangular(), (-180.0, 180.0, -89.0, 89.0), δ; up)
-    r = render_panorama(lens.forward, frames, rotations, v; vignetting = NoVignetting(), circle = lens.circle, raw_scale = 2,
+    r = render_panorama(lens.forward, frames, rotations, v; vignetting = no_vignetting, circle = lens.circle, raw_scale = 2,
                         rim_margin_px = 0.0, fov_deg = 89.0)
     seen = findall(>(0), Array(r.coverage))
     rows = extrema(I -> I[1], seen); cols = extrema(I -> I[2], seen)
@@ -320,31 +350,37 @@ end
 # ----------------------------------------------------------------------------- the record of V
 
 function write_vignetting(C, stem, res, W, H)
-    v = VgtkCore.estimate(res); s = v.space
-    rec = Dict{String, Any}("gauge" => "mean log V = 0 over the fit domain's pixels", "coefficients_of" => "log V",
-                            "coefficients" => collect(v.coefficients), "pixel_frame" => "camera pixels, COLMAP (full-resolution sensor)")
-    if s isa RadialVignetting
-        rec["space"] = Dict("kind" => "radial", "center" => collect(s.center), "radius" => s.radius, "controls" => s.n,
-                            "spline" => "uniform cubic B-spline in ρ on [0, radius]")
+    v = VgtkCore.estimate(res)
+    kx = VgtkCore.knot_vectors(v)
+    # a LogVignetting's control points are log V's (V = exp(s)); a V-form spline's (held fixed) are V's
+    logform = v isa VgtkCore.LogVignetting; s = logform ? VgtkCore.log_spline(v) : v
+    rec = Dict{String, Any}("gauge" => "mean log V = 0 over the fit domain's pixels", "control_points_of" => logform ? "log V" : "V",
+                            "control_points" => collect(vec(Matrix(VgtkCore.control_points(v)))),
+                            "knots" => collect.(kx), "degree" => collect(VgtkCore.spline_degree(v)),
+                            "pixel_frame" => "camera pixels, COLMAP (full-resolution sensor)")
+    if s isa VgtkCore.RadialVignetting
+        c = VgtkCore.field_center(v); r = VgtkCore.field_radius(v)
+        rec["model"] = Dict("kind" => "radial", "center" => collect(c), "radius" => r, "controls" => VgtkCore.n_control_points(v),
+                            "spline" => "VisualGeometryToolkitCore RadialVignetting: a B-spline in ρ/radius on clamped knots over [0, 1]")
         open(joinpath(C.out, stem * "_profile.csv"), "w") do io
             println(io, "rho_px,V")
-            for ρ in 0.0:4.0:s.radius
-                println(io, @sprintf("%.1f,%.6f", ρ, v(s.center + SVector(ρ, 0.0), nothing)))
+            for ρ in 0.0:4.0:r
+                println(io, @sprintf("%.1f,%.6f", ρ, v(c + SVector(ρ, 0.0))))
             end
         end
     else
-        rec["space"] = Dict("kind" => "tensor", "origin" => collect(s.origin), "extent" => collect(s.extent), "controls" => collect(s.n),
-                            "spline" => "uniform cubic tensor B-spline, x fastest")
+        rec["model"] = Dict("kind" => "tensor", "controls" => collect(size(VgtkCore.control_points(v))),
+                            "spline" => "VisualGeometryToolkitCore TensorVignetting: a tensor B-spline on clamped knots, x fastest")
     end
     open(io -> JSON.print(io, rec, 2), joinpath(C.out, stem * ".json"), "w")
     # the map over the sensor, every 32 px (x, y, V), and as an image normalized to its maximum
     open(joinpath(C.out, stem * "_map.csv"), "w") do io
         println(io, "x_px,y_px,V")
         for y in 16.0:32.0:H, x in 16.0:32.0:W
-            println(io, @sprintf("%.1f,%.1f,%.6f", x, y, v(SVector(x, y), nothing)))
+            println(io, @sprintf("%.1f,%.1f,%.6f", x, y, v(SVector(x, y))))
         end
     end
-    M = [v(SVector(2j - 1.0, 2i - 1.0), nothing) for i in 1:(H ÷ 2), j in 1:(W ÷ 2)]
+    M = [v(SVector(2j - 1.0, 2i - 1.0)) for i in 1:(H ÷ 2), j in 1:(W ÷ 2)]
     PNGFiles.save(joinpath(C.out, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
     return M
 end
@@ -353,14 +389,14 @@ end
 function vignetting_summary(v, lens, center, W, H, rim, fov_mask)
     pts = [SVector(2j - 1.0, 2i - 1.0) for i in 1:2:(H ÷ 2), j in 1:2:(W ÷ 2)]
     pts = filter(fov_mask, vec(pts))
-    lv = [log_vignetting(v, u) for u in pts]
+    lv = [log(v(u)) for u in pts]
     imax = argmax(lv)
     ρ = maximum(norm(u - center) for u in pts)
     asym = 0.0
     for r in range(0, 0.95ρ, length = 40), φ in range(0, π, length = 73)[1:(end - 1)]
         a = center + r * SVector(cos(φ), sin(φ)); b = center - r * SVector(cos(φ), sin(φ))
         (fov_mask(a) && fov_mask(b)) || continue
-        asym = max(asym, abs(exp(log_vignetting(v, a) - log_vignetting(v, b)) - 1))
+        asym = max(asym, abs(v(a) / v(b) - 1))
     end
     return (; V_min = exp(minimum(lv)), V_max = exp(lv[imax]), max_at = pts[imax], max_offset_px = norm(pts[imax] - center),
             asymmetry = asym)
@@ -391,15 +427,17 @@ function run_example(config_path)
     device in ("cuda", "cpu") || error("compute.device = $device is not \"cuda\" or \"cpu\"")
     say(log, "compute: $device$(haskey(ENV, "PANORAMA_VIGNETTING_DEVICE") ? " (PANORAMA_VIGNETTING_DEVICE)" : "")")
     move = device == "cuda" ? CuArray : identity
-    dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.plane_offsets)
+    dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.plane_offsets, inp.levels)
     kind = C.cfg["vignetting"]["model"]
-    fit(kind, C, lens, dev, reg.rotations, W, H)                                  # compile
-    t = time(); res = fit(kind, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($kind, warm)"] = time() - t
+    fkw = (; point_scale_px = reg.point_scale_px)
+    fit(kind, C, lens, dev, reg.rotations, W, H; fkw...)                          # compile
+    t = time(); res = fit(kind, C, lens, dev, reg.rotations, W, H; fkw...); T["fit_vignetting ($kind, warm)"] = time() - t
     m = res.metadata
     say(log, "fit_vignetting ($kind): $(res.retcode), $(res.iterations) iterations, weighted rms $(round(res.rms; digits = 4)), " *
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
-    say(log, "  stages (s): $(m.seconds)")
-    C.cfg["vignetting"]["frame_gains"] && say(log, "  frame gains g_k (g₁ = 1): $(join(round.(m.gains; digits = 4), ", "))")
+    say(log, "  weights $(m.weights), $(m.outer_iterations) solves (the model's log I moved by $(m.log_change) in the last); " *
+             "stages (s): $(m.seconds)")
+    C.cfg["vignetting"]["gain_correction"] && say(log, "  frame gains g_k (g₁ = 1): $(join(round.(m.gains; digits = 4), ", "))")
     M = write_vignetting(C, "vignetting", res, W, H)
 
     # the seam scores, before and after
@@ -409,7 +447,7 @@ function run_example(config_path)
     skw = (; saturated = dev.saturated, circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
            plane = d["plane"], plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
     t = time()
-    before = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = NoVignetting(), skw...)
+    before = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
     after = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
     T["score_seams (two)"] = time() - t
     save_ratio(joinpath(C.out, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.out, "seams_corrected.png"), Array(after.ratio))
@@ -423,11 +461,11 @@ function run_example(config_path)
     V = VgtkCore.estimate(res)
     # the corrected renders divide by the frames' gains as well; the uncorrected ones show the frames as they are
     render(view, vig) = Array(render_panorama(lens.forward, dev.frames, reg.rotations, view; vignetting = vig,
-                                              gains = vig isa NoVignetting ? nothing : fit_gains(C, res), rkw...).image)
+                                              gains = vig === no_vignetting ? nothing : fit_gains(C, res), rkw...).image)
     t = time()
     ℓ = Float64(rc["cylindrical_max_lat_deg"])                 # tan φ grows without bound: the cylindrical's latitude cap
     cyl = panorama_view(VgtkCore.Cylindrical(), (rext[1], rext[2], max(rext[3], -ℓ), min(rext[4], ℓ)), rc["cylindrical_deg_per_pixel"]; up)
-    cyl_c = render(cyl, V); cyl_u = render(cyl, NoVignetting())
+    cyl_c = render(cyl, V); cyl_u = render(cyl, no_vignetting)
     g = filter(!isnan, vec(view(cyl_c, :, :, 2)))
     exposure = 1 / quantile(g, rc["exposure_percentile"] / 100)
     # for viewing only: LibRaw's daylight white balance (normalized to G = 1), or none (camera raw colour)
@@ -448,11 +486,11 @@ function run_example(config_path)
         end
     end
     ea = panorama_view(VgtkCore.CylindricalEqualArea(), rext, rc["equal_area_deg_per_pixel"]; up)
-    save("equal_area_corrected", render(ea, V)); save("equal_area_uncorrected", render(ea, NoVignetting()))
+    save("equal_area_corrected", render(ea, V)); save("equal_area_uncorrected", render(ea, no_vignetting))
     rw, rh = rc["rectilinear_size"]; f = rw / 2 / tand(rc["rectilinear_hfov_deg"] / 2)
     rcam = VgtkCore.CameraModel(f * VgtkCore.px, SA[rw / 2 * VgtkCore.px, rh / 2 * VgtkCore.px]; lens = VgtkCore.Lens(VgtkCore.Perspective()))
     rect = panorama_view(rcam, rw, rh; rotation = up)
-    save("rectilinear_corrected", render(rect, V)); save("rectilinear_uncorrected", render(rect, NoVignetting()))
+    save("rectilinear_corrected", render(rect, V)); save("rectilinear_uncorrected", render(rect, no_vignetting))
     T["renders (six)"] = time() - t
 
     # the comparison fits (not used for the renders)
@@ -464,7 +502,7 @@ function run_example(config_path)
     pp = SVector{2, Float64}(principal_point(lens))
     rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, W, H, rim, in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
-        t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
+        t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H; fkw...); T["fit_vignetting ($k, compare)"] = time() - t
         s2 = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
         write_vignetting(C, "vignetting_compare_$k", r2, W, H)
         push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, W, H, rim, in_domain)))
@@ -504,8 +542,8 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                         "$(f(v.V_min; d = 3)) / $(f(v.V_max; d = 3)) | ($(f(v.max_at[1]; d = 0)), $(f(v.max_at[2]; d = 0))) | " *
                         "$(f(v.max_offset_px; d = 0)) | $(f(100v.asymmetry; d = 1)) % |")
         end
-        println(io, "\nFrame gains (vignetting.frame_gains = $(C.cfg["vignetting"]["frame_gains"])): " *
-                    (C.cfg["vignetting"]["frame_gains"] ? "g_k of the fit of record (g₁ = 1) $(join(f.(rows[1][2].metadata.gains), ", ")); the seam score and the corrected renders divide them out." :
+        println(io, "\nFrame gains (vignetting.gain_correction = $(C.cfg["vignetting"]["gain_correction"])): " *
+                    (C.cfg["vignetting"]["gain_correction"] ? "g_k of the fit of record (g₁ = 1) $(join(f.(rows[1][2].metadata.gains), ", ")); the seam score and the corrected renders divide them out." :
                      "none fitted, the frames taken at one exposure."))
         println(io, "\nStage times of the fit of record (s): $(rows[1][2].metadata.seconds)\n")
         println(io, "## Wall times (s)\n")

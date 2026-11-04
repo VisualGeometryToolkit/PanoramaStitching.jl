@@ -75,7 +75,11 @@ vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's contro
 # g = exp(0, .002, .093, .119, .147, .165, .161, .162, .159, .114) (pairwise consistency rms 0.003; RC's binned fit of record had
 # found the same; the fit's own gains of record, 2026-11-04: 1, 0.996, 1.088, 1.118, 1.146, 1.162, 1.156, 1.156, 1.152, 1.098, and
 # the seam spread 1.4826·MAD 0.106 → 0.081 with them). Without them V absorbs the differences: 7 % too dark at ρ = 1000 px, residual 1.4826·MAD 0.139 against 0.112.
-frame_gains = true
+gain_correction = true
+weights = "intensity"                              # "intensity" (I², one solve) or "sampson" (the observation's Sampson whitening:
+                                                   # the sensor point's σ the registration bundle's core scale, loss width / scale multiple)
+log_intensity_scale = 0.01                         # Sampson: σ of log I (a constant floor)
+sampson_solves = 1                                 # Sampson: its solves after the I² one (2: G_x re-evaluated once more)
 solver = "cg"                                    # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
 cg_tolerance = 1.0e-9                              # the CG's relative residual
 cg_max_iter = 40000                                # the CG's budget

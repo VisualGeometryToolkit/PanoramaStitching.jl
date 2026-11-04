@@ -6,11 +6,19 @@
 # vignetting.
 @inline _measured(vals, vig, seen, i, k) = seen[i, k] && vals[i, k] > 0 && vig[i, k] > 0
 
-# Per direction: the median over the other frames that measure it of log(I_k/V_k) − log(I_last/V_last), `last` the highest
+# Per direction i: the median over the other frames that measure it of log(I_k/V_k) − log(I_last/V_last), `last` the highest
 # index that measures it (the frame the unblended render shows); NaN unless at least two frames measure it. The median by rank
-# selection (no buffer: at most a few dozen frames).
-@kernel function _seam_ratio_kernel!(out, @Const(vals), @Const(vig), @Const(seen), K::Int, offset::Int)
-    i = @index(Global)
+# selection (no buffer: at most a few dozen frames). A per-point functor of Core's `pointwise!` over the direction indices,
+# the samples its fields (moved to the backend by `OnBackend`).
+struct _SeamRatio{A, W, S}
+    vals::A
+    vig::W
+    seen::S
+    K::Int
+end
+Adapt.@adapt_structure _SeamRatio
+@inline function (s::_SeamRatio)(I)
+    vals = s.vals; vig = s.vig; seen = s.seen; K = s.K; i = I[1]
     @inbounds begin
         last = 0
         for k in 1:K
@@ -20,26 +28,23 @@
         for k in 1:K
             (k != last && _measured(vals, vig, seen, i, k)) && (n += 1)
         end
-        if n == 0
-            out[offset + i] = NaN
-        else
-            ref = log(Float64(vals[i, last]) / Float64(vig[i, last]))
-            r1 = (n + 1) ÷ 2; r2 = n ÷ 2 + 1
-            v1 = NaN; v2 = NaN
-            for k in 1:K
-                (k != last && _measured(vals, vig, seen, i, k)) || continue
-                xk = log(Float64(vals[i, k]) / Float64(vig[i, k]))
-                nless = 0; nleq = 0
-                for l in 1:K
-                    (l != last && _measured(vals, vig, seen, i, l)) || continue
-                    xl = log(Float64(vals[i, l]) / Float64(vig[i, l]))
-                    nless += xl < xk; nleq += xl <= xk
-                end
-                (nless < r1 <= nleq) && (v1 = xk)
-                (nless < r2 <= nleq) && (v2 = xk)
+        n == 0 && return NaN
+        ref = log(Float64(vals[i, last]) / Float64(vig[i, last]))
+        r1 = (n + 1) ÷ 2; r2 = n ÷ 2 + 1
+        v1 = NaN; v2 = NaN
+        for k in 1:K
+            (k != last && _measured(vals, vig, seen, i, k)) || continue
+            xk = log(Float64(vals[i, k]) / Float64(vig[i, k]))
+            nless = 0; nleq = 0
+            for l in 1:K
+                (l != last && _measured(vals, vig, seen, i, l)) || continue
+                xl = log(Float64(vals[i, l]) / Float64(vig[i, l]))
+                nless += xl < xk; nleq += xl <= xk
             end
-            out[offset + i] = (v1 + v2) / 2 - ref
+            (nless < r1 <= nleq) && (v1 = xk)
+            (nless < r2 <= nleq) && (v2 = xk)
         end
+        return (v1 + v2) / 2 - ref
     end
 end
 
@@ -58,10 +63,10 @@ least two frames measure it, `ratio` is the median over the other frames of
 noise, misregistration and parallax; a wrong one leaves a step at every frame
 boundary. The score is the ratio's spread over the pixels measured twice or
 more: `rms` and the robust `mad` (Core's `mad_scale`, the 1.4826·MAD; misalignment and moving content
-inflate the rms), over `n` pixels. `gains` (optional, one per frame: the
-exposure gains `g_k` of [`fit_vignetting`](@ref)'s `metadata.gains`) divides
-each frame's exposure out as well, `log(I_k/(g_k·V_k))`; `nothing` takes the
-frames at one exposure.
+inflate the rms), over `n` pixels. `gains` (optional, one per frame:
+[`fit_vignetting`](@ref)'s `metadata.gains`) divides each frame's exposure
+gain out as well, `log(I_k/(g_k·V_k))`; `nothing` takes the frames as one
+exposure.
 
 The camera and the masks are [`sample_frames`](@ref)'s (`camera` its forward
 map: a `CameraModel` or a grid's `SplineProjection`). The raster is sampled in
@@ -82,14 +87,15 @@ function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, 
     VgtkCore.pointwise!(_RayAt{Float64}(view.rays), D, CartesianIndices((nv, nλ)))
     D = vec(D)
     ratio = fill!(similar(proto, Float64, N), NaN)
-    rk! = _seam_ratio_kernel!(be, 256)
-    G = gains === nothing ? nothing : reshape(_upload(be, Float64.(collect(gains))), 1, K)
+    G = gains === nothing ? nothing : reshape(Adapt.adapt(be, Float64.(collect(gains))), 1, K)
+    exec = VgtkCore.OnBackend(be)
     for lo in 1:chunk:N
         hi = min(lo + chunk - 1, N)
         S = sample_frames(camera, frames, rotations, D[lo:hi]; saturated, circle, raw_scale, rim_margin_px, fov_deg, vignetting,
                           plane_offsets)
-        G === nothing || (S.vignetting .*= G)                              # I_k / (g_k·V_k): the frame's exposure divided out too
-        rk!(ratio, Base.view(S.values, :, :, plane), S.vignetting, S.seen, K, lo - 1; ndrange = hi - lo + 1)
+        vals = Base.view(S.values, :, :, plane)
+        G === nothing || (S.vignetting .*= G)                             # I_k / (g_k·V_k): the frame's exposure too
+        VgtkCore.pointwise!(_SeamRatio(vals, S.vignetting, S.seen, K), Base.view(ratio, lo:hi), CartesianIndices((hi - lo + 1,)); exec)
         KA.synchronize(be)
     end
     r = filter(!isnan, Array(ratio))
