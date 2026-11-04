@@ -23,9 +23,13 @@ host arrays run the same code on the CPU.
 
 ## Installation
 
-```julia
-using Pkg
-Pkg.add("PanoramaStitching")
+PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the VisualGeometryToolkit
+stack it is built on is in General. Add CauRegistry once (Julia 1.12 or later), then the package and the two packages the
+examples also name:
+
+```julia-repl
+pkg> registry add General https://github.com/prittjam/CauRegistry.jl
+pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
 ```
 
 ## The inputs
