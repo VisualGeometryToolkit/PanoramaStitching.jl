@@ -142,7 +142,7 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
         VgtkCore.pointwise!(d -> Rt * d, F, D)
         VgtkCore.pointwise!(fwd, U, F)
         Uf .= U ./ T(s)                                                   # the frame's COLMAP pixels
-        VgtkCore.image_sample!(w, T.(saturated[k]), Uf)
+        VgtkCore.image_sample!(w, saturated[k], Uf)                       # the tap converts the mask: no float copy of it
         VgtkCore.pointwise!(sees, ok, U, F, w)
         VgtkCore.pointwise!(_Vignetting(vignetting, T), view(vig, :, k), ok, U, F)
         for c in 1:3

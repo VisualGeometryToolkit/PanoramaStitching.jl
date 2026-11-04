@@ -143,8 +143,8 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
     for k in 1:K
         Rt = LinearMap(SMatrix{3, 3, Float64, 9}(rotations[k])')
         # frame k's warp: the output (row, col) → the frame's (row, col); the same chain without the camera, the rays f
-        bm = VgtkCore.image_warp(Float64, scale ∘ fwd ∘ Rt ∘ view.rays, rect)
         fk = Rt ∘ view.rays
+        bm = VgtkCore.image_warp(Float64, scale ∘ fwd ∘ fk, rect)
         VgtkCore.pointwise!(_SensorPoint{Float64}(bm, s), U, idx)
         VgtkCore.pointwise!(_RayAt{Float64}(fk), F, idx)
         VgtkCore.pointwise!(sees, ok, U, F)
@@ -152,7 +152,7 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
         gains === nothing || (V .*= T(gains[k]))                           # the frame's exposure divided out with V
         for c in 1:3
             # a plane whose samples sit at o_c (frame pixels) is read at the frame point less o_c
-            bmc = iszero(offsets[c]) ? bm : VgtkCore.image_warp(Float64, Translation(-offsets[c]) ∘ scale ∘ fwd ∘ Rt ∘ view.rays, rect)
+            bmc = iszero(offsets[c]) ? bm : VgtkCore.image_warp(Float64, Translation(-offsets[c]) ∘ scale ∘ fwd ∘ fk, rect)
             VgtkCore.image_warp!(w, bmc, Base.view(frames[k], :, :, c))
             img = Base.view(image, :, :, c)
             img .= ifelse.(ok, w ./ V, img)

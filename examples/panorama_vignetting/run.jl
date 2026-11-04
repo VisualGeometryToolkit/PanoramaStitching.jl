@@ -451,8 +451,10 @@ function run_example(config_path)
 
     # the comparison fits (not used for the renders)
     rim = Float64(d["rim_margin_px"])
-    in_domain(u) = (lens.circle isa VgtkCore.WholePlane || norm(SVector(u[1] - lens.circle.center[1], u[2] - lens.circle.center[2])) < lens.circle.r - rim) &&
-                   2 <= u[1] <= W - 2 && 2 <= u[2] <= H - 2
+    # the fit's domain as a Core region: 2 px inside the sensor and inside the circle less the rim margin
+    rimmed = lens.circle isa VgtkCore.WholePlane ? lens.circle : VgtkCore.Circle(lens.circle.center, lens.circle.r - rim)
+    domain = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ rimmed
+    in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
     pp = SVector{2, Float64}(principal_point(lens))
     rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, W, H, rim, in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
