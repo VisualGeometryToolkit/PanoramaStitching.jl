@@ -57,7 +57,7 @@ least two frames measure it, `ratio` is the median over the other frames of
 [`render_panorama`](@ref) shows (the highest index). A correct V leaves only
 noise, misregistration and parallax; a wrong one leaves a step at every frame
 boundary. The score is the ratio's spread over the pixels measured twice or
-more: `rms` and the robust `mad` (1.4826·MAD; misalignment and moving content
+more: `rms` and the robust `mad` (Core's `mad_scale`, the 1.4826·MAD; misalignment and moving content
 inflate the rms), over `n` pixels. `gains` (optional, one per frame: the
 exposure gains `g_k` of [`fit_vignetting`](@ref)'s `metadata.gains`) divides
 each frame's exposure out as well, `log(I_k/(g_k·V_k))`; `nothing` takes the
@@ -94,7 +94,6 @@ function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, 
     end
     r = filter(!isnan, Array(ratio))
     isempty(r) && throw(ArgumentError("score_seams: no pixel of the raster is measured by two frames"))
-    med = Statistics.median(r)
-    return (; ratio = reshape(ratio, nv, nλ), rms = sqrt(Statistics.mean(abs2, r)), mad = 1.4826 * Statistics.median(abs.(r .- med)),
+    return (; ratio = reshape(ratio, nv, nλ), rms = sqrt(Statistics.mean(abs2, r)), mad = VgtkCore.mad_scale(r),
             n = length(r))
 end

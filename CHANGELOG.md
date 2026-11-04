@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
+
+VisualGeometryToolkitCore 0.5.1 (compat `"0.5.1"`).
+
+- `render_panorama` (and so `render_cube_map`) of a grid lens's `SplineProjection` runs on GPU frames: the warp's sensor-point
+  functor has an Adapt rule, and Core 0.5.1 adapts the `BoundedMap` and `ComposedTransformation` chain that wrap the projection
+  in `image_warp`'s map. The device render equals the host render exactly (owner, coverage and image; a GPU test item). The
+  example renders a grid lens on the device too.
+- The vignetting splines' weights are Core's `cubic_bspline_weights` (the same formula at the same local coordinate: the same
+  numbers), and `fit_vignetting`'s `residual_mad` and `score_seams`' `mad` are Core's `mad_scale`. Those two move by about
+  1.5e-6 relative: `mad_scale` divides by the exact normal-consistency constant `Φ⁻¹(3/4)` (1/0.67449 = 1.482602…) where the
+  private copies multiplied by 1.4826.
+
+## 0.2.0
 
 The VisualGeometryToolkit 0.5 stack (Core 0.5, Estimation 0.6), and the sampling and the panorama on Core's warping machinery
 (`image_warp`/`image_warp!`, `image_sample!`, `pointwise!`: KernelAbstractions kernels on GPU arrays, the same code on the
@@ -52,9 +65,7 @@ host).
 - `score_seams(camera, frames, rotations, view; …)`: per raster pixel measured by two frames or more, the median log ratio of
   the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD.
 - `sample_frames`, `render_panorama` (and so `score_seams`) move the camera's forward map to the frames' backend (Adapt): a
-  grid's `SplineProjection` now samples GPU frames (its control grid was a host array inside a device kernel). Its device
-  render still waits on Core: `image_warp`'s map wraps it in a `BoundedMap` and a `ComposedTransformation`, which have no
-  Adapt rule yet.
+  grid's `SplineProjection` now samples GPU frames (its control grid was a host array inside a device kernel).
 - `examples/panorama_vignetting/`: the chain from RAW frames to corrected panoramas, two configs of record (the FX3 with the
   8 mm fisheye on a rooftop, with the Sigma 14 mm indoors).
 

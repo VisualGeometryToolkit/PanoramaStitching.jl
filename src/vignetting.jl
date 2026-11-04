@@ -95,17 +95,12 @@ end
 _n_coefficients(s::RadialVignetting) = s.n
 _n_coefficients(s::TensorVignetting) = s.n[1] * s.n[2]
 
-# The uniform cubic B-spline's four weights at the fraction t ∈ [0, 1).
-@inline function _cubic_weights(t)
-    v = 1 - t
-    return (v * v * v / 6, (t * t * (3t - 6) + 4) / 6, (((-3t + 3) * t + 3) * t + 1) / 6, t * t * t / 6)
-end
 # The first control (0-based) and the weights at x (in control spacings) of an n-control uniform cubic spline: x clamped to
-# its knot range [0, n − 3).
+# its knot range [0, n − 3), the weights Core's at the span's local coordinate t − i ∈ [0, 1).
 @inline function _spline_span(x, n)
     t = clamp(x, 0.0, (n - 3) * (1 - 1.0e-12))
     i = unsafe_trunc(Int, floor(t))
-    return i, _cubic_weights(t - i)
+    return i, VgtkCore.cubic_bspline_weights(t - i)
 end
 
 # The controls (1-based) and weights of log V at the sensor point u: 4 for the radial space, 16 for the tensor space.
@@ -226,7 +221,7 @@ The metadata of [`fit_vignetting`](@ref)'s `FitResult`: `chart` (the scene's
 [`AzimuthalChart`](@ref)), `scene` (log L's `n²` controls, host, the chart's
 column-major order; `NaN` where no observation reached a control), the residual
 spread of log I over the rows (`residual_rms` unweighted, `residual_mad`
-1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the result's
+Core's `mad_scale`, the 1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the result's
 `rms` is the I²-weighted one), `relative_residual` (the solve's ‖r‖/‖b‖),
 `solver`, `n_pixels` (the domain's pixels), `n_active` (scene controls with
 data), `gains` (the frames' exposure gains `g_k` of `I_k = g_k·L·V`, one per
@@ -686,12 +681,11 @@ function fit_vignetting(space::Union{RadialVignetting, TensorVignetting}, camera
         r = Array(res); w = Array(ww); ok = .!isnan.(r)
         append!(R_all, r[ok]); swr += sum(Float64.(w[ok]) .* Float64.(r[ok]) .^ 2); sw += sum(Float64, w[ok])
     end
-    med = Statistics.median(R_all)
     q = Statistics.quantile(R_all, (0.01, 0.5, 0.99))
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = xh[1:nL]; scene[.!active] .= NaN
-    meta = VignettingMetadata(ch, scene, exp.(log_gains), sqrt(Statistics.mean(abs2, Float64.(R_all))), 1.4826 * Statistics.median(abs.(R_all .- med)),
+    meta = VignettingMetadata(ch, scene, exp.(log_gains), sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               P, count(active),
                               NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))

@@ -31,8 +31,8 @@ The compute backend is the config's `[compute] device` (`"cuda"`). On a shared G
 `PANORAMA_VIGNETTING_DEVICE=cpu`: the same kernels run on the host and give the same numbers to the solve's precision (the
 atomic sums run in another order; the package's tests check log V device against host to 1e-6, the CG iteration count varies
 by a few percent from run to run for the same reason); `run.log` and `summary.md` record which backend ran. A grid lens (the 8 mm rooftop) renders
-on the host even then: Core's device `image_warp` cannot yet carry its `SplineProjection` (no Adapt rule for the maps that
-wrap it); its fit and seam score run on the device.
+on the device too (since PanoramaStitching 0.2.1 with Core 0.5.1, whose Adapt rules carry its `SplineProjection` into
+`image_warp`).
 
 ## Inputs
 

@@ -170,6 +170,8 @@ struct _SensorPoint{T, B}
     s::T
 end
 _SensorPoint{T}(bm::B, s) where {T, B} = _SensorPoint{T, B}(bm, T(s))
+# The device form: the warp adapted by Core's rule (a SplineProjection's control grid moved to the device), the scale kept.
+Adapt.adapt_structure(to, p::_SensorPoint{T}) where {T} = _SensorPoint{T}(Adapt.adapt(to, p.bm), p.s)
 @inline (p::_SensorPoint{T})(I) where {T} =
     (q = p.bm(SVector{2, T}(I[1], I[2])); SVector{2, T}(p.s * (q[2] - T(0.5)), p.s * (q[1] - T(0.5))))
 struct _RayAt{T, M}

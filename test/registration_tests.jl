@@ -211,3 +211,26 @@ end
     d = normalize(SVector(j - 0.5 - 32, i - 0.5 - 32, 32.0))
     @test f.owner[i, j] > 0 && abs(f.image[i, j, 2] - q.texture(d)[2]) / q.texture(d)[2] < 0.05
 end
+
+@testitem "render_panorama: a grid lens's SplineProjection renders on the device exactly as on the host" setup = [SyntheticSequence] begin
+    # the warp's map wraps the projection in a BoundedMap and a ComposedTransformation chain, which reach image_warp!'s kernel by
+    # Core's Adapt rules (the spline's control grid moved to the device); the planes' offsets give each plane its own warp
+    using Test, StaticArrays, CUDA
+    using PanoramaStitching: render_panorama, panorama_view
+    import VisualGeometryToolkitCore as VgtkCore
+    if !CUDA.functional()
+        @test_skip "no CUDA device"
+    else
+        q = sequence(; K = 3, spline = true)
+        @test q.projection isa VgtkCore.SplineProjection
+        eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 150.0, -60.0, 60.0), 0.5)
+        kw = (; vignetting = (u, f) -> 1.0, circle = q.circle, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0,
+              plane_offsets = (SVector(0.25, 0.25), SVector(0.0, 0.0), SVector(-0.25, -0.25)))
+        h = render_panorama(q.projection, q.frames, q.R, eq; kw...)
+        d = render_panorama(q.projection, CuArray.(q.frames), q.R, eq; kw...)
+        @test count(>(0), h.owner) > 0.4 * length(h.owner)
+        @test Array(d.owner) == h.owner && Array(d.coverage) == h.coverage
+        di = Array(d.image); seen = .!isnan.(h.image)
+        @test isnan.(di) == .!seen && maximum(abs.(di[seen] .- h.image[seen])) == 0
+    end
+end

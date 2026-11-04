@@ -380,12 +380,6 @@ function run_example(config_path)
     say(log, "compute: $device$(haskey(ENV, "PANORAMA_VIGNETTING_DEVICE") ? " (PANORAMA_VIGNETTING_DEVICE)" : "")")
     move = device == "cuda" ? CuArray : identity
     dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.plane_offsets)
-    # A grid lens's SplineProjection cannot yet enter Core's image_warp on a device (Core has no Adapt rule for the BoundedMap
-    # and ComposedTransformation that wrap it in the warp's map): its renders run on the host, the same code. The fit and the
-    # seam score (sample_frames: the forward map alone, moved to the device) stay on the device.
-    host_render = device == "cuda" && lens.forward isa VgtkCore.SplineProjection
-    host_render && say(log, "renders: on the host (a SplineProjection in Core's device image_warp needs Core's Adapt rules)")
-    rframes = host_render ? inp.frames : dev.frames
     kind = C.cfg["vignetting"]["model"]
     fit(kind, C, lens, dev, reg.rotations, W, H)                                  # compile
     t = time(); res = fit(kind, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($kind, warm)"] = time() - t
@@ -398,7 +392,7 @@ function run_example(config_path)
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
-    ext = sc["extent"] == "coverage" ? coverage_extent(lens, rframes, reg.rotations, up) : Tuple(sc["extent"])
+    ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up) : Tuple(sc["extent"])
     sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
     skw = (; saturated = dev.saturated, circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
            plane = d["plane"], plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
@@ -416,7 +410,7 @@ function run_example(config_path)
     rkw = (; circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_offsets = dev.plane_offsets)
     V = VgtkCore.estimate(res)
     # the corrected renders divide by the frames' gains as well; the uncorrected ones show the frames as they are
-    render(view, vig) = Array(render_panorama(lens.forward, rframes, reg.rotations, view; vignetting = vig,
+    render(view, vig) = Array(render_panorama(lens.forward, dev.frames, reg.rotations, view; vignetting = vig,
                                               gains = vig isa NoVignetting ? nothing : fit_gains(C, res), rkw...).image)
     t = time()
     ℓ = Float64(rc["cylindrical_max_lat_deg"])                 # tan φ grows without bound: the cylindrical's latitude cap
