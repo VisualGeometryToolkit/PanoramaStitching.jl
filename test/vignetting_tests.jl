@@ -73,7 +73,7 @@ end
     e_cg = error_vs(VgtkCore.estimate(cg), radial, q); e_ch = error_vs(VgtkCore.estimate(ch), radial, q)
     @info "fit_vignetting radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.iterations) CG iterations, rms $(cg.rms)"
     @test VgtkCore.retcode(cg) === :converged && VgtkCore.retcode(ch) === :solved
-    @test cg.metadata.log_change == 0 && cg.metadata.weights === PanoramaStitching.IntensityWeights()
+    @test cg.metadata.log_change == 0 && cg.metadata.measurement_noise === PanoramaStitching.IntensityNoise()
     @test e_cg[1] < 2.0e-3 && e_ch[1] < 2.0e-3
     @test maximum(abs.(control_points(VgtkCore.estimate(cg)) .- control_points(VgtkCore.estimate(ch)))) < 1.0e-5
     @test cg.rms < 0.02
@@ -107,7 +107,7 @@ end
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
-    using PanoramaStitching: SampsonWeights, ChannelGains
+    using PanoramaStitching: IntensityAndPositionNoise, ChannelGains
     import Adapt
     # a calibration's V as a table over the radius (a host Vector inside: it needs its Adapt rule to reach a device)
     struct TableV{A}
@@ -136,10 +136,11 @@ end
         # the atomic sums run in another order on each backend (and from run to run): V agrees to the solve's precision
         @test maximum(abs.(control_points(VgtkCore.estimate(d)) .- control_points(VgtkCore.estimate(h)))) < 1.0e-6
         @test abs(d.rms - h.rms) < 1.0e-8
-        # the Sampson weights on the device (the observation's constraint, ForwardDiff and Core's whitening in the kernels)
-        sw = SampsonWeights(; point_scale = 1.0, iterations = 2)
-        hs = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, weights = sw, kw...)
-        dsf = fit_vignetting(v0, q.model, df, q.R; saturated = ds, weights = sw, kw...)
+        # the value-and-position noise's weights on the device (the observation's constraint, ForwardDiff and Core's whitening
+        # in the kernels)
+        sw = IntensityAndPositionNoise(; point_scale = 1.0, iterations = 2)
+        hs = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, measurement_noise = sw, kw...)
+        dsf = fit_vignetting(v0, q.model, df, q.R; saturated = ds, measurement_noise = sw, kw...)
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
@@ -170,7 +171,7 @@ end
 @testitem "fit_vignetting: the frames' exposure gains recovered (gauge g₁ = 1), V free or held fixed; score_seams and render_panorama divide them out" setup = [VignettingSequence] begin
     using Test, Statistics, StaticArrays
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient,
-        SparseCholesky, SampsonWeights, IntensityWeights, FrameGains
+        SparseCholesky, IntensityAndPositionNoise, IntensityGains
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, n_control_points, with_control_points
     c = SVector(430.0, 390.0)
@@ -188,11 +189,11 @@ end
         return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
     end
     Z = pole_regular_basis(v0)
-    with = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = cgs, kw...)
-    chol = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = SparseCholesky(), kw...)
+    with = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = cgs, kw...)
+    chol = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(), kw...)
     without = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = nothing, solver = cgs, kw...)
     G = with.metadata.gains; gw = G[:, 2]
-    @test size(G) == (6, 3) && G[:, 1] == G[:, 2] == G[:, 3]          # FrameGains: one per frame, every plane
+    @test size(G) == (6, 3) && G[:, 1] == G[:, 2] == G[:, 3]          # IntensityGains: one per frame, every plane
     @info "frame gains: recovered $(round.(gw; digits = 5)) (true $g); V error with $(v_error(VgtkCore.estimate(with))), without $(v_error(VgtkCore.estimate(without)))"
     @test VgtkCore.retcode(with) === :converged
     @test gw[1] === 1.0 && length(gw) == length(g)                    # the gauge: the first frame's gain is 1 exactly
@@ -205,25 +206,26 @@ end
 
     # gain compensation: V held fixed at the fitted one (no free direction), the gains alone, one linear solve
     fixed = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
-                           gain_correction = FrameGains(), solver = SparseCholesky(), kw...)
+                           gain_correction = IntensityGains(), solver = SparseCholesky(), kw...)
     @test VgtkCore.estimate(fixed) === VgtkCore.estimate(with) && fixed.metadata.log_change == 0
     @test maximum(abs.(fixed.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
     @test maximum(abs.(fixed.metadata.gains .- G)) < 1.0e-5
 
-    # the Sampson weights (the observation's constraint whitened with the sensor point's noise): frames that follow the model
-    # exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
-    sw = SampsonWeights(; point_scale = 1.5, iterations = 2)
-    sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = SparseCholesky(),
-                         weights = sw, kw...)
-    @test sam.metadata.weights === sw && sam.metadata.log_change > 0        # two Sampson iterations after the I² solve
+    # the value-and-position noise (the observation's constraint whitened with the sensor point's noise too): frames that follow
+    # the model exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
+    sw = IntensityAndPositionNoise(; point_scale = 1.5, iterations = 2)
+    sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
+                         measurement_noise = sw, kw...)
+    @test sam.metadata.measurement_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
     sf = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
-                        gain_correction = FrameGains(), solver = SparseCholesky(), weights = SampsonWeights(; point_scale = 1.5), kw...)
-    @test sf.metadata.weights.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
-    @test_throws ArgumentError SampsonWeights()                                         # the point's noise is required
-    @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, point_covariance = [1.0 0; 0 1])
-    @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, iterations = 3)
-    @test_throws ArgumentError SampsonWeights(; point_covariance = [1.0 2.0; 2.0 1.0])  # not positive definite
+                        gain_correction = IntensityGains(), solver = SparseCholesky(),
+                        measurement_noise = IntensityAndPositionNoise(; point_scale = 1.5), kw...)
+    @test sf.metadata.measurement_noise.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
+    @test_throws ArgumentError IntensityAndPositionNoise()                                         # the point's noise is required
+    @test_throws ArgumentError IntensityAndPositionNoise(; point_scale = 1.0, point_covariance = [1.0 0; 0 1])
+    @test_throws ArgumentError IntensityAndPositionNoise(; point_scale = 1.0, iterations = 3)
+    @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = [1.0 2.0; 2.0 1.0])  # not positive definite
 
     # the observation's constraint (Core's protocol): G_x is the model's exact gradient in u, and the weight is Core's whitening
     m = with.metadata
@@ -239,7 +241,7 @@ end
         fd = SVector((gat(u + SVector(h, 0)) - gat(u - SVector(h, 0))) / 2h, (gat(u + SVector(0, h)) - gat(u - SVector(0, h))) / 2h)
         @test isapprox(SVector(G_x[1], G_x[2]), fd; rtol = 1.0e-5, atol = 1.0e-9) && G_x[3] == 1.0
         @test length(G_θ) == 16 + 4 + 1 && G_θ[end] == -1.0
-        Σx = PanoramaStitching._measurement_covariance(SampsonWeights(; point_scale = 1.5))
+        Σx = PanoramaStitching._measurement_covariance(IntensityAndPositionNoise(; point_scale = 1.5))
         @test VgtkCore.whitening_factor(G_x, Σx)^2 ≈ 1 / (1.5^2 * (G_x[1]^2 + G_x[2]^2) + 0.01^2)
     end
 
@@ -263,14 +265,14 @@ end
 end
 
 # The gain modes × the V modes: frames whose every colour plane has its own exposure gain, I_kc = g_kc·t_c·L·V (a white balance
-# that drifts from frame to frame). gain_correction = nothing, FrameGains() or ChannelGains(), each with V fitted (a LogVignetting
-# along its free directions) and with V held fixed (the true V as a plain callable: its log V(u) the fixed numbers). ChannelGains
-# recovers every plane's gains and V; FrameGains the fitted plane's gains, every column the same; nothing, ones. score_seams and
-# render_panorama read the K × 3 gains per plane.
-@testitem "fit_vignetting: gain_correction none / frame / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence] begin
+# that drifts from frame to frame). gain_correction = nothing, IntensityGains() or ChannelGains(), each with V fitted (a
+# LogVignetting along its free directions) and with V held fixed (the true V as a plain callable: its log V(u) the fixed numbers).
+# ChannelGains recovers every plane's gains and V; IntensityGains the fitted plane's gains, every column the same; nothing, ones.
+# score_seams and render_panorama read the K × 3 gains per plane.
+@testitem "fit_vignetting: gain_correction none / intensity / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence] begin
     using Test, Statistics, StaticArrays
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, ConjugateGradient,
-        FrameGains, ChannelGains, GAIN_CORRECTIONS
+        IntensityGains, ChannelGains, GAIN_CORRECTIONS
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
     c = SVector(430.0, 390.0)
@@ -288,7 +290,7 @@ end
         return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
     end
     modes = (("fitted", v0, pole_regular_basis(v0)), ("held", truth, zeros(0, 0)))
-    for (vm, v, Z) in modes, gc in (nothing, FrameGains(), ChannelGains())
+    for (vm, v, Z) in modes, gc in (nothing, IntensityGains(), ChannelGains())
         r = fit_vignetting(v, q.model, q.frames, q.R; free_directions = Z, gain_correction = gc, kw...)
         g = r.metadata.gains
         @info "gain_correction $(gc === nothing ? "none" : nameof(typeof(gc))), V $vm: gains error per plane " *
@@ -296,7 +298,7 @@ end
         @test size(g) == (6, 3) && all(==(1.0), g[1, :])                 # the gauge, exactly
         if gc === nothing
             @test all(==(1.0), g)
-        elseif gc isa FrameGains
+        elseif gc isa IntensityGains
             @test g[:, 1] == g[:, 2] == g[:, 3] && maximum(abs.(g[:, 2] ./ G[:, 2] .- 1)) < 1.0e-3
         else
             @test maximum(abs.(g ./ G .- 1)) < 1.0e-3                     # every plane's own gains
@@ -304,13 +306,14 @@ end
         vm == "fitted" && gc !== nothing && @test v_error(VgtkCore.estimate(r)) < 2.0e-3
         vm == "held" && @test VgtkCore.estimate(r) === truth
     end
-    @test GAIN_CORRECTIONS["channel"] === ChannelGains && GAIN_CORRECTIONS["frame"] === FrameGains && GAIN_CORRECTIONS["none"] === nothing
+    @test GAIN_CORRECTIONS["channel"] === ChannelGains && GAIN_CORRECTIONS["intensity"] === IntensityGains &&
+          GAIN_CORRECTIONS["none"] === nothing
     @test_throws ArgumentError GAIN_CORRECTIONS["per_channel"]
 
-    # the seams and the render read each plane's gains: with ChannelGains every plane's seams vanish, with FrameGains only the fitted
-    # plane's
+    # the seams and the render read each plane's gains: with ChannelGains every plane's seams vanish, with IntensityGains only the
+    # fitted plane's
     ch = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), kw...)
-    fr = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = FrameGains(), kw...)
+    fr = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = IntensityGains(), kw...)
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
     sk = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane_offsets = nothing, chunk = 20_000)
     for p in (1, 3)
@@ -330,5 +333,63 @@ end
     @test VgtkCore.retcode(rc) === :max_iterations && rc.iterations == 3 * 3
     # a V held fixed that is not positive somewhere in the domain is refused by name (not Base's DomainError of the log)
     dark(u, f) = u[1] < 100 ? -0.5 : truth(u, f)
-    @test_throws ArgumentError fit_vignetting(dark, q.model, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = FrameGains(), kw...)
+    @test_throws ArgumentError fit_vignetting(dark, q.model, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = IntensityGains(), kw...)
+end
+
+# The TOML tags of the gain correction and the measurement noise: the current tags select their types (the tag rule: snake_case
+# of the type's name less the family's suffix), and the tags of earlier releases are refused with an ArgumentError naming the new
+# one (no alias: an old config fails, it is never read as the new setting).
+@testitem "GAIN_CORRECTIONS, MEASUREMENT_NOISES: the tags, and the renamed tags refused by name" begin
+    using Test
+    using PanoramaStitching: PanoramaStitching, IntensityGains, ChannelGains, IntensityNoise, IntensityAndPositionNoise
+    import VisualGeometryToolkitCore as VgtkCore
+    G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.MEASUREMENT_NOISES
+    @test G["intensity"] === IntensityGains && G["channel"] === ChannelGains && G["none"] === nothing
+    @test N["intensity"] === IntensityNoise && N["intensity_and_position"] === IntensityAndPositionNoise
+    @test VgtkCore.tag_of(G, IntensityGains) == "intensity" && VgtkCore.tag_of(N, IntensityAndPositionNoise) == "intensity_and_position"
+    renamed(reg, tag) = try
+        reg[tag]; ""
+    catch e
+        e isa ArgumentError ? sprint(showerror, e) : rethrow()
+    end
+    m = renamed(G, "frame"); @test occursin("renamed", m) && occursin("\"intensity\"", m)
+    m = renamed(N, "sampson"); @test occursin("renamed", m) && occursin("\"intensity_and_position\"", m)
+    @test_throws ArgumentError N["weights"]
+    @test isempty(VgtkCore.tag_rule_violations(G)) && isempty(VgtkCore.tag_rule_violations(N))
+end
+
+# The example's TOML keys of earlier releases are refused by name (run.jl's `refuse_renamed_keys`, which `load_config` and
+# compare_arms.jl call): the example's own environment is not the tests', so its two definitions are read from run.jl alone; the
+# configs of record and arms.toml hold the current keys and tags.
+@testitem "panorama_vignetting example: the renamed TOML keys refused by name; the configs of record are current" begin
+    using Test, TOML
+    using PanoramaStitching: PanoramaStitching
+    dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
+    code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
+    defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
+                                      x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
+    m = Module()
+    for name in (:RENAMED_KEYS, :refuse_renamed_keys)
+        Core.eval(m, only(filter(x -> defines(x, name), code.args)))
+    end
+    refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
+    for (old, new) in (("weights", "measurement_noise"), ("sampson_iterations", "measurement_noise_iterations"))
+        err = try
+            refuse(Dict{String, Any}(old => 1)); nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("the key $old was renamed to $new", err.msg)
+    end
+    G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.MEASUREMENT_NOISES
+    for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
+        v = TOML.parsefile(joinpath(dir, f))["vignetting"]
+        @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
+    end
+    arms = TOML.parsefile(joinpath(dir, "arms.toml"))
+    @test refuse(arms) === arms && length(arms["arms"]) == 12 && allunique(a["name"] for a in arms["arms"])
+    for a in arms["arms"]
+        @test refuse(a) === a && N[a["measurement_noise"]] isa Type && (G[a["gain_correction"]]; true)
+        @test !any(t -> occursin(t, a["name"]), ("intensity", "channel", "none", "frame", "sampson", "free", "fixed"))
+    end
 end

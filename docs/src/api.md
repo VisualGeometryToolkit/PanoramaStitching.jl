@@ -49,11 +49,11 @@ AzimuthalChart
 VignettingMetadata
 ConjugateGradient
 SparseCholesky
-IntensityWeights
-SampsonWeights
-FrameGains
+IntensityNoise
+IntensityAndPositionNoise
+IntensityGains
 ChannelGains
 PanoramaStitching.GAIN_CORRECTIONS
-PanoramaStitching.WEIGHTS
+PanoramaStitching.MEASUREMENT_NOISES
 score_seams
 ```

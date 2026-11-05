@@ -79,11 +79,12 @@ vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's contro
 # Per-frame exposure gains (g₁ = 1): ON. Measured 2026-11-04, both ways on these frames: the gains came out 0.93–0.99 (the
 # indoor light or the exposure drifted by up to 6.7 %); with them the seam spread fell from 1.4826·MAD 0.1066 (rms 0.4042) to
 # 0.1021 (rms 0.3998) and the residual MAD from 0.168 to 0.164, and V moved by under 1 % at ρ = 200 … 1400 px (summary.md).
-gain_correction = "channel"                        # "none", "frame" (one gain per frame) or "channel" (per frame and colour plane)
-weights = "intensity"                              # "intensity" (I², one solve) or "sampson" (the observation's Sampson whitening:
-                                                   # the sensor point's σ the registration bundle's core scale, loss width / scale multiple)
-log_intensity_scale = 0.01                         # Sampson: σ of log I (a constant floor)
-sampson_iterations = 1                             # Sampson: its reweight-and-solve cycles after the I² solve (2: G_x re-evaluated once more)
+gain_correction = "channel"                        # "none", "intensity" (one gain per frame, every plane) or "channel" (per frame and colour plane)
+measurement_noise = "intensity"                    # "intensity" (noise in the value: weight I², one solve) or "intensity_and_position"
+                                                   # (the value and the sensor position: the sensor point's σ the registration bundle's
+                                                   # core scale, loss width / scale multiple); the weights are the whitening by it
+log_intensity_scale = 0.01                         # intensity_and_position: σ of log I (a constant floor)
+measurement_noise_iterations = 1                   # intensity_and_position: its reweight-and-solve cycles after the I² solve (2: G_x re-evaluated once more)
 solver = "cg"                                    # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
 cg_tolerance = 1.0e-9                              # the CG's relative residual
 cg_max_iter = 40000                                # the CG's budget

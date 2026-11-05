@@ -34,8 +34,20 @@ data_root() = get(ENV, "VGTK_DATA_ROOT", "") |> r -> isempty(r) ?
     error("VGTK_DATA_ROOT is not set: bind it to the data root that holds the config's inputs (README, \"Inputs\")") : r
 input_path(rel) = joinpath(data_root(), rel)
 
+# The vignetting keys of earlier releases (PanoramaStitching 0.4 renamed them): a table that holds one is refused by name, never
+# read as the new setting.
+const RENAMED_KEYS = ("weights" => "measurement_noise", "sampson_iterations" => "measurement_noise_iterations")
+function refuse_renamed_keys(table, where)
+    for (old, new) in RENAMED_KEYS
+        haskey(table, old) && throw(ArgumentError("$where: the key $old was renamed to $new (PanoramaStitching 0.4; its tags too: " *
+                                                  "see CHANGELOG.md)"))
+    end
+    return table
+end
+
 function load_config(path)
     cfg = TOML.parsefile(path)
+    refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
     out = joinpath(dirname(abspath(path)), cfg["output"])
     mkpath(out)
     return (; cfg, out, path = abspath(path))
@@ -181,7 +193,7 @@ function registration(C, inp, lens; log)
     path = joinpath(C.out, "rotations.json")
     if isfile(path)
         rec = JSON.parsefile(path)
-        # a record written before 2026-11-04 holds no bundle loss width: no point scale (the Sampson weights then refuse to run;
+        # a record written before 2026-11-04 holds no bundle loss width: no point scale (IntensityAndPositionNoise then refuses to run;
         # delete the record to recompute it)
         if rec["key"] == key
             say(log, "registration: reused $(path)$(haskey(rec, "provenance") ? " ($(rec["provenance"]))" : "")")
@@ -219,7 +231,7 @@ function registration(C, inp, lens; log)
                "bundle_retcode" => string(reg.bundle.retcode), "bundle_outcome" => string(reg.bundle.metadata.outcome),
                "bundle_start_nonfinite" => reg.bundle.metadata.start_nonfinite,
                # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor point's σ of
-               # the Sampson weights
+               # IntensityAndPositionNoise
                "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]))
     open(io -> JSON.print(io, rec, 2), path, "w")
     return (; rotations = Rs, pairs = length(reg.pairs), bundle_rms_px = reg.bundle.rms, seconds = secs, bundle_retcode = rec["bundle_retcode"],
@@ -289,17 +301,19 @@ function vignetting_space(kind, C, lens, W, H)
     error("vignetting model \"$kind\" is not \"radial\" or \"tensor\"")
 end
 
-# The fit's row weights of the config: I², or Sampson's with the sensor point's σ `point_scale_px` (the registration's).
-function fit_weights(v, point_scale_px)
-    W = PanoramaStitching.WEIGHTS[v["weights"]]                           # "intensity" or "sampson" (an ArgumentError otherwise)
-    W === IntensityWeights && return IntensityWeights()
-    point_scale_px === nothing && error("vignetting.weights = \"sampson\" needs the registration's point scale (its record " *
-                                        "rotations.json holds no bundle_loss_width_px: delete it to recompute the registration)")
-    return SampsonWeights(; point_scale = point_scale_px, log_intensity_scale = v["log_intensity_scale"], iterations = v["sampson_iterations"])
+# The fit's measurement noise of the config: in the value only, or in the value and the sensor position with the sensor point's σ
+# `point_scale_px` (the registration's).
+function fit_measurement_noise(v, point_scale_px)
+    N = PanoramaStitching.MEASUREMENT_NOISES[v["measurement_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
+    N === IntensityNoise && return IntensityNoise()
+    point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" needs the registration's point " *
+                                        "scale (its record rotations.json holds no bundle_loss_width_px: delete it to recompute the registration)")
+    return IntensityAndPositionNoise(; point_scale = point_scale_px, log_intensity_scale = v["log_intensity_scale"],
+                                     iterations = v["measurement_noise_iterations"])
 end
 
 # One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
-# `point_scale_px` the sensor point's σ of the Sampson weights (the registration's `point_scale_px`).
+# `point_scale_px` the sensor point's σ of IntensityAndPositionNoise (the registration's `point_scale_px`).
 function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_scale_px = nothing)
     v = C.cfg["vignetting"]; d = C.cfg["domain"]
     m, Z = vignetting === nothing ? vignetting_space(kind, C, lens, W, H) :
@@ -307,13 +321,13 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
     s = v["solver"]
     solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
-    gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "frame" or "channel" (an ArgumentError otherwise)
+    gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
     return fit_vignetting(m, lens.camera, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
                           saturated = dev.saturated, circle = lens.circle, raw_scale = 2,
                           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_offsets = dev.plane_offsets,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
-                          weights = fit_weights(v, point_scale_px))
+                          measurement_noise = fit_measurement_noise(v, point_scale_px))
 end
 # The frames' exposure gains of a fit (K × 3), for the seam score and the renders: its metadata's when it fitted them, else none.
 fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] == "none" ? nothing : res.metadata.gains
@@ -437,7 +451,7 @@ function run_example(config_path)
     m = res.metadata
     say(log, "fit_vignetting ($kind): $(res.retcode), $(res.iterations) iterations, weighted rms $(round(res.rms; digits = 4)), " *
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
-    say(log, "  weights $(m.weights) (the model's log I moved by $(m.log_change) in the last solve); " *
+    say(log, "  measurement noise $(m.measurement_noise) (the model's log I moved by $(m.log_change) in the last solve); " *
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")

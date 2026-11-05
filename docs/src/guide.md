@@ -142,11 +142,13 @@ back-projection (computed once: every frame shares the pixel grid), the scene `l
 [`AzimuthalChart`](@ref) of the covered sphere with a difference penalty, and V VisualGeometryToolkitCore's
 `LogVignetting`: V = exp(s), `s` a B-spline of log V in the distance from a centre (`RadialVignetting`) or over the sensor
 (`TensorVignetting`). The model is linear in log L, log V and the log gains, so the fit is one weighted linear least squares;
-its gauge is mean log V = 0 over the domain. The weights are I² ([`IntensityWeights`](@ref), the default) or
-[`SampsonWeights`](@ref): each row the implicit constraint of its measurement (sensor point, log I) whitened by that
-measurement's noise — the sensor point's from the registration's residual scale — at the I² solve's model, so a row where the
-scene's log I changes fast across the sensor counts less. `gain_correction = FrameGains()` adds an exposure gain per frame,
-`I_k = g_k·L·V` (gauge `g₁ = 1`), and [`ChannelGains`](@ref)`()` one per frame and colour plane, `I_kc = g_kc·L_c·V` (a white
+its gauge is mean log V = 0 over the domain. Each row is the implicit constraint of its measurement (sensor point, log I),
+weighted by its whitening by the measurement noise that `measurement_noise` chooses: [`IntensityNoise`](@ref) (the default:
+noise in the value only, read noise of constant σ, weight I²) or [`IntensityAndPositionNoise`](@ref) (noise in the value and
+the pixel's sensor position, the sensor point's from the registration's residual scale, at the I² solve's model, so a row
+where the scene's log I changes fast across the sensor counts less). `gain_correction = IntensityGains()` adds an exposure
+gain per frame shared by every colour plane, `I_k = g_k·L·V` (gauge `g₁ = 1`), and [`ChannelGains`](@ref)`()` one per
+frame and colour plane, `I_kc = g_kc·L_c·V` (a white
 balance or a light colour that drifts too; V stays one for all planes): a fixed exposure under changing light needs them, or V
 absorbs the frames' differences. `nothing` takes the frames at one exposure. `free_directions` says how V's control points
 may move: a radial profile's pole-regular subspace (smooth at its centre), every control point of a tensor surface, or none
@@ -162,7 +164,7 @@ res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCo
                      plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
-# or weights = SampsonWeights(; point_scale = σ_u): σ_u the registration bundle's core scale (loss width / scale multiple), px
+# or measurement_noise = IntensityAndPositionNoise(; point_scale = σ_u): σ_u the registration bundle's core scale (loss width / scale multiple), px
 V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)
 ```

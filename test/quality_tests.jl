@@ -6,8 +6,8 @@
     import VisualGeometryToolkitCore as VgtkCore
     using PanoramaStitching
     # Atomix, Adapt and ForwardDiff declare no public names: `Atomix.@atomic` (the vignetting fit's scatter-add),
-    # `Adapt.@adapt_structure` (the kernels' functors moved to a device) and `ForwardDiff.gradient` (the Sampson weights'
-    # measurement gradient) are their documented API
+    # `Adapt.@adapt_structure` (the kernels' functors moved to a device) and `ForwardDiff.gradient` (the
+    # IntensityAndPositionNoise weights' measurement gradient) are their documented API
     VgtkCore.test_quality_gates(PanoramaStitching; jet_bound = 0,
                                 qualified_ignore = (Symbol("@atomic"), Symbol("@adapt_structure"), :gradient))
 end

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0
+
+### Breaking: renames (no aliases; every number unchanged for the same settings)
+
+- Gain correction: `FrameGains` → `IntensityGains` (one gain per frame shared by every colour plane: a gain on the intensity);
+  its tag in `GAIN_CORRECTIONS` (`vignetting.gain_correction`) `"frame"` → `"intensity"`. `ChannelGains` / `"channel"` and
+  `"none"` are unchanged.
+- Weights → measurement noise. The option chooses the measurement-noise model; the row weights are always the whitening of the
+  log-I constraint by it (VisualGeometryToolkitCore's `whitening_factor`). "Sampson" is gone from the option's names: in the
+  stack's vocabulary `sampson_` is the GEOMETRIC distance, while these weights are in σ units.
+  - `IntensityWeights` → `IntensityNoise` (noise in the pixel value only, read noise of constant σ: weight I²).
+  - `SampsonWeights(; point_covariance | point_scale, log_intensity_scale, iterations)` →
+    `IntensityAndPositionNoise(; the same keywords)` (noise in the value and the pixel's sensor position).
+  - `fit_vignetting`'s keyword `weights` → `measurement_noise`; `VignettingMetadata.weights` → `measurement_noise`.
+  - The registry `PanoramaStitching.WEIGHTS` (family `:weights`, suffix `Weights`) → `PanoramaStitching.MEASUREMENT_NOISES`
+    (family `:measurement_noise`, suffix `Noise`), tags `"intensity"` and `"intensity_and_position"` (was `"sampson"`), TOML
+    path `vignetting.measurement_noise`.
+- Retired tags, refused with an `ArgumentError` that names the new tag (the registries' `retired`): `gain_correction = "frame"`
+  (→ `"intensity"`), `measurement_noise = "sampson"` (→ `"intensity_and_position"`).
+- The example's TOML keys: `vignetting.weights` → `vignetting.measurement_noise`, `vignetting.sampson_iterations` →
+  `vignetting.measurement_noise_iterations` (`log_intensity_scale` unchanged); in `arms.toml` the same two keys (top level and per
+  arm). The example's loaders (`run.jl`'s `load_config`, `compare_arms.jl`) refuse each old key by name, `ArgumentError`
+  "the key … was renamed to …": an old config fails, it is never read as the new setting.
+- The example's arms (`arms.toml`) carry labels of their own instead of their tags: `free_frame_intensity` →
+  `selfcal_exposure_value` (the `fixed_from` V of record), `free_none_intensity` → `selfcal_no_gain_value`,
+  `free_channel_intensity` → `selfcal_colour_value`, `fixed_none_intensity` → `given_v_no_gain_value`, `fixed_frame_intensity` →
+  `given_v_exposure_value`, `fixed_channel_intensity` → `given_v_colour_value`, and the `…_sampson` arms the same with
+  `…_value_point` (`free_frame_sampson` → `selfcal_exposure_value_point`, …). `results.json` and `results.md` name the column
+  `measurement_noise`. A comparison's key is the content of `arms.toml`, so earlier results are not reused.
+
 ## 0.3.0
 
 ### Breaking

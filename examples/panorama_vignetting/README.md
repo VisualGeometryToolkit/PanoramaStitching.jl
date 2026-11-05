@@ -76,14 +76,15 @@ Under `$VGTK_DATA_ROOT`:
    back-projection, and the scene is a B-spline on the sphere (an azimuthal-equidistant chart, 1° controls, a Δ³ smoothness
    penalty) fitted together with V. log V is a cubic B-spline, RADIAL in the distance from a centre or a 2-D TENSOR spline
    over the sensor (VisualGeometryToolkitCore's `LogVignetting`). The model is linear in log L, log V and the log gains: one
-   linear least squares, weighted by I² (`vignetting.weights = "intensity"`) or by Sampson weights (`"sampson"`: each row
-   the constraint of its measurement — sensor point and log I — whitened by that measurement's noise, the sensor point's σ the
-   registration bundle's core scale, loss width / scale multiple, recorded in `rotations.json`; `log_intensity_scale` the
-   σ of log I; `sampson_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
+   linear least squares, each row the constraint of its measurement — sensor point and log I — weighted by its whitening by
+   the measurement noise `vignetting.measurement_noise` chooses: `"intensity"` (noise in the value only: weight I²) or
+   `"intensity_and_position"` (the value and the sensor position, the sensor point's σ the registration bundle's core scale,
+   loss width / scale multiple, recorded in `rotations.json`; `log_intensity_scale` the σ of log I;
+   `measurement_noise_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
    solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
    log V = 0 over the domain — no special point is pinned.
-   *The frames' exposure gains* (`vignetting.gain_correction`, required: `"none"`, `"frame"` or `"channel"`): with
-   `"frame"` each frame has its own gain g_k (`I_k = g_k·L·V`, g₁ = 1), with `"channel"` one per frame and colour plane
+   *The frames' exposure gains* (`vignetting.gain_correction`, required: `"none"`, `"intensity"` or `"channel"`): with
+   `"intensity"` each frame has its own gain g_k, shared by every colour plane (`I_k = g_k·L·V`, g₁ = 1), with `"channel"` one per frame and colour plane
    (`g_kc`, g_1c = 1: a white balance that drifts too; V is one for all planes), divided out by the seam score and the
    corrected renders as well (per plane). Both configs fit them: the
    rooftop's daylight changed during the sweep (gains up to +18 %; without them V came out 7 % too dark at the domain's edge),
@@ -113,9 +114,11 @@ Under `$VGTK_DATA_ROOT`:
 ## The comparison of the fit's settings
 
 `arms.toml` is the comparison of record of `fit_vignetting`'s settings: twelve arms, V `"free"` (self-calibration) or
-`"fixed"` (held at the V of record, the `fixed_from` arm's fit: the record's settings, frame gains and I² weights) × the
-`gain_correction` (`"none"`, `"frame"`, `"channel"`) × the `weights` (`"intensity"`, `"sampson"`), each on both sets
-(`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode, registration, domain, radial model and solver).
+`"fixed"` (held at the V of record, the `fixed_from` arm's fit, `selfcal_exposure_value`: one gain per frame and I²
+weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `measurement_noise` (`"intensity"`,
+`"intensity_and_position"`), each on both sets (`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode,
+registration, domain, radial model and solver). An arm's name is its own label (`selfcal` or `given_v`; `no_gain`,
+`exposure` or `colour`; `value` or `value_point`), not its tags.
 
     julia --project=<env> examples/panorama_vignetting/compare_arms.jl examples/panorama_vignetting/arms.toml
 

@@ -26,17 +26,19 @@
 # by Jacobi-preconditioned conjugate gradients on that backend (`ConjugateGradient`) or by a sparse
 # Cholesky factorization on the host (`SparseCholesky`).
 #
-# The weights (`IntensityWeights`, `SampsonWeights`) are fixed per solve. `IntensityWeights` is I²,
-# the inverse variance of log I for read-noise-limited data: one solve. `SampsonWeights` treats a row
-# as the implicit constraint g(θ; x) = log I − log L(R_k·f(u)) − log V(u) − γ_k on the measurement
-# x = (u, log I) — the pixel's sensor point is uncertain too (the registration's residual scale), so a
-# row where the model's log I varies fast across the sensor (an edge of the scene) is worth less — and
-# weights it by Core's frozen whitening of that constraint, 1/(G_x·Σ_x·G_xᵀ) (`whitening_factor`),
-# its measurement gradient G_x = [−∇_u(log L∘R_k∘f + log V), 1] the MODEL's, evaluated at the
-# previous solve (the first solve is `IntensityWeights`'). Each solve is the exact linear one.
+# A row is the implicit constraint g(θ; x) = log I − log L(R_k·f(u)) − log V(u) − γ_k on the
+# measurement x = (u, log I), and its weight is always Core's frozen whitening of that constraint by
+# the measurement noise, 1/(G_x·Σ_x·G_xᵀ) (`whitening_factor`), fixed per solve. The option
+# `measurement_noise` chooses the noise model (measurement-noise.md: the noise lives on the
+# measurements). `IntensityNoise`: noise in the value only, read noise of constant σ, so the
+# whitening of log I is I² (up to the constant): one solve. `IntensityAndPositionNoise`: the
+# pixel's sensor point is uncertain too (the registration's residual scale), so a row where the
+# model's log I varies fast across the sensor (an edge of the scene) is worth less; its measurement
+# gradient G_x = [−∇_u(log L∘R_k∘f + log V), 1] is the MODEL's, evaluated at the previous solve (the
+# first solve is `IntensityNoise`'s). Each solve is the exact linear one.
 #
 # Why `fit_vignetting` (naming.md): correspondences in, no guess, no hypotheses → not refine or
-# find; reweighted and repeated (Sampson's solves), the CG's tolerance and budget → rule 4.
+# find; reweighted and repeated (the position noise's solves), the CG's tolerance and budget → rule 4.
 # =============================================================================
 
 """
@@ -61,30 +63,33 @@ of the same system, assembled on the host (`retcode = :solved`).
 struct SparseCholesky end
 
 """
-    IntensityWeights()
+    IntensityNoise()
 
-[`fit_vignetting`](@ref)'s row weights `I²`: the inverse variance of log I to
-first order when the frames' noise does not depend on the value (read noise),
-normalized by their mean over the rows. One linear solve. The weights of every
-fit before PanoramaStitching 0.3.
+[`fit_vignetting`](@ref)'s `measurement_noise`: noise in the pixel value only,
+read noise of constant σ (the frames' noise does not depend on the value). The
+whitening of a row's log I by it is the weight `I²` (to first order, up to the
+constant, normalized by the weights' mean over the rows). One linear solve. The
+weights of every fit before PanoramaStitching 0.3.
 """
-struct IntensityWeights end
+struct IntensityNoise end
 
 """
-    SampsonWeights(; point_covariance, log_intensity_scale = 0.01, iterations = 1)
-    SampsonWeights(; point_scale, log_intensity_scale = 0.01, iterations = 1)
+    IntensityAndPositionNoise(; point_covariance, log_intensity_scale = 0.01, iterations = 1)
+    IntensityAndPositionNoise(; point_scale, log_intensity_scale = 0.01, iterations = 1)
 
-[`fit_vignetting`](@ref)'s Sampson row weights: a row is the implicit constraint
+[`fit_vignetting`](@ref)'s `measurement_noise`: noise in the pixel value and
+in the pixel's sensor position. A row is the implicit constraint
 
     g(θ; x) = log I − log L(R_k·f(u)) − log V(u) − γ_k = 0
 
 on the measurement `x = (u, log I)`, the pixel's sensor point `u` (camera
 pixels) and its log value, of covariance `Σ_x = blockdiag(Σ_u, σ²)`, and its
-weight is the frozen whitening of that constraint,
+weight is the frozen whitening of that constraint by this noise,
 `1/(G_x·Σ_x·G_xᵀ)` (VisualGeometryToolkitCore's `whitening_factor` of the
-constraint's `constraint_with_jacobians`), with the measurement gradient
-`G_x = [−∇_u(log L∘R_k∘f + log V)ᵀ, 1]` of the MODEL (its scene spline and V)
-at the previous solve; the first solve is [`IntensityWeights`](@ref)'.
+constraint's `constraint_with_jacobians`; in σ units), with the measurement
+gradient `G_x = [−∇_u(log L∘R_k∘f + log V)ᵀ, 1]` of the MODEL (its scene
+spline and V) at the previous solve; the first solve is
+[`IntensityNoise`](@ref)'s.
 
 - `point_covariance`: `Σ_u`, the 2 × 2 covariance of a pixel's sensor point
   in camera pixels² — the registration's: a rotation bundle's robust core
@@ -92,34 +97,36 @@ at the previous solve; the first solve is [`IntensityWeights`](@ref)'.
   `point_scale` that scale itself (`Σ_u = point_scale²·I`).
 - `log_intensity_scale`: `σ`, the standard deviation of log I (a constant
   floor: 0.01 is 1 % of the value).
-- `iterations`: the reweight-and-solve cycles after the `IntensityWeights`
+- `iterations`: the reweight-and-solve cycles after the `IntensityNoise`
   solve, 1 or 2 (the second re-evaluates G_x at the first's solution).
 """
-struct SampsonWeights
+struct IntensityAndPositionNoise
     point_covariance::SMatrix{2, 2, Float64, 4}
     log_intensity_scale::Float64
     iterations::Int
 end
-function SampsonWeights(; point_covariance = nothing, point_scale = nothing, log_intensity_scale::Real = 0.01, iterations::Integer = 1)
+function IntensityAndPositionNoise(; point_covariance = nothing, point_scale = nothing, log_intensity_scale::Real = 0.01,
+                                   iterations::Integer = 1)
     (point_covariance === nothing) == (point_scale === nothing) &&
-        throw(ArgumentError("SampsonWeights: give the point's noise as exactly one of point_covariance and point_scale"))
+        throw(ArgumentError("IntensityAndPositionNoise: give the point's noise as exactly one of point_covariance and point_scale"))
     Σ = point_covariance === nothing ? SMatrix{2, 2, Float64, 4}(Float64(point_scale)^2, 0.0, 0.0, Float64(point_scale)^2) :
         SMatrix{2, 2, Float64, 4}(point_covariance)
     (Σ[1, 2] == Σ[2, 1] && LinearAlgebra.isposdef(Matrix(Σ))) ||
-        throw(ArgumentError("SampsonWeights: the point covariance must be symmetric positive definite, got $Σ"))
+        throw(ArgumentError("IntensityAndPositionNoise: the point covariance must be symmetric positive definite, got $Σ"))
     (log_intensity_scale > 0 && isfinite(log_intensity_scale)) ||
-        throw(ArgumentError("SampsonWeights: log_intensity_scale must be positive, got $log_intensity_scale"))
-    iterations in (1, 2) || throw(ArgumentError("SampsonWeights: iterations is 1 or 2, got $iterations"))
-    return SampsonWeights(Σ, Float64(log_intensity_scale), Int(iterations))
+        throw(ArgumentError("IntensityAndPositionNoise: log_intensity_scale must be positive, got $log_intensity_scale"))
+    iterations in (1, 2) || throw(ArgumentError("IntensityAndPositionNoise: iterations is 1 or 2, got $iterations"))
+    return IntensityAndPositionNoise(Σ, Float64(log_intensity_scale), Int(iterations))
 end
 """
-    FrameGains()
+    IntensityGains()
 
-[`fit_vignetting`](@ref)'s `gain_correction`: one exposure gain per frame,
+[`fit_vignetting`](@ref)'s `gain_correction`: one exposure gain per frame
+shared by every colour plane (a gain on the intensity),
 `log I_kc = log g_k + log L_c(d) + log V(u)`, `K − 1` unknowns with the gauge
 `g₁ = 1`, fitted on the fitted `plane` and taken for every colour plane.
 """
-struct FrameGains end
+struct IntensityGains end
 
 """
     ChannelGains()
@@ -138,25 +145,32 @@ struct ChannelGains end
 
 The TOML tags of [`fit_vignetting`](@ref)'s `gain_correction` (a
 VisualGeometryToolkitCore `TagRegistry`, family suffix `Gains`): `"none"`
-(`nothing`: every frame at one exposure), `"frame"` ([`FrameGains`](@ref)) and
-`"channel"` ([`ChannelGains`](@ref)); the example's `vignetting.gain_correction`.
+(`nothing`: every frame at one exposure), `"intensity"` ([`IntensityGains`](@ref))
+and `"channel"` ([`ChannelGains`](@ref)); the example's `vignetting.gain_correction`.
+A tag of an earlier release is refused with an `ArgumentError` that names its
+new tag (CHANGELOG, 0.4.0).
 """
-const GAIN_CORRECTIONS = VgtkCore.TagRegistry(:gain_correction, "Gains", "none" => nothing, "frame" => FrameGains,
-                                              "channel" => ChannelGains; paths = [r"^vignetting\.gain_correction$"])
+const GAIN_CORRECTIONS = VgtkCore.TagRegistry(:gain_correction, "Gains", "none" => nothing, "intensity" => IntensityGains,
+                                              "channel" => ChannelGains; retired = ("frame" => "intensity",),
+                                              paths = [r"^vignetting\.gain_correction$"])
 
 """
-    WEIGHTS
+    MEASUREMENT_NOISES
 
-The TOML tags of [`fit_vignetting`](@ref)'s `weights` (a VisualGeometryToolkitCore
-`TagRegistry`, family suffix `Weights`): `"intensity"` ([`IntensityWeights`](@ref))
-and `"sampson"` ([`SampsonWeights`](@ref), whose settings the config states
-beside it); the example's `vignetting.weights`.
+The TOML tags of [`fit_vignetting`](@ref)'s `measurement_noise` (a
+VisualGeometryToolkitCore `TagRegistry`, family suffix `Noise`): `"intensity"`
+([`IntensityNoise`](@ref)) and `"intensity_and_position"`
+([`IntensityAndPositionNoise`](@ref), whose settings the config states beside
+it); the example's `vignetting.measurement_noise`. A tag of an earlier release
+is refused with an `ArgumentError` that names its new tag (CHANGELOG, 0.4.0).
 """
-const WEIGHTS = VgtkCore.TagRegistry(:weights, "Weights", "intensity" => IntensityWeights, "sampson" => SampsonWeights;
-                                     paths = [r"^vignetting\.weights$"])
+const MEASUREMENT_NOISES = VgtkCore.TagRegistry(:measurement_noise, "Noise", "intensity" => IntensityNoise,
+                                                "intensity_and_position" => IntensityAndPositionNoise;
+                                                retired = ("sampson" => "intensity_and_position",),
+                                                paths = [r"^vignetting\.measurement_noise$"])
 
 # The measurement covariance Σ_x over (u₁, u₂, log I).
-function _measurement_covariance(w::SampsonWeights)
+function _measurement_covariance(w::IntensityAndPositionNoise)
     Σ = w.point_covariance; s2 = w.log_intensity_scale^2
     return SMatrix{3, 3, Float64, 9}(Σ[1, 1], Σ[2, 1], 0.0, Σ[1, 2], Σ[2, 2], 0.0, 0.0, 0.0, s2)
 end
@@ -239,21 +253,22 @@ The metadata of [`fit_vignetting`](@ref)'s `FitResult`: `chart` (the scene's
 column-major order; `NaN` where no observation reached a control), `gains`
 (`K × 3`: the frames' exposure gains `g_kc` of `I_kc = g_kc·L_c·V`, one per frame
 and colour plane, `g_1c = 1`; all 1 without gain correction, and one per frame
-— every column the same — with [`FrameGains`](@ref)), the residual spread of
+— every column the same — with [`IntensityGains`](@ref)), the residual spread of
 log I of the fitted `plane` over the rows
 (`residual_rms` unweighted, `residual_mad` Core's `mad_scale`, the
 1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the
 result's `rms` is the one weighted by the last solve's weights),
-`relative_residual` (the last solve's ‖r‖/‖b‖), `solver`, `weights` (the
-[`IntensityWeights`](@ref) or [`SampsonWeights`](@ref) of the fit: the
-Sampson point covariance, log scale and iterations it used: the fitted plane's
-linear solves are 1, or 1 + `iterations` for `SampsonWeights`),
+`relative_residual` (the last solve's ‖r‖/‖b‖), `solver`, `measurement_noise`
+(the [`IntensityNoise`](@ref) or [`IntensityAndPositionNoise`](@ref) of the
+fit: the point covariance, log scale and iterations it used: the fitted
+plane's linear solves are 1, or 1 + `iterations` for
+`IntensityAndPositionNoise`),
 `log_change` (the largest change of the model's log I over the domain's rows
 between the last two solves; 0 for one solve), `n_pixels` (the domain's
 pixels), `n_active` (scene controls with data) and `seconds` (the stages' wall
 times, summed over the solves).
 """
-struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityWeights, SampsonWeights}}
+struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityNoise, IntensityAndPositionNoise}}
     chart::AzimuthalChart
     scene::Vector{Float64}
     gains::Matrix{Float64}
@@ -262,7 +277,7 @@ struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityWeights, SampsonW
     residual_quantiles::NTuple{3, Float64}
     relative_residual::Float64
     solver::Symbol
-    weights::W
+    measurement_noise::W
     log_change::Float64
     n_pixels::Int
     n_active::Int
@@ -283,7 +298,7 @@ struct _PlanePoint{T}
 end
 @inline (p::_PlanePoint{T})(I) where {T} = SVector{2, T}(p.s * (I[2] - T(0.5) + p.offset[1]), p.s * (I[1] - T(0.5) + p.offset[2]))
 
-# log V at a sensor point u and its ray f, in u's own number type (a ForwardDiff dual for the Sampson gradient): a LogVignetting's
+# log V at a sensor point u and its ray f, in u's own number type (a ForwardDiff dual for the measurement gradient): a LogVignetting's
 # spline of log V, else the log of any vignetting held fixed (any vignetting the render takes, `v(u, f)`; a Core model reads u
 # only). And a LogVignetting's row ∂log V/∂P at its active control points (the spline's basis, Core's `active_coefficients`);
 # none for a V held fixed.
@@ -355,7 +370,7 @@ Adapt.@adapt_structure _LogIntensityModel
     return x[3] - lm - m.log_gain, G_x, G_θ
 end
 # The model's log L + log V at the pixel (u, its ray f, ∂f/∂u = M) and the constraint's measurement gradient
-# G_x = [−∇_u(log L∘R∘f + log V), 1]: the weights' part of `constraint_with_jacobians` (the Sampson weight needs no G_θ).
+# G_x = [−∇_u(log L∘R∘f + log V), 1]: the weights' part of `constraint_with_jacobians` (the whitened weight needs no G_θ).
 @inline function _model_with_measurement_gradient(m::_LogIntensityModel, u, f, M)
     model(δ) = _log_radiance(m.chart, m.scene, m.rotation * (f + M * δ)) + _log_vignetting(m.vignetting, u + δ, f + M * δ)
     δ0 = zero(SVector{2, Float64})
@@ -364,20 +379,21 @@ end
     return model(δ0), SVector(-∇[1], -∇[2], 1.0)
 end
 
-# The row weights the kernels read, `w(I, p)` at the observed value I of the domain pixel p. `_IntensityWeight`: I².
-# `_SampsonWeight`: Core's frozen whitening of the observation's constraint, 1/(G_x·Σ_x·G_xᵀ) (`whitening_factor` squared; zero
-# where the propagated variance is degenerate), at this frame's model.
+# The row weights the kernels read, `w(I, p)` at the observed value I of the domain pixel p: the whitening of the row's
+# constraint by the measurement noise. `_IntensityWeight` (`IntensityNoise`): I². `_IntensityAndPositionWeight`
+# (`IntensityAndPositionNoise`): Core's frozen whitening of the observation's constraint, 1/(G_x·Σ_x·G_xᵀ) (`whitening_factor`
+# squared; zero where the propagated variance is degenerate), at this frame's model.
 struct _IntensityWeight end
 @inline (::_IntensityWeight)(I, p) = I * I
-struct _SampsonWeight{M, U, F, J}
+struct _IntensityAndPositionWeight{M, U, F, J}
     model::M
     upix::U
     rays::F
     ray_jacobians::J
     Σ::SMatrix{3, 3, Float64, 9}
 end
-Adapt.@adapt_structure _SampsonWeight
-@inline function (w::_SampsonWeight)(I, p)
+Adapt.@adapt_structure _IntensityAndPositionWeight
+@inline function (w::_IntensityAndPositionWeight)(I, p)
     _, G_x = _model_with_measurement_gradient(w.model, w.upix[p], w.rays[p], w.ray_jacobians[p])   # G_x does not read I
     return VgtkCore.whitening_factor(G_x, w.Σ)^2
 end
@@ -409,7 +425,7 @@ end
 
 # ----------------------------------------------------------------------------- the kernels
 
-# One frame's row weights `weight(I, p)` (`_IntensityWeight`, `_SampsonWeight`) at its rows (0 elsewhere): the weights' mean.
+# One frame's row weights `weight(I, p)` (`_IntensityWeight`, `_IntensityAndPositionWeight`) at its rows (0 elsewhere): the weights' mean.
 @kernel function _weight_kernel!(wout, @Const(frame), @Const(sat), @Const(lin), plane_offset::Int, weight)
     p = @index(Global)
     @inbounds begin
@@ -624,7 +640,7 @@ end
 """
     fit_vignetting(vignetting, camera, frames, rotations; free_directions, gain_correction, saturated, circle, raw_scale,
                    rim_margin_px, fov_deg, plane, plane_offsets, chart_spacing_deg, penalty_order, penalty_weight,
-                   vignetting_penalty_weight, solver, weights = IntensityWeights())
+                   vignetting_penalty_weight, solver, measurement_noise = IntensityNoise())
         -> FitResult{<:VisualGeometryToolkitCore.AbstractVignetting, VignettingMetadata}
 
 The vignetting V and the exposure gains of a camera that only rotated, from
@@ -644,7 +660,7 @@ V and the gains.
   B-spline of log V on the sensor, camera pixels; its control points the
   start of log V, e.g. zeros); held fixed, any vignetting the render takes (a
   Core model, or a callable `vignetting(u, f)`: a calibration's map, a flat
-  field; differentiable in `u` for [`SampsonWeights`](@ref)). A
+  field; differentiable in `u` for [`IntensityAndPositionNoise`](@ref)). A
   sweep about one axis cannot observe a free 2-D V's tilt
   across that axis (a field `exp(α·f_y)` is unchanged by a pure yaw, so L
   absorbs it): use a tensor surface for frames with pitch and roll diversity.
@@ -655,7 +671,7 @@ V and the gains.
   then the fit is gain compensation under that V (a calibration's), the same
   system without V's block.
 - `gain_correction`: `nothing` (every frame at one exposure, `g = 1`),
-  [`FrameGains`](@ref)`()` (one gain per frame, `log I_k = log g_k + log L(d)
+  [`IntensityGains`](@ref)`()` (one gain per frame, `log I_k = log g_k + log L(d)
   + log V(u)`, `K − 1` unknowns with the gauge `g₁ = 1`: L carries the first
   frame's exposure) or [`ChannelGains`](@ref)`()` (one per frame and colour
   plane, the gauge `g_1c = 1`: each other plane's gains solved under the fitted
@@ -685,10 +701,13 @@ V and the gains.
   V block's mean diagonal (it fixes the control points the domain does not
   reach), and, with free directions, the gauge mean log V = 0 over the
   domain's pixels. A V held fixed enters as the numbers log V(u).
-- The weights: [`IntensityWeights`](@ref) (the default; `I²`, one solve) or
-  [`SampsonWeights`](@ref) (the observation's Sampson whitening, with the
-  sensor point's noise: after the `IntensityWeights` solve, `iterations` more,
-  each with its weights from the previous solve's model).
+- `measurement_noise`: the noise model of a row's measurement; the row weights
+  are always the whitening of the log-I constraint by it (Core's
+  `whitening_factor`). [`IntensityNoise`](@ref) (the default: noise in the
+  value only, weight `I²`, one solve) or [`IntensityAndPositionNoise`](@ref)
+  (noise in the value and the pixel's sensor position: after the
+  `IntensityNoise` solve, `iterations` more, each with its weights from the
+  previous solve's model). TOML: [`MEASUREMENT_NOISES`](@ref).
 - The solve: `solver`, a [`ConjugateGradient`](@ref) (Jacobi-preconditioned, on
   the frames' backend) or a [`SparseCholesky`](@ref) (the same system assembled
   sparse and factored on the host).
@@ -712,7 +731,7 @@ weights, and
 residuals and the solves are the fitted `plane`'s).
 """
 function fit_vignetting(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
-                        gain_correction::Union{Nothing, FrameGains, ChannelGains}, plane::Integer, kw...)
+                        gain_correction::Union{Nothing, IntensityGains, ChannelGains}, plane::Integer, kw...)
     r = _fit_plane(vignetting, camera, frames, rotations; gains = gain_correction !== nothing, plane, kw...)::VgtkCore.FitResult
     if gain_correction isa ChannelGains
         # each other plane's gains under the fitted V (held fixed: its log V(u) the fixed numbers), its own scene, into its
@@ -738,7 +757,8 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
                     free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, circle, raw_scale::Integer,
                     rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_offsets, chart_spacing_deg::Real,
                     penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
-                    solver::Union{ConjugateGradient, SparseCholesky}, weights::Union{IntensityWeights, SampsonWeights} = IntensityWeights(),
+                    solver::Union{ConjugateGradient, SparseCholesky},
+                    measurement_noise::Union{IntensityNoise, IntensityAndPositionNoise} = IntensityNoise(),
                     gains_only::Bool = false)
     penalty_order in (2, 3) || throw(ArgumentError("fit_vignetting: penalty_order must be 2 or 3, got $penalty_order"))
     K = length(frames)
@@ -772,9 +792,9 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     P > 0 || throw(ArgumentError("fit_vignetting: the fit domain is empty"))
     upix = Uall[lin]; rays = Fall[lin]
     Uall = Fall = U2 = inside = nothing
-    sampson = weights isa SampsonWeights
-    rayJ = nothing                                                        # the rays' back-projection Jacobians (Sampson's G_x)
-    if sampson
+    position_noise = measurement_noise isa IntensityAndPositionNoise
+    rayJ = nothing                                                        # the rays' back-projection Jacobians (the noise's G_x)
+    if position_noise
         rayJ = similar(upix, SMatrix{3, 2, Float64, 6})
         VgtkCore.pointwise!(_RayJacobian(VgtkCore.model(camera)), rayJ, upix; exec = VgtkCore.OnBackend(be))   # the camera moved too
     end
@@ -821,9 +841,9 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     fits_v || all(isfinite, Array(LV)) || throw(ArgumentError("fit_vignetting: the given V is not positive at every domain pixel"))
     xh = Float64[]; cL = Float64[]; active = falses(nL); rel = NaN; retcode = :solved
     iters = 0; change = 0.0
-    nsolves = sampson ? 1 + weights.iterations : 1
-    Σx = sampson ? _measurement_covariance(weights) : nothing
-    LMs = sampson ? [_zeros(be, Float64, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
+    nsolves = position_noise ? 1 + measurement_noise.iterations : 1
+    Σx = position_noise ? _measurement_covariance(measurement_noise) : nothing
+    LMs = position_noise ? [_zeros(be, Float64, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
     weight_of = k -> _IntensityWeight()                                   # the first solve's weights: I²
     for it in 1:nsolves
         inv_scale = scale_of(weight_of)
@@ -915,8 +935,8 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             v = VgtkCore.with_control_points(vn, vec(Matrix{Float64}(VgtkCore.control_points(vn))) .- c)
             cL .+= c; LV .-= c
         end
-        sampson || break
-        # the next solve's weights: Sampson's at this solve's model of every frame (and its log I, for the change between solves)
+        position_noise || break
+        # the next solve's weights: the whitening at this solve's model of every frame (and its log I, for the change between solves)
         lg = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG)); cLm = _upload(be, cL); mk! = _model_kernel!(be, 256)
         change = 0.0
         for k in 1:K
@@ -928,7 +948,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         @debug "fit_vignetting: solve $it, $retcode; the model's log I moved by $change at most"
         it == nsolves && break
         models = [_LogIntensityModel(v, ch, cLm, Rs[k], lg[k]) for k in 1:K]
-        weight_of = k -> _SampsonWeight(models[k], upix, rays, rayJ, Σx)
+        weight_of = k -> _IntensityAndPositionWeight(models[k], upix, rays, rayJ, Σx)
     end
     log_gains = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG))
     gains_only && return exp.(log_gains), retcode, iters
@@ -950,7 +970,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     scene = copy(cL); scene[.!active] .= NaN
     meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
-                              weights, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
+                              measurement_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
     return VgtkCore.FitResult(v, retcode, iters, sqrt(swr / sw), length(R_all), meta)
 end
 
