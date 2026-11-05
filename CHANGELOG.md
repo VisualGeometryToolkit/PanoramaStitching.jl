@@ -24,10 +24,10 @@
   arm). The example's loaders (`run.jl`'s `load_config`, `compare_arms.jl`) refuse each old key by name, `ArgumentError`
   "the key … was renamed to …": an old config fails, it is never read as the new setting.
 - The example's arms (`arms.toml`) carry labels of their own instead of their tags: `free_frame_intensity` →
-  `selfcal_exposure_value` (the `fixed_from` V of record), `free_none_intensity` → `selfcal_no_gain_value`,
-  `free_channel_intensity` → `selfcal_colour_value`, `fixed_none_intensity` → `given_v_no_gain_value`, `fixed_frame_intensity` →
-  `given_v_exposure_value`, `fixed_channel_intensity` → `given_v_colour_value`, and the `…_sampson` arms the same with
-  `…_value_point` (`free_frame_sampson` → `selfcal_exposure_value_point`, …). `results.json` and `results.md` name the column
+  `selfcal_shared_gain_value` (the `fixed_from` V of record), `free_none_intensity` → `selfcal_no_gain_value`,
+  `free_channel_intensity` → `selfcal_plane_gain_value`, `fixed_none_intensity` → `given_v_no_gain_value`, `fixed_frame_intensity` →
+  `given_v_shared_gain_value`, `fixed_channel_intensity` → `given_v_plane_gain_value`, and the `…_sampson` arms the same with
+  `…_value_point` (`free_frame_sampson` → `selfcal_shared_gain_value_point`, …). `results.json` and `results.md` name the column
   `measurement_noise`. A comparison's key is the content of `arms.toml`, so earlier results are not reused.
 
 ## 0.3.0

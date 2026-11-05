@@ -114,11 +114,11 @@ Under `$VGTK_DATA_ROOT`:
 ## The comparison of the fit's settings
 
 `arms.toml` is the comparison of record of `fit_vignetting`'s settings: twelve arms, V `"free"` (self-calibration) or
-`"fixed"` (held at the V of record, the `fixed_from` arm's fit, `selfcal_exposure_value`: one gain per frame and I²
+`"fixed"` (held at the V of record, the `fixed_from` arm's fit, `selfcal_shared_gain_value`: one gain per frame and I²
 weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `measurement_noise` (`"intensity"`,
 `"intensity_and_position"`), each on both sets (`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode,
 registration, domain, radial model and solver). An arm's name is its own label (`selfcal` or `given_v`; `no_gain`,
-`exposure` or `colour`; `value` or `value_point`), not its tags.
+`shared_gain` or `plane_gain`; `value` or `value_point`), not its tags.
 
     julia --project=<env> examples/panorama_vignetting/compare_arms.jl examples/panorama_vignetting/arms.toml
 
