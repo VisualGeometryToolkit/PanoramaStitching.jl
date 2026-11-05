@@ -71,8 +71,8 @@ fit before PanoramaStitching 0.3.
 struct IntensityWeights end
 
 """
-    SampsonWeights(; point_covariance, log_intensity_scale = 0.01, solves = 1)
-    SampsonWeights(; point_scale, log_intensity_scale = 0.01, solves = 1)
+    SampsonWeights(; point_covariance, log_intensity_scale = 0.01, iterations = 1)
+    SampsonWeights(; point_scale, log_intensity_scale = 0.01, iterations = 1)
 
 [`fit_vignetting`](@ref)'s Sampson row weights: a row is the implicit constraint
 
@@ -92,15 +92,15 @@ at the previous solve; the first solve is [`IntensityWeights`](@ref)'.
   `point_scale` that scale itself (`Σ_u = point_scale²·I`).
 - `log_intensity_scale`: `σ`, the standard deviation of log I (a constant
   floor: 0.01 is 1 % of the value).
-- `solves`: the Sampson solves after the `IntensityWeights` one, 1 or 2 (the
-  second re-evaluates G_x at the first's solution).
+- `iterations`: the reweight-and-solve cycles after the `IntensityWeights`
+  solve, 1 or 2 (the second re-evaluates G_x at the first's solution).
 """
 struct SampsonWeights
     point_covariance::SMatrix{2, 2, Float64, 4}
     log_intensity_scale::Float64
-    solves::Int
+    iterations::Int
 end
-function SampsonWeights(; point_covariance = nothing, point_scale = nothing, log_intensity_scale::Real = 0.01, solves::Integer = 1)
+function SampsonWeights(; point_covariance = nothing, point_scale = nothing, log_intensity_scale::Real = 0.01, iterations::Integer = 1)
     (point_covariance === nothing) == (point_scale === nothing) &&
         throw(ArgumentError("SampsonWeights: give the point's noise as exactly one of point_covariance and point_scale"))
     Σ = point_covariance === nothing ? SMatrix{2, 2, Float64, 4}(Float64(point_scale)^2, 0.0, 0.0, Float64(point_scale)^2) :
@@ -109,8 +109,8 @@ function SampsonWeights(; point_covariance = nothing, point_scale = nothing, log
         throw(ArgumentError("SampsonWeights: the point covariance must be symmetric positive definite, got $Σ"))
     (log_intensity_scale > 0 && isfinite(log_intensity_scale)) ||
         throw(ArgumentError("SampsonWeights: log_intensity_scale must be positive, got $log_intensity_scale"))
-    solves in (1, 2) || throw(ArgumentError("SampsonWeights: solves is 1 or 2, got $solves"))
-    return SampsonWeights(Σ, Float64(log_intensity_scale), Int(solves))
+    iterations in (1, 2) || throw(ArgumentError("SampsonWeights: iterations is 1 or 2, got $iterations"))
+    return SampsonWeights(Σ, Float64(log_intensity_scale), Int(iterations))
 end
 """
     FrameGains()
@@ -143,6 +143,17 @@ VisualGeometryToolkitCore `TagRegistry`, family suffix `Gains`): `"none"`
 """
 const GAIN_CORRECTIONS = VgtkCore.TagRegistry(:gain_correction, "Gains", "none" => nothing, "frame" => FrameGains,
                                               "channel" => ChannelGains; paths = [r"^vignetting\.gain_correction$"])
+
+"""
+    WEIGHTS
+
+The TOML tags of [`fit_vignetting`](@ref)'s `weights` (a VisualGeometryToolkitCore
+`TagRegistry`, family suffix `Weights`): `"intensity"` ([`IntensityWeights`](@ref))
+and `"sampson"` ([`SampsonWeights`](@ref), whose settings the config states
+beside it); the example's `vignetting.weights`.
+"""
+const WEIGHTS = VgtkCore.TagRegistry(:weights, "Weights", "intensity" => IntensityWeights, "sampson" => SampsonWeights;
+                                     paths = [r"^vignetting\.weights$"])
 
 # The measurement covariance Σ_x over (u₁, u₂, log I).
 function _measurement_covariance(w::SampsonWeights)
@@ -235,8 +246,8 @@ log I of the fitted `plane` over the rows
 result's `rms` is the one weighted by the last solve's weights),
 `relative_residual` (the last solve's ‖r‖/‖b‖), `solver`, `weights` (the
 [`IntensityWeights`](@ref) or [`SampsonWeights`](@ref) of the fit: the
-Sampson point covariance and log scale it used), `outer_iterations` (the
-linear solves: 1 for `IntensityWeights`, 1 + `solves` for `SampsonWeights`),
+Sampson point covariance, log scale and iterations it used: the fitted plane's
+linear solves are 1, or 1 + `iterations` for `SampsonWeights`),
 `log_change` (the largest change of the model's log I over the domain's rows
 between the last two solves; 0 for one solve), `n_pixels` (the domain's
 pixels), `n_active` (scene controls with data) and `seconds` (the stages' wall
@@ -252,7 +263,6 @@ struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityWeights, SampsonW
     relative_residual::Float64
     solver::Symbol
     weights::W
-    outer_iterations::Int
     log_change::Float64
     n_pixels::Int
     n_active::Int
@@ -273,8 +283,20 @@ struct _PlanePoint{T}
 end
 @inline (p::_PlanePoint{T})(I) where {T} = SVector{2, T}(p.s * (I[2] - T(0.5) + p.offset[1]), p.s * (I[1] - T(0.5) + p.offset[2]))
 
-# A LogVignetting's rows at a domain pixel (per-point functors of Core's `pointwise!`): the active control points of its spline
-# of log V (Core's `active_coefficients` of `log_spline`), their rows ∂log V/∂P (the spline's basis), and log V.
+# log V at a sensor point u and its ray f, in u's own number type (a ForwardDiff dual for the Sampson gradient): a LogVignetting's
+# spline of log V, else the log of any vignetting held fixed (any vignetting the render takes, `v(u, f)`; a Core model reads u
+# only). And a LogVignetting's row ∂log V/∂P at its active control points (the spline's basis, Core's `active_coefficients`);
+# none for a V held fixed.
+@inline _log_vignetting(v::VgtkCore.LogVignetting, u, f) = VgtkCore.log_spline(v)(u)
+@inline function _log_vignetting(v, u, f)
+    V = v(u, f)
+    return log(ifelse(V > 0, V, zero(V)))        # V ≤ 0: −Inf, refused by name afterwards (not Base's DomainError on the host)
+end
+@inline _active_log_rows(v::VgtkCore.LogVignetting, u) = SVector(VgtkCore.active_coefficients(VgtkCore.log_spline(v), u)[2])
+@inline _active_log_rows(v, u) = SVector{0, Float64}()
+
+# The per-point functors of Core's `pointwise!` over the domain pixels (moved to the frames' backend with `OnBackend`, so a V
+# holding arrays, a calibration's map, reaches a device): a LogVignetting's active control points and their rows, and log V.
 struct _ActiveIndices{V}
     v::V
 end
@@ -282,23 +304,17 @@ end
 struct _LogRows{V}
     v::V
 end
-@inline (a::_LogRows)(u) = SVector(VgtkCore.active_coefficients(VgtkCore.log_spline(a.v), u)[2])
-struct _LogValue{V}
+@inline (a::_LogRows)(u) = _active_log_rows(a.v, u)
+struct _LogV{V}
     v::V
 end
-@inline (a::_LogValue)(u) = VgtkCore.log_spline(a.v)(u)
-# log V of a V held fixed: any vignetting the render takes, `v(u, f)` (a Core model reads u only)
-struct _LogAt{V}
-    v::V
-end
-@inline (a::_LogAt)(u, f) = log(Float64(a.v(u, f)))
-# log V at a sensor point u and its ray f, in u's own number type (a ForwardDiff dual for the Sampson gradient): a LogVignetting's
-# spline of log V, else the log of any vignetting held fixed.
-@inline _log_vignetting(v::VgtkCore.LogVignetting, u, f) = VgtkCore.log_spline(v)(u)
-@inline _log_vignetting(v, u, f) = log(v(u, f))
+@inline (a::_LogV)(u, f) = Float64(_log_vignetting(a.v, u, f))
+Adapt.@adapt_structure _ActiveIndices
+Adapt.@adapt_structure _LogRows
+Adapt.@adapt_structure _LogV
 
 # log L at the world direction d: the chart spline's value at d's chart point (any number type: a dual differentiates it).
-@inline function _log_radiance(ch::AzimuthalChart, cL, d)
+Base.@propagate_inbounds function _log_radiance(ch::AzimuthalChart, cL, d)
     ia, ib, wa, wb = _chart_span(ch, d)
     lL = zero(eltype(wa))
     for jb in 0:3, ja in 0:3
@@ -331,19 +347,22 @@ end
 Adapt.@adapt_structure _LogIntensityModel
 
 @inline function VgtkCore.constraint_with_jacobians(m::_LogIntensityModel, x::StaticVector{3}; ray, ray_jacobian)
-    u = SVector{2, Float64}(x[1], x[2]); f = SVector{3, Float64}(ray); M = SMatrix{3, 2, Float64, 6}(ray_jacobian)
+    u = SVector{2, Float64}(x[1], x[2]); f = SVector{3, Float64}(ray)
+    lm, G_x = _model_with_measurement_gradient(m, u, f, SMatrix{3, 2, Float64, 6}(ray_jacobian))
+    _, _, wa, wb = _chart_span(m.chart, m.rotation * f)
+    G_L = SVector{16, Float64}(ntuple(k -> -wa[(k - 1) % 4 + 1] * wb[(k - 1) ÷ 4 + 1], Val(16)))
+    G_θ = vcat(G_L, -_active_log_rows(m.vignetting, u), SVector(-1.0))
+    return x[3] - lm - m.log_gain, G_x, G_θ
+end
+# The model's log L + log V at the pixel (u, its ray f, ∂f/∂u = M) and the constraint's measurement gradient
+# G_x = [−∇_u(log L∘R∘f + log V), 1]: the weights' part of `constraint_with_jacobians` (the Sampson weight needs no G_θ).
+@inline function _model_with_measurement_gradient(m::_LogIntensityModel, u, f, M)
     model(δ) = _log_radiance(m.chart, m.scene, m.rotation * (f + M * δ)) + _log_vignetting(m.vignetting, u + δ, f + M * δ)
     δ0 = zero(SVector{2, Float64})
     ∇ = ForwardDiff.gradient(model, δ0)
     ∇ = ifelse(isfinite(∇[1]) & isfinite(∇[2]), ∇, δ0)
-    g = x[3] - model(δ0) - m.log_gain
-    _, _, wa, wb = _chart_span(m.chart, m.rotation * f)
-    G_L = SVector{16, Float64}(ntuple(k -> -wa[(k - 1) % 4 + 1] * wb[(k - 1) ÷ 4 + 1], Val(16)))
-    G_θ = vcat(G_L, -_active_log_rows(m.vignetting, u), SVector(-1.0))
-    return g, SVector(-∇[1], -∇[2], 1.0), G_θ
+    return model(δ0), SVector(-∇[1], -∇[2], 1.0)
 end
-@inline _active_log_rows(v::VgtkCore.LogVignetting, u) = SVector(VgtkCore.active_coefficients(VgtkCore.log_spline(v), u)[2])
-@inline _active_log_rows(v, u) = SVector{0, Float64}()
 
 # The row weights the kernels read, `w(I, p)` at the observed value I of the domain pixel p. `_IntensityWeight`: I².
 # `_SampsonWeight`: Core's frozen whitening of the observation's constraint, 1/(G_x·Σ_x·G_xᵀ) (`whitening_factor` squared; zero
@@ -359,8 +378,7 @@ struct _SampsonWeight{M, U, F, J}
 end
 Adapt.@adapt_structure _SampsonWeight
 @inline function (w::_SampsonWeight)(I, p)
-    u = w.upix[p]
-    _, G_x, _ = VgtkCore.constraint_with_jacobians(w.model, SVector(u[1], u[2], log(I)); ray = w.rays[p], ray_jacobian = w.ray_jacobians[p])
+    _, G_x = _model_with_measurement_gradient(w.model, w.upix[p], w.rays[p], w.ray_jacobians[p])   # G_x does not read I
     return VgtkCore.whitening_factor(G_x, w.Σ)^2
 end
 
@@ -371,7 +389,7 @@ end
 Adapt.@adapt_structure _RayJacobian          # a grid model's control grid moved to the device (Core's adapt rule)
 @inline (r::_RayJacobian)(u) = SMatrix{3, 2, Float64, 6}(VgtkCore.backproject_with_jacobian(r.camera, u)[2])
 
-# The minimum over a batch of rays of the cosine to `c` after the rotation R: the chart's extent.
+# The cosine of the rotated ray R·f to `c` (its minimum over the rays and frames is the chart's extent).
 struct _CosTo
     c::SVector{3, Float64}
     R::SMatrix{3, 3, Float64, 9}
@@ -533,14 +551,7 @@ end
 # One frame's model of log I at every domain pixel, log L + log V + γ_k: its change between two solves.
 @kernel function _model_kernel!(LM, @Const(rays), @Const(LV), @Const(cL), R, ch::AzimuthalChart, log_gain::Float64)
     p = @index(Global)
-    @inbounds begin
-        ia, ib, wa, wb = _chart_span(ch, R * rays[p])
-        lL = 0.0
-        for jb in 0:3, ja in 0:3
-            lL += wa[ja + 1] * wb[jb + 1] * cL[_chart_index(ch.n, ia + ja + 1, ib + jb + 1)]
-        end
-        LM[p] = lL + LV[p] + log_gain
-    end
+    @inbounds LM[p] = _log_radiance(ch, cL, R * rays[p]) + LV[p] + log_gain
 end
 
 # One frame's residuals of log I (NaN where the row is not an observation; `LV` log V at the domain pixels, `log_gain` the
@@ -552,12 +563,7 @@ end
         j = lin[p]
         I = Float64(frame[j + plane_offset])
         if !sat[j] && I > 0
-            ia, ib, wa, wb = _chart_span(ch, R * rays[p])
-            lL = 0.0
-            for jb in 0:3, ja in 0:3
-                lL += wa[ja + 1] * wb[jb + 1] * cL[_chart_index(ch.n, ia + ja + 1, ib + jb + 1)]
-            end
-            res[p] = Float32(log(I) - lL - LV[p] - log_gain); wout[p] = Float32(weight(I, p))
+            res[p] = Float32(log(I) - _log_radiance(ch, cL, R * rays[p]) - LV[p] - log_gain); wout[p] = Float32(weight(I, p))
         else
             res[p] = NaN32; wout[p] = 0.0f0
         end
@@ -681,7 +687,7 @@ V and the gains.
   domain's pixels. A V held fixed enters as the numbers log V(u).
 - The weights: [`IntensityWeights`](@ref) (the default; `I²`, one solve) or
   [`SampsonWeights`](@ref) (the observation's Sampson whitening, with the
-  sensor point's noise: after the `IntensityWeights` solve, `solves` more,
+  sensor point's noise: after the `IntensityWeights` solve, `iterations` more,
   each with its weights from the previous solve's model).
 - The solve: `solver`, a [`ConjugateGradient`](@ref) (Jacobi-preconditioned, on
   the frames' backend) or a [`SparseCholesky`](@ref) (the same system assembled
@@ -695,8 +701,10 @@ Returns a `FitResult` whose estimate is the fitted Core vignetting model
 (isbits: the `vignetting` keyword of [`render_panorama`](@ref),
 [`sample_frames`](@ref) and [`score_seams`](@ref), on the host or a device;
 the given model when V is held fixed), `retcode` `:converged` or
-`:max_iterations` (the last CG) or `:solved` (Cholesky),
-`iterations` the CG's summed over the solves (0 for Cholesky),
+`:max_iterations` (a CG that ended at its budget: the last solve of any plane
+solved, the other planes' of [`ChannelGains`](@ref) included) or `:solved`
+(Cholesky), `iterations` the CG's summed over every solve of every plane (0 for
+Cholesky),
 `rms` the rms of the log residual over `n` rows weighted by the last solve's
 weights, and
 [`VignettingMetadata`](@ref) (its `gains`, the frames' `K × 3` `g_kc`: the
@@ -705,30 +713,33 @@ residuals and the solves are the fitted `plane`'s).
 """
 function fit_vignetting(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
                         gain_correction::Union{Nothing, FrameGains, ChannelGains}, plane::Integer, kw...)
-    r = _fit_plane(vignetting, camera, frames, rotations; gains = gain_correction !== nothing, plane, kw...)
-    m = r.metadata; g = m.gains
-    C = size(frames[1], 3)
-    G = repeat(g, 1, C)                                                   # nothing, FrameGains: the fitted plane's, every plane
+    r = _fit_plane(vignetting, camera, frames, rotations; gains = gain_correction !== nothing, plane, kw...)::VgtkCore.FitResult
     if gain_correction isa ChannelGains
-        # each other plane's gains under the fitted V (held fixed: its log V(u) the fixed numbers), its own scene
+        # each other plane's gains under the fitted V (held fixed: its log V(u) the fixed numbers), its own scene, into its
+        # column of the K × C gains (the fit's own plane's in every column until then)
         held = merge(NamedTuple(kw), (; free_directions = zeros(0, 0)))
-        for c in 1:C
+        retcode = VgtkCore.retcode(r); iters = r.iterations
+        for c in axes(r.metadata.gains, 2)
             c == plane && continue
-            G[:, c] .= vec(_fit_plane(VgtkCore.estimate(r), camera, frames, rotations; gains = true, plane = c, held...).metadata.gains)
+            g, rc, it = _fit_plane(VgtkCore.estimate(r), camera, frames, rotations; gains = true, plane = c, gains_only = true,
+                                   held...)::Tuple{Vector{Float64}, Symbol, Int}
+            r.metadata.gains[:, c] .= g; iters += it
+            rc === :max_iterations && (retcode = rc)                      # an unconverged plane's gains are not hidden
         end
+        return VgtkCore.FitResult(VgtkCore.estimate(r), retcode, iters, r.rms, r.n, r.metadata)
     end
-    meta = VignettingMetadata(m.chart, m.scene, G, m.residual_rms, m.residual_mad, m.residual_quantiles, m.relative_residual,
-                              m.solver, m.weights, m.outer_iterations, m.log_change, m.n_pixels, m.n_active, m.seconds)
-    return VgtkCore.FitResult(VgtkCore.estimate(r), VgtkCore.retcode(r), r.iterations, r.rms, r.n, meta)
+    return r
 end
 
-# One plane's fit (`fit_vignetting`'s system): its gains a K × 1 column (`gains`: K − 1 free, g₁ = 1; else all 1).
+# One plane's fit (`fit_vignetting`'s system), its gains in every column of the K × C metadata gains (`gains`: K − 1 free,
+# g₁ = 1; else all 1). `gains_only`: the K gains, the last solve's retcode and the CG iterations alone, without the residuals'
+# statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
                     free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, circle, raw_scale::Integer,
                     rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_offsets, chart_spacing_deg::Real,
                     penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
-                    solver::Union{ConjugateGradient, SparseCholesky}, weights::Union{IntensityWeights, SampsonWeights} = IntensityWeights())
-    gain_correction = gains
+                    solver::Union{ConjugateGradient, SparseCholesky}, weights::Union{IntensityWeights, SampsonWeights} = IntensityWeights(),
+                    gains_only::Bool = false)
     penalty_order in (2, 3) || throw(ArgumentError("fit_vignetting: penalty_order must be 2 or 3, got $penalty_order"))
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("fit_vignetting: frames, rotations and saturated disagree"))
@@ -793,28 +804,28 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     end
 
     # the frames' gains: frame k ≥ 2 has the gain column k − 1 (g₁ = 1, the gauge)
-    nG = gain_correction ? K - 1 : 0
+    nG = gains ? K - 1 : 0
     D2 = fits_v ? _vignetting_penalty(vignetting) : zeros(1, 1)
     v = vignetting
     MA = fits_v ? length(VgtkCore.active_coefficients(VgtkCore.log_spline(v), Array(upix[1:1])[1])[1]) : 1
     VI = similar(frames[1], SVector{MA, Int}, P); VW = similar(frames[1], SVector{MA, Float64}, P); LV = similar(frames[1], Float64, P)
-    if !fits_v                                                            # V fixed: log V once, no V rows
+    exec = VgtkCore.OnBackend(be)
+    if fits_v
+        # log V's rows at the domain pixels: its basis at its active control points, which its control points do not move (log V
+        # is linear in them), so once
+        VgtkCore.pointwise!(_ActiveIndices(v), VI, upix; exec); VgtkCore.pointwise!(_LogRows(v), VW, upix; exec)
+    else                                                                  # V fixed: no V rows
         fill!(VI, SVector{1, Int}(1)); fill!(VW, SVector{1, Float64}(0.0))
-        VgtkCore.pointwise!(_LogAt(v), LV, upix, rays)
-        all(isfinite, Array(LV)) || throw(ArgumentError("fit_vignetting: the given V is not positive at every domain pixel"))
     end
+    VgtkCore.pointwise!(_LogV(v), LV, upix, rays; exec)
+    fits_v || all(isfinite, Array(LV)) || throw(ArgumentError("fit_vignetting: the given V is not positive at every domain pixel"))
     xh = Float64[]; cL = Float64[]; active = falses(nL); rel = NaN; retcode = :solved
     iters = 0; change = 0.0
-    nsolves = sampson ? 1 + weights.solves : 1
+    nsolves = sampson ? 1 + weights.iterations : 1
     Σx = sampson ? _measurement_covariance(weights) : nothing
     LMs = sampson ? [_zeros(be, Float64, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
     weight_of = k -> _IntensityWeight()                                   # the first solve's weights: I²
     for it in 1:nsolves
-        # log V's rows at the domain pixels (linear in its control points: exact)
-        if fits_v
-            VgtkCore.pointwise!(_ActiveIndices(v), VI, upix); VgtkCore.pointwise!(_LogRows(v), VW, upix)
-            VgtkCore.pointwise!(_LogValue(v), LV, upix)
-        end
         inv_scale = scale_of(weight_of)
 
         # the normal equations
@@ -825,7 +836,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         GVd = _zeros(be, Float64, nV, max(nG, 1)); Gdiag = zeros(nG); bG = zeros(nG)
         acc! = _accumulate_kernel!(be, 256); gvb! = _gain_vblock_kernel!(be, 256)
         for k in 1:K
-            col = gain_correction && k >= 2 ? k - 1 : 0
+            col = gains && k >= 2 ? k - 1 : 0
             acc!(S, BV, bL, Wp, Yp, Wk, Yk, BG, frames[k], saturated[k], lin, rays, VI, VW, LV, Rs[k], ch, inv_scale, poff, col,
                  weight_of(k); ndrange = P)
             if col > 0
@@ -899,7 +910,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             # log V is linear in its control points: the solve's increment is exact, P₀ + δ; then its gauge exact (mean log V = 0
             # over the domain: the scale moves into L)
             vn = VgtkCore.with_control_points(v, P0 .+ Z * xh[(nL + 1):(nL + mV)])
-            VgtkCore.pointwise!(_LogValue(vn), LV, upix)
+            VgtkCore.pointwise!(_LogV(vn), LV, upix, rays; exec)
             c = Statistics.mean(Array(LV))
             v = VgtkCore.with_control_points(vn, vec(Matrix{Float64}(VgtkCore.control_points(vn))) .- c)
             cL .+= c; LV .-= c
@@ -920,6 +931,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         weight_of = k -> _SampsonWeight(models[k], upix, rays, rayJ, Σx)
     end
     log_gains = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG))
+    gains_only && return exp.(log_gains), retcode, iters
     cLd = _upload(be, cL)
 
     # the residuals
@@ -936,9 +948,9 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = copy(cL); scene[.!active] .= NaN
-    meta = VignettingMetadata(ch, scene, reshape(exp.(log_gains), :, 1),sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
+    meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
-                              weights, nsolves, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
+                              weights, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
     return VgtkCore.FitResult(v, retcode, iters, sqrt(swr / sw), length(R_all), meta)
 end
 

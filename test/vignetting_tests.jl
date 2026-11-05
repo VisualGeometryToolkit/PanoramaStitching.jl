@@ -73,7 +73,7 @@ end
     e_cg = error_vs(VgtkCore.estimate(cg), radial, q); e_ch = error_vs(VgtkCore.estimate(ch), radial, q)
     @info "fit_vignetting radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.iterations) CG iterations, rms $(cg.rms)"
     @test VgtkCore.retcode(cg) === :converged && VgtkCore.retcode(ch) === :solved
-    @test cg.metadata.outer_iterations == 1 && cg.metadata.weights === PanoramaStitching.IntensityWeights()
+    @test cg.metadata.log_change == 0 && cg.metadata.weights === PanoramaStitching.IntensityWeights()
     @test e_cg[1] < 2.0e-3 && e_ch[1] < 2.0e-3
     @test maximum(abs.(control_points(VgtkCore.estimate(cg)) .- control_points(VgtkCore.estimate(ch)))) < 1.0e-5
     @test cg.rms < 0.02
@@ -104,10 +104,20 @@ end
 
 @testitem "fit_vignetting, score_seams: the device agrees with the host" setup = [VignettingSequence] begin
     using Test, StaticArrays, CUDA
-    using PanoramaStitching: fit_vignetting, score_seams, panorama_view, ConjugateGradient
+    using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
     using PanoramaStitching: SampsonWeights, ChannelGains
+    import Adapt
+    # a calibration's V as a table over the radius (a host Vector inside: it needs its Adapt rule to reach a device)
+    struct TableV{A}
+        t::A
+        c::SVector{2, Float64}
+        r::Float64
+    end
+    Adapt.@adapt_structure TableV
+    (v::TableV)(u, f) = (x = clamp(hypot(u[1] - v.c[1], u[2] - v.c[2]) / v.r, 0.0, 1.0) * (length(v.t) - 1);
+                         i = min(unsafe_trunc(Int, x), length(v.t) - 2); v.t[i + 1] + (x - i) * (v.t[i + 2] - v.t[i + 1]))
     if !CUDA.functional()
         @test_skip "no CUDA device"
     else
@@ -127,7 +137,7 @@ end
         @test maximum(abs.(control_points(VgtkCore.estimate(d)) .- control_points(VgtkCore.estimate(h)))) < 1.0e-6
         @test abs(d.rms - h.rms) < 1.0e-8
         # the Sampson weights on the device (the observation's constraint, ForwardDiff and Core's whitening in the kernels)
-        sw = SampsonWeights(; point_scale = 1.0, solves = 2)
+        sw = SampsonWeights(; point_scale = 1.0, iterations = 2)
         hs = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, weights = sw, kw...)
         dsf = fit_vignetting(v0, q.model, df, q.R; saturated = ds, weights = sw, kw...)
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
@@ -139,6 +149,17 @@ end
         sd = score_seams(q.model, df, q.R, view; saturated = ds, sk...)
         @test sh.n == sd.n && abs(sh.rms - sd.rms) < 1.0e-9 && abs(sh.mad - sd.mad) < 1.0e-9
         @test maximum(abs.(d.metadata.gains .- h.metadata.gains)) < 1.0e-8 && all(==(1.0), d.metadata.gains[1, :])
+        # a V held fixed that holds HOST arrays (a calibration's table, with its Adapt rule) reaches the device in the fit, the
+        # render and the seams (the functors are moved by OnBackend)
+        tv = TableV(collect(range(1.0, 0.6; length = 64)), c, 420.0)
+        hf = fit_vignetting(tv, q.model, q.frames, q.R; saturated = q.saturated, kw..., free_directions = zeros(0, 0))
+        dfit = fit_vignetting(tv, q.model, df, q.R; saturated = ds, kw..., free_directions = zeros(0, 0))
+        @test maximum(abs.(dfit.metadata.gains .- hf.metadata.gains)) < 1.0e-8
+        rk = (; vignetting = tv, circle = kw.circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+        a = render_panorama(q.model, q.frames, q.R, view; rk...); b = render_panorama(q.model, df, q.R, view; rk...)
+        @test isequal(Array(b.owner), a.owner) && maximum(abs, filter(!isnan, vec(Array(b.image) .- a.image))) < 1.0e-5
+        sdt = score_seams(q.model, df, q.R, view; saturated = ds, sk..., vignetting = tv)
+        @test sdt.n == score_seams(q.model, q.frames, q.R, view; saturated = q.saturated, sk..., vignetting = tv).n
     end
 end
 
@@ -185,23 +206,23 @@ end
     # gain compensation: V held fixed at the fitted one (no free direction), the gains alone, one linear solve
     fixed = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                            gain_correction = FrameGains(), solver = SparseCholesky(), kw...)
-    @test VgtkCore.estimate(fixed) === VgtkCore.estimate(with) && fixed.metadata.outer_iterations == 1
+    @test VgtkCore.estimate(fixed) === VgtkCore.estimate(with) && fixed.metadata.log_change == 0
     @test maximum(abs.(fixed.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
     @test maximum(abs.(fixed.metadata.gains .- G)) < 1.0e-5
 
     # the Sampson weights (the observation's constraint whitened with the sensor point's noise): frames that follow the model
     # exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
-    sw = SampsonWeights(; point_scale = 1.5, solves = 2)
+    sw = SampsonWeights(; point_scale = 1.5, iterations = 2)
     sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = FrameGains(), solver = SparseCholesky(),
                          weights = sw, kw...)
-    @test sam.metadata.outer_iterations == 3 && sam.metadata.weights === sw
+    @test sam.metadata.weights === sw && sam.metadata.log_change > 0        # two Sampson iterations after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
     sf = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                         gain_correction = FrameGains(), solver = SparseCholesky(), weights = SampsonWeights(; point_scale = 1.5), kw...)
-    @test sf.metadata.outer_iterations == 2 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
+    @test sf.metadata.weights.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
     @test_throws ArgumentError SampsonWeights()                                         # the point's noise is required
     @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, point_covariance = [1.0 0; 0 1])
-    @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, solves = 3)
+    @test_throws ArgumentError SampsonWeights(; point_scale = 1.0, iterations = 3)
     @test_throws ArgumentError SampsonWeights(; point_covariance = [1.0 2.0; 2.0 1.0])  # not positive definite
 
     # the observation's constraint (Core's protocol): G_x is the model's exact gradient in u, and the weight is Core's whitening
@@ -248,8 +269,8 @@ end
 # render_panorama read the K × 3 gains per plane.
 @testitem "fit_vignetting: gain_correction none / frame / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence] begin
     using Test, Statistics, StaticArrays
-    using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, FrameGains, ChannelGains,
-        GAIN_CORRECTIONS
+    using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, ConjugateGradient,
+        FrameGains, ChannelGains, GAIN_CORRECTIONS
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
     c = SVector(430.0, 390.0)
@@ -302,4 +323,12 @@ end
     b = render_panorama(q.model, q.frames, q.R, view; rk...)
     o = a.owner; m = findall(o .> 0)[1:97:end]
     @test all(i -> all(cc -> a.image[i, cc] * ch.metadata.gains[o[i], cc] ≈ b.image[i, cc], 1:3), m)
+
+    # an other plane's unconverged solve is not hidden: its CG budget's end is the result's retcode, its iterations summed
+    short = (; kw..., solver = ConjugateGradient(; tolerance = 1.0e-14, max_iter = 3))
+    rc = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), short...)
+    @test VgtkCore.retcode(rc) === :max_iterations && rc.iterations == 3 * 3
+    # a V held fixed that is not positive somewhere in the domain is refused by name (not Base's DomainError of the log)
+    dark(u, f) = u[1] < 100 ? -0.5 : truth(u, f)
+    @test_throws ArgumentError fit_vignetting(dark, q.model, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = FrameGains(), kw...)
 end

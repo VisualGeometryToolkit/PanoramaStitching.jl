@@ -4,7 +4,7 @@
 
 ### Breaking
 
-- The vignetting model is VisualGeometryToolkitCore's (0.5.5): `RadialVignetting`, `TensorVignetting` and `SplineVignetting`
+- The vignetting model is VisualGeometryToolkitCore's (0.5.6, compat "0.5.6"): `RadialVignetting`, `TensorVignetting` and `SplineVignetting`
   and `log_vignetting` are gone from PanoramaStitching. `fit_vignetting(vignetting, camera, frames, rotations; …)` takes a
   Core `LogVignetting` (V = exp(s), `s` a `RadialVignetting` or `TensorVignetting` spline of log V: the model of earlier
   releases, linear in log V) as V's model and start, and its estimate is the fitted Core model (callable `v(u)`, isbits: the
@@ -12,7 +12,7 @@
   `vignetting(u, f)` as well). The fit is the one linear solve in log V of earlier releases. A V held fixed is any
   vignetting, a V-form `RadialVignetting` or `TensorVignetting` included. The model's knots are clamped (Core's), on the
   same breakpoints as before (a radial profile on `[0, radius]`, a tensor surface over the box). `VignettingMetadata` gains
-  `weights` (the fit's) and `outer_iterations` and `log_change` (the solves, and the model's change in the last).
+  `weights` (the fit's: its Sampson iterations give the linear solves) and `log_change` (the model's change in the last solve).
 - The new required `free_directions` (`n_control_points × m`): how V's control points move. Core's `pole_regular_basis` for
   a radial profile (V′(0) = 0: smooth at its centre, which the earlier log-V profile did not impose), the identity for a
   tensor surface, `zeros(n, 0)` to hold a given V fixed — a calibration's — when the same solve is the frames' gain
@@ -36,14 +36,15 @@
   the package precompiles in 16 s instead of 4 s. `refine_rotations` is not in it (an NLLSsolver solve evaluates into
   NLLSsolver, which a precompiling package may not do). Every result is unchanged.
 - `fit_vignetting`'s `weights` keyword: `IntensityWeights()` (the default, I²: every earlier call and its numbers stand)
-  or `SampsonWeights(; point_scale | point_covariance, log_intensity_scale = 0.01, solves = 1)`. A row is the implicit
+  or `SampsonWeights(; point_scale | point_covariance, log_intensity_scale = 0.01, iterations = 1)`. A row is the implicit
   constraint `g = log I − log L(R_k·f(u)) − log V(u) − γ_k` on the measurement `(u, log I)`, through VisualGeometryToolkitCore's
   `constraint_with_jacobians` protocol, and its weight Core's frozen whitening `whitening_factor(G_x, Σ_x)²` =
   `1/(G_x·Σ_x·G_xᵀ)`, `G_x = [−∇_u(log L∘R_k∘f + log V), 1]` the model's exact gradient (ForwardDiff through the two
   splines), `Σ_x = blockdiag(Σ_u, σ²)`. The weights are fixed per solve, at the previous solve's model: the I² solve, then
-  `solves` Sampson solves. The example takes `Σ_u` from the registration's rotation bundle (its core scale, loss width /
+  `iterations` Sampson reweight-and-solve cycles. The example takes `Σ_u` from the registration's rotation bundle (its core scale, loss width /
   scale multiple, recorded in rotations.json as `bundle_loss_width_px`) and reads `vignetting.weights`,
-  `log_intensity_scale` and `sampson_solves`. New dependency ForwardDiff.
+  `log_intensity_scale` and `sampson_iterations`. New dependency ForwardDiff. The weights' tags are
+  `PanoramaStitching.WEIGHTS` (a `TagRegistry`: `"intensity"`, `"sampson"`).
 - A noise model `var(I) = a·μ + b` (shot and read noise, measured on the frames) was tried as the weights during this
   release and is not added: its outer iterations did not settle and moved the gains by up to 15 %.
 

@@ -79,7 +79,7 @@ Under `$VGTK_DATA_ROOT`:
    linear least squares, weighted by I² (`vignetting.weights = "intensity"`) or by Sampson weights (`"sampson"`: each row
    the constraint of its measurement — sensor point and log I — whitened by that measurement's noise, the sensor point's σ the
    registration bundle's core scale, loss width / scale multiple, recorded in `rotations.json`; `log_intensity_scale` the
-   σ of log I; `sampson_solves` the solves after the I² one). Its normal equations are accumulated on the GPU, and it is
+   σ of log I; `sampson_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
    solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
    log V = 0 over the domain — no special point is pinned.
    *The frames' exposure gains* (`vignetting.gain_correction`, required: `"none"`, `"frame"` or `"channel"`): with

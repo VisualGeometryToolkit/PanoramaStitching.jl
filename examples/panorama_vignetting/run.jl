@@ -291,12 +291,11 @@ end
 
 # The fit's row weights of the config: I², or Sampson's with the sensor point's σ `point_scale_px` (the registration's).
 function fit_weights(v, point_scale_px)
-    w = v["weights"]
-    w == "intensity" && return IntensityWeights()
-    w == "sampson" || error("vignetting.weights = $w is not \"intensity\" or \"sampson\"")
+    W = PanoramaStitching.WEIGHTS[v["weights"]]                           # "intensity" or "sampson" (an ArgumentError otherwise)
+    W === IntensityWeights && return IntensityWeights()
     point_scale_px === nothing && error("vignetting.weights = \"sampson\" needs the registration's point scale (its record " *
                                         "rotations.json holds no bundle_loss_width_px: delete it to recompute the registration)")
-    return SampsonWeights(; point_scale = point_scale_px, log_intensity_scale = v["log_intensity_scale"], solves = v["sampson_solves"])
+    return SampsonWeights(; point_scale = point_scale_px, log_intensity_scale = v["log_intensity_scale"], iterations = v["sampson_iterations"])
 end
 
 # One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
@@ -304,7 +303,7 @@ end
 function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_scale_px = nothing)
     v = C.cfg["vignetting"]; d = C.cfg["domain"]
     m, Z = vignetting === nothing ? vignetting_space(kind, C, lens, W, H) :
-           (vignetting, zeros(VgtkCore.n_control_points(vignetting), 0))
+           (vignetting, zeros(0, 0))                                      # any vignetting held fixed (a Core model or a callable)
     s = v["solver"]
     solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
@@ -362,7 +361,7 @@ function write_vignetting(C, stem, res, W, H)
                             "knots" => collect.(kx), "degree" => collect(VgtkCore.spline_degree(v)),
                             "pixel_frame" => "camera pixels, COLMAP (full-resolution sensor)")
     if s isa VgtkCore.RadialVignetting
-        c = VgtkCore.field_center(v); r = VgtkCore.field_radius(v)
+        c = VgtkCore.center(v); r = VgtkCore.field_radius(v)
         rec["model"] = Dict("kind" => "radial", "center" => collect(c), "radius" => r, "controls" => VgtkCore.n_control_points(v),
                             "spline" => "VisualGeometryToolkitCore RadialVignetting: a B-spline in ρ/radius on clamped knots over [0, 1]")
         open(joinpath(C.out, stem * "_profile.csv"), "w") do io
@@ -438,7 +437,7 @@ function run_example(config_path)
     m = res.metadata
     say(log, "fit_vignetting ($kind): $(res.retcode), $(res.iterations) iterations, weighted rms $(round(res.rms; digits = 4)), " *
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
-    say(log, "  weights $(m.weights), $(m.outer_iterations) solves (the model's log I moved by $(m.log_change) in the last); " *
+    say(log, "  weights $(m.weights) (the model's log I moved by $(m.log_change) in the last solve); " *
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")

@@ -54,5 +54,6 @@ SampsonWeights
 FrameGains
 ChannelGains
 PanoramaStitching.GAIN_CORRECTIONS
+PanoramaStitching.WEIGHTS
 score_seams
 ```

@@ -35,7 +35,7 @@ function compare_arms(arms_path)
     for a in A["arms"]
         a["vignetting"] in ("free", "fixed") || error("arms.toml: arm $(a["name"]): vignetting = $(a["vignetting"])")
         PanoramaStitching.GAIN_CORRECTIONS[a["gain_correction"]]                    # an ArgumentError names the tags
-        a["weights"] in ("intensity", "sampson") || error("arms.toml: arm $(a["name"]): weights = $(a["weights"])")
+        PanoramaStitching.WEIGHTS[a["weights"]]
     end
     # the V of record first: the fixed arms hold its V
     order = vcat(ref, [a for a in A["arms"] if a !== ref])
@@ -70,7 +70,7 @@ function compare_arms(arms_path)
         for a in order
             cfg = deepcopy(C.cfg); v = cfg["vignetting"]
             v["gain_correction"] = a["gain_correction"]; v["weights"] = a["weights"]
-            v["log_intensity_scale"] = A["log_intensity_scale"]; v["sampson_solves"] = A["sampson_solves"]
+            v["log_intensity_scale"] = A["log_intensity_scale"]; v["sampson_iterations"] = A["sampson_iterations"]
             Ca = (; cfg, C.out, C.path)
             fkw = (; point_scale_px = reg.point_scale_px, vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
             fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
@@ -82,7 +82,7 @@ function compare_arms(arms_path)
             pooled = vcat([filter(!isnan, vec(Array(s.ratio))) for s in seams]...)
             summ = vignetting_summary(V, lens, pp, W, H, rim, in_domain)
             row = Dict{String, Any}("arm" => a["name"], "vignetting" => a["vignetting"], "gain_correction" => a["gain_correction"],
-                                    "weights" => a["weights"], "seconds" => dt, "solves" => m.outer_iterations, "rows" => r.n,
+                                    "weights" => a["weights"], "seconds" => dt, "solves" => m.weights isa SampsonWeights ? 1 + m.weights.iterations : 1,"rows" => r.n,
                                     "residual_mad" => m.residual_mad, "weighted_rms" => r.rms,
                                     "gains" => [collect(m.gains[k, :]) for k in axes(m.gains, 1)],
                                     "seam_mad" => [s.mad for s in seams], "seam_rms" => [s.rms for s in seams], "seam_n" => [s.n for s in seams],

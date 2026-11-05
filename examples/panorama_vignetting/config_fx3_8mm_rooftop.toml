@@ -79,7 +79,7 @@ gain_correction = "channel"                        # "none", "frame" (one gain p
 weights = "intensity"                              # "intensity" (I², one solve) or "sampson" (the observation's Sampson whitening:
                                                    # the sensor point's σ the registration bundle's core scale, loss width / scale multiple)
 log_intensity_scale = 0.01                         # Sampson: σ of log I (a constant floor)
-sampson_solves = 1                                 # Sampson: its solves after the I² one (2: G_x re-evaluated once more)
+sampson_iterations = 1                             # Sampson: its reweight-and-solve cycles after the I² solve (2: G_x re-evaluated once more)
 solver = "cg"                                    # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
 cg_tolerance = 1.0e-9                              # the CG's relative residual
 cg_max_iter = 40000                                # the CG's budget

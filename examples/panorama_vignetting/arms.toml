@@ -14,7 +14,7 @@ sets = ["config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml"]
 kind = "radial"                                    # the V model of every arm (the configs of record's)
 fixed_from = "free_frame_intensity"                # the V of record: the fit with the record's settings (frame gains, I²)
 log_intensity_scale = 0.01                         # sampson: σ of log I
-sampson_solves = 1                                 # sampson: its solves after the I² one
+sampson_iterations = 1                             # sampson: its reweight-and-solve cycles after the I² solve
 
 [[arms]]
 name = "free_frame_intensity"
