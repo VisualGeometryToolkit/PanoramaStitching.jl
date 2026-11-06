@@ -4,10 +4,11 @@ PanoramaStitching = "5b03ddb8-fc94-4165-83c9-5c94f3367646"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 VisualGeometryToolkitCore = "96820d6b-1dad-4e77-ad4a-8276f2ec1ce7"
 
-[sources]
-PanoramaStitching = {path = ".."}
+[sources.PanoramaStitching]
+path = ".."
 
 [compat]
 Documenter = "1.9"
+PanoramaStitching = "0.1"
 StaticArrays = "1.9"
 VisualGeometryToolkitCore = "0.5.6"
