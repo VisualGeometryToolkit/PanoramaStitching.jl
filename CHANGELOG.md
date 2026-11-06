@@ -14,8 +14,6 @@
 - Core 0.6's `CovMat` holds a static matrix (full, diagonal or isotropic); the keypoints' `CovMat(Σ)` of a full `SMatrix` is
   the full form, as before, so the bundle's whitening is unchanged. `moment_matrix` (the keypoints' affine shape) is unchanged
   in Core 0.6.
-- Until the stack is registered, the root and example environments carry TEMPORARY `[sources]` naming a sibling checkout of the
-  monorepo (`../VisualGeometryToolkit.jl`); they are removed before release.
 
 ### Breaking: renames (no aliases; every number unchanged for the same settings)
 
