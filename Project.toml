@@ -46,12 +46,5 @@ VisualGeometryToolkitEstimation = "0.6.1"
 VisualGeometryToolkitFeatures = "0.5"
 julia = "1.12"
 
-# TEMPORARY, until the VisualGeometryToolkit 0.6 stack (Core 0.6, Estimation 0.6.1, Features 0.5) is registered: the stack
-# packages resolve from a sibling checkout of the monorepo (../VisualGeometryToolkit.jl). Remove this table before releasing.
-[sources]
-VisualGeometryToolkitCore = {path = "../VisualGeometryToolkit.jl/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../VisualGeometryToolkit.jl/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../VisualGeometryToolkit.jl/VisualGeometryToolkitFeatures"}
-
 [workspace]
 projects = ["test", "docs"]
