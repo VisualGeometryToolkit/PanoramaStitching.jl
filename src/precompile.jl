@@ -24,7 +24,7 @@
         # the radial and the tensor log-vignetting, each from log V ≡ 0
         radial = VgtkCore.LogVignetting(VgtkCore.with_control_points(VgtkCore.RadialVignetting(6, SVector(40.0, 40.0), 42.0), zeros(6)))
         result = fit_vignetting(radial, camera, frames, rotations; free_directions = VgtkCore.pole_regular_basis(radial), gain_correction = ChannelGains(), fit...)
-        tensor = VgtkCore.LogVignetting(VgtkCore.with_control_points(VgtkCore.TensorVignetting((4, 4), VgtkCore.Rect(2.0, 2.0, 74.0, 74.0)), zeros(16)))
+        tensor = VgtkCore.LogVignetting(VgtkCore.with_control_points(VgtkCore.TensorProductVignetting((4, 4), VgtkCore.Rect(2.0, 2.0, 74.0, 74.0)), zeros(16)))
         fit_vignetting(tensor, camera, frames, rotations; free_directions = Matrix(1.0I, 16, 16), gain_correction = IntensityGains(), fit...)
         v = VgtkCore.estimate(result)
         view = panorama_view(VgtkCore.Equirectangular(), (-60.0, 90.0, -40.0, 40.0), 5.0)

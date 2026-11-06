@@ -1,7 +1,7 @@
 # The example's environment (not a workspace member: it pulls CUDA and LibRaw_jll, which the package does not need).
 # Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
-# Needs the VisualGeometryToolkit 0.5 stack registered (Core 0.5, Estimation 0.6, Features with load_raw); until then use an
-# environment whose [sources] point at a monorepo checkout (README.md).
+# Needs the VisualGeometryToolkit 0.6 stack (Core 0.6, IO 0.6, Features 0.5, Estimation 0.6.1); until it is registered the
+# stack packages resolve from a sibling checkout of the monorepo through the temporary [sources] below.
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
@@ -22,6 +22,12 @@ VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
 [sources]
 PanoramaStitching = {path = "../.."}
+# TEMPORARY, until the VisualGeometryToolkit 0.6 stack is registered: the monorepo checkout beside this repository
+# (../VisualGeometryToolkit.jl). Remove these four entries before releasing.
+VisualGeometryToolkitCore = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitIO = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitIO"}
 
 [compat]
 CUDA = "5"
@@ -29,8 +35,8 @@ GLMakie = "0.13"
 JSON = "1"
 LibRaw_jll = "0.22"
 PNGFiles = "0.4"
-VisualGeometryToolkitCore = "0.5.6"
-VisualGeometryToolkitEstimation = "0.6"
-VisualGeometryToolkitFeatures = "0.4"
-VisualGeometryToolkitIO = "0.5"
+VisualGeometryToolkitCore = "0.6"
+VisualGeometryToolkitEstimation = "0.6.1"
+VisualGeometryToolkitFeatures = "0.5"
+VisualGeometryToolkitIO = "0.6"
 julia = "1.12"

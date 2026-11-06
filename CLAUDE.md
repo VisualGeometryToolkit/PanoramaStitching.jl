@@ -34,7 +34,7 @@ from the registries (CauRegistry; General for those it holds).
 - `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
   render shares.
 - `src/panorama.jl` — `panorama_view`, `render_panorama`, `render_cube_map`.
-- `src/vignetting.jl` — `fit_vignetting`: the spline spaces (`RadialVignetting`, `TensorVignetting`), the scene's
+- `src/vignetting.jl` — `fit_vignetting`: the spline spaces (`RadialVignetting`, `TensorProductVignetting`), the scene's
   `AzimuthalChart`, the scatter-add kernels of the normal equations (KernelAbstractions + Atomix), device CG or host
   Cholesky (SparseArrays).
 - `src/seams.jl` — `score_seams`: the seam ratio per raster pixel through `sample_frames`.

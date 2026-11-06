@@ -141,7 +141,7 @@ interpolation of the frames: `log I_k(p) = log L(R_k·f(p)) + log V(u(p))`, the 
 back-projection (computed once: every frame shares the pixel grid), the scene `log L` a cubic B-spline over an
 [`AzimuthalChart`](@ref) of the covered sphere with a difference penalty, and V VisualGeometryToolkitCore's
 `LogVignetting`: V = exp(s), `s` a B-spline of log V in the distance from a centre (`RadialVignetting`) or over the sensor
-(`TensorVignetting`). The model is linear in log L, log V and the log gains, so the fit is one weighted linear least squares;
+(`TensorProductVignetting`). The model is linear in log L, log V and the log gains, so the fit is one weighted linear least squares;
 its gauge is mean log V = 0 over the domain. Each row is the implicit constraint of its measurement (sensor point, log I),
 weighted by its whitening by the measurement noise that `measurement_noise` chooses: [`IntensityNoise`](@ref) (the default:
 noise in the value only, read noise of constant σ, weight I²) or [`IntensityAndPositionNoise`](@ref) (noise in the value and

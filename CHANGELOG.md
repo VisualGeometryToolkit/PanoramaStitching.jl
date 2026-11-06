@@ -2,6 +2,21 @@
 
 ## 0.4.0
 
+### Breaking: the VisualGeometryToolkit 0.6 stack
+
+- Compat VisualGeometryToolkitCore "0.6", VisualGeometryToolkitEstimation "0.6.1", VisualGeometryToolkitFeatures "0.5" (the
+  package, test and docs environments) and VisualGeometryToolkitIO "0.6" (the example). PanoramaStitching's API carries Core's
+  types (`fit_vignetting` takes and returns a Core `LogVignetting`; the bundle's observations are Core `Uncertain` pixels), so
+  their 0.6 changes are PanoramaStitching's too.
+- Core's tensor-product vignetting surface is `TensorProductVignetting` (Core 0.6 retired `TensorVignetting`): a 2-D V's model
+  is `LogVignetting(TensorProductVignetting(…))`. The example builds it under the new name; its config value
+  `vignetting.model = "tensor"` (and `compare_models = ["tensor"]`) is unchanged.
+- Core 0.6's `CovMat` holds a static matrix (full, diagonal or isotropic); the keypoints' `CovMat(Σ)` of a full `SMatrix` is
+  the full form, as before, so the bundle's whitening is unchanged. `moment_matrix` (the keypoints' affine shape) is unchanged
+  in Core 0.6.
+- Until the stack is registered, the root and example environments carry TEMPORARY `[sources]` naming a sibling checkout of the
+  monorepo (`../VisualGeometryToolkit.jl`); they are removed before release.
+
 ### Breaking: renames (no aliases; every number unchanged for the same settings)
 
 - Gain correction: `FrameGains` → `IntensityGains` (one gain per frame shared by every colour plane: a gain on the intensity);

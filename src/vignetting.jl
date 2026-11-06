@@ -10,7 +10,7 @@
 # the pixel geometry is the same in every frame), `R_k` the frame's rotation (`d = R_k·f`), `L` the
 # scene's radiance on the sphere, `V` the vignetting on the sensor and `g_k` the frame's exposure gain
 # (`gain_correction`; g₁ = 1). V is a VisualGeometryToolkitCore `LogVignetting` (V = exp(s), `s` a
-# `RadialVignetting` or `TensorVignetting` spline of log V, linear in its control points); log L a
+# `RadialVignetting` or `TensorProductVignetting` spline of log V, linear in its control points); log L a
 # uniform cubic B-spline over an azimuthal-equidistant chart of the covered sphere (`AzimuthalChart`).
 # The photo is read at the pixel centres only — no interpolation of the frames at all: the scene
 # carries the interpolation, as a spline whose values are fitted, not sampled.
@@ -656,8 +656,8 @@ pixel grid the frames share), and the scene L is a B-spline over an
 V and the gains.
 
 - `vignetting`: V's model and start, a VisualGeometryToolkitCore
-  `LogVignetting` (V = exp(s), `s` a `RadialVignetting` or `TensorVignetting`
-  B-spline of log V on the sensor, camera pixels; its control points the
+  `LogVignetting` (V = exp(s), `s` a `RadialVignetting` or
+  `TensorProductVignetting` B-spline of log V on the sensor, camera pixels; its control points the
   start of log V, e.g. zeros); held fixed, any vignetting the render takes (a
   Core model, or a callable `vignetting(u, f)`: a calibration's map, a flat
   field; differentiable in `u` for [`IntensityAndPositionNoise`](@ref)). A

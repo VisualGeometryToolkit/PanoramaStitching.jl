@@ -43,7 +43,7 @@ end
     using LinearAlgebra: I
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, panorama_view, ConjugateGradient, SparseCholesky
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, TensorVignetting, LogVignetting, pole_regular_basis, n_control_points,
+    using VisualGeometryToolkitCore: RadialVignetting, TensorProductVignetting, LogVignetting, pole_regular_basis, n_control_points,
         control_points, with_control_points
     logv(s) = LogVignetting(with_control_points(s, zeros(n_control_points(s))))      # log V ≡ 0: the start
     # the domain's pixel centres (camera pixels) and the error of a fit against the truth, both in the gauge mean log V = 0
@@ -84,7 +84,7 @@ end
     tilted(u) = -1.4 * (hypot(u[1] - d[1], u[2] - d[2]) / 400)^4 - 0.6 * (hypot(u[1] - d[1], u[2] - d[2]) / 400)^2 +
                 0.05 * (u[1] - 400) / 400 - 0.04 * (u[2] - 400) / 400
     q2 = vignetting_sequence(tilted)
-    t0 = logv(TensorVignetting((16, 16), VgtkCore.Rect(10.0, 10.0, 780.0, 780.0); degree = 3))
+    t0 = logv(TensorProductVignetting((16, 16), VgtkCore.Rect(10.0, 10.0, 780.0, 780.0); degree = 3))
     t = fit_vignetting(t0, q2.model, q2.frames, q2.R; free_directions = Matrix(1.0I, n_control_points(t0), n_control_points(t0)),
                        saturated = q2.saturated, solver = SparseCholesky(), kw...)
     e2 = error_vs(VgtkCore.estimate(t), tilted, q2)

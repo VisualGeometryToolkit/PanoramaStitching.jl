@@ -293,7 +293,7 @@ function vignetting_space(kind, C, lens, W, H)
     elseif kind == "tensor"
         v["tensor_box"] == "domain" || error("vignetting.tensor_box = $(v["tensor_box"]) is not \"domain\"")
         o, e = domain_box(lens, W, H, rim)
-        s = VgtkCore.TensorVignetting(Tuple(v["tensor_controls"]), VgtkCore.Rect(o[1], o[2], e[1], e[2]); degree = 3)
+        s = VgtkCore.TensorProductVignetting(Tuple(v["tensor_controls"]), VgtkCore.Rect(o[1], o[2], e[1], e[2]); degree = 3)
         n = VgtkCore.n_control_points(s)
         m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(n)))
         return m, Matrix{Float64}(LinearAlgebra.I, n, n)
@@ -386,7 +386,7 @@ function write_vignetting(C, stem, res, W, H)
         end
     else
         rec["model"] = Dict("kind" => "tensor", "controls" => collect(size(VgtkCore.control_points(v))),
-                            "spline" => "VisualGeometryToolkitCore TensorVignetting: a tensor B-spline on clamped knots, x fastest")
+                            "spline" => "VisualGeometryToolkitCore TensorProductVignetting: a tensor-product B-spline on clamped knots, x fastest")
     end
     open(io -> JSON.print(io, rec, 2), joinpath(C.out, stem * ".json"), "w")
     # the map over the sensor, every 32 px (x, y, V), and as an image normalized to its maximum
