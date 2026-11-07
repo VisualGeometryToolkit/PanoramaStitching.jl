@@ -23,7 +23,7 @@ using StaticArrays: SVector, SMatrix, SA
 using LinearAlgebra: LinearAlgebra, norm, normalize, dot, cross, eigen, Symmetric
 using Statistics: mean, median, quantile
 using Printf: @sprintf
-import PNGFiles, JSON, SHA, TOML
+import PNGFiles, JSON, TOML
 
 const FPN = PNGFiles.FixedPointNumbers
 const CT = PNGFiles.ColorTypes
@@ -67,8 +67,6 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 # RAW file's SHA-256. A frame is decoded again when its RAW's hash or a decode setting changes.
 
 const CACHE_FORMAT = "panorama_vignetting/decode/v2 (code sums, daylight_wb)"
-
-sha256_file(path) = open(io -> bytes2hex(SHA.sha256(io)), path)
 
 # the planes' black levels: R, G (both greens), B
 function plane_blacks(mosaic)
@@ -118,7 +116,7 @@ function decoded_frames(C; masks::Bool, log = devnull)
     wb = same_settings ? Float64.(meta["daylight_wb"]) : nothing
     for f in raws
         src = joinpath(input_path(C.cfg["inputs"]["raw_dir"]), f); stem = splitext(f)[1]
-        h = sha256_file(src)
+        h = open(VgtkCore.sha256_hex, src)
         img_path = joinpath(dir, stem * ".png"); sat_path = joinpath(dir, stem * "_saturated.png")
         e = get(entries, f, nothing)
         if e !== nothing && e["sha256"] == h && isfile(img_path) && isfile(sat_path)
@@ -183,8 +181,8 @@ const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.Cauch
 const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v3 (the bundle's retcode, outcome and start finiteness; pair samplers by stable_seed)"
 function registration_key(C, inp)
     canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
-    return bytes2hex(SHA.sha256(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
-                                      (sha256_file(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names)...], "|")))
+    return VgtkCore.sha256_hex(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
+                                     (open(VgtkCore.sha256_hex, joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names)...], "|"))
 end
 
 function registration(C, inp, lens; log)
@@ -279,10 +277,12 @@ function domain_radius(lens, center, W, H, rim)
 end
 
 # V's model and start (VisualGeometryToolkitCore's LogVignetting: a spline of log V, log V ≡ 0 at the start) and its free directions:
-# a radial profile's pole-regular subspace, every control point of a tensor surface.
+# a radial profile's pole-regular subspace, every control point of a tensor surface. `kind` is a tag of Core's VIGNETTING_TAGS
+# ("radial", "tensor_product"; the retired "tensor" is refused by name), the field log V is a spline of.
 function vignetting_space(kind, C, lens, W, H)
     v = C.cfg["vignetting"]; rim = Float64(C.cfg["domain"]["rim_margin_px"])
-    if kind == "radial"
+    T = VgtkCore.VIGNETTING_TAGS[kind]
+    if T === VgtkCore.RadialVignetting
         rc = v["radial_center"]
         center = rc == "principal_point" ? SVector{2, Float64}(principal_point(lens)) :
                  rc == "circle_center" ? SVector{2, Float64}(lens.circle.center[1], lens.circle.center[2]) : SVector{2, Float64}(rc...)
@@ -290,7 +290,7 @@ function vignetting_space(kind, C, lens, W, H)
         s = VgtkCore.RadialVignetting(v["radial_controls"], center, radius; degree = 3)
         m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(VgtkCore.n_control_points(s))))
         return m, VgtkCore.pole_regular_basis(m)
-    elseif kind == "tensor"
+    elseif T === VgtkCore.TensorProductVignetting
         v["tensor_box"] == "domain" || error("vignetting.tensor_box = $(v["tensor_box"]) is not \"domain\"")
         o, e = domain_box(lens, W, H, rim)
         s = VgtkCore.TensorProductVignetting(Tuple(v["tensor_controls"]), VgtkCore.Rect(o[1], o[2], e[1], e[2]); degree = 3)
@@ -298,7 +298,7 @@ function vignetting_space(kind, C, lens, W, H)
         m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(n)))
         return m, Matrix{Float64}(LinearAlgebra.I, n, n)
     end
-    error("vignetting model \"$kind\" is not \"radial\" or \"tensor\"")
+    error("vignetting model \"$kind\" is not \"radial\" or \"tensor_product\" (log V is the spline of one)")
 end
 
 # The fit's measurement noise of the config: in the value only, or in the value and the sensor position with the sensor point's σ
@@ -308,7 +308,7 @@ function fit_measurement_noise(v, point_scale_px)
     N === IntensityNoise && return IntensityNoise()
     point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" needs the registration's point " *
                                         "scale (its record rotations.json holds no bundle_loss_width_px: delete it to recompute the registration)")
-    return IntensityAndPositionNoise(; point_scale = point_scale_px, log_intensity_scale = v["log_intensity_scale"],
+    return IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), log_intensity_scale = v["log_intensity_scale"],
                                      iterations = v["measurement_noise_iterations"])
 end
 
@@ -376,7 +376,7 @@ function write_vignetting(C, stem, res, W, H)
                             "pixel_frame" => "camera pixels, COLMAP (full-resolution sensor)")
     if s isa VgtkCore.RadialVignetting
         c = VgtkCore.center(v); r = VgtkCore.field_radius(v)
-        rec["model"] = Dict("kind" => "radial", "center" => collect(c), "radius" => r, "controls" => VgtkCore.n_control_points(v),
+        rec["model"] = Dict("kind" => VgtkCore.tag_of(VgtkCore.VIGNETTING_TAGS, VgtkCore.RadialVignetting), "center" => collect(c), "radius" => r, "controls" => VgtkCore.n_control_points(v),
                             "spline" => "VisualGeometryToolkitCore RadialVignetting: a B-spline in ρ/radius on clamped knots over [0, 1]")
         open(joinpath(C.out, stem * "_profile.csv"), "w") do io
             println(io, "rho_px,V")
@@ -385,7 +385,7 @@ function write_vignetting(C, stem, res, W, H)
             end
         end
     else
-        rec["model"] = Dict("kind" => "tensor", "controls" => collect(size(VgtkCore.control_points(v))),
+        rec["model"] = Dict("kind" => VgtkCore.tag_of(VgtkCore.VIGNETTING_TAGS, VgtkCore.TensorProductVignetting), "controls" => collect(size(VgtkCore.control_points(v))),
                             "spline" => "VisualGeometryToolkitCore TensorProductVignetting: a tensor-product B-spline on clamped knots, x fastest")
     end
     open(io -> JSON.print(io, rec, 2), joinpath(C.out, stem * ".json"), "w")

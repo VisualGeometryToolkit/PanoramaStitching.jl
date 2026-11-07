@@ -58,7 +58,7 @@ plane = 2                                          # the GREEN plane (the quad's
 # RADIAL, because a mostly-yaw sweep cannot observe a free 2-D V's vertical tilt: a field exp(α·f_y) is unchanged by a pure
 # yaw, so the scene absorbs it. Measured on this rooftop set (2026-11-04): the 2-D fit moved V's maximum ~460 px off-centre
 # (down and right) and made V 37–54 % asymmetric at ρ = 600–800 px, the mode ∝ ray_y carrying 4–5× less information than
-# ray_x. Use "tensor" only for sets with pitch and roll diversity.
+# ray_x. Use "tensor_product" only for sets with pitch and roll diversity.
 model = "radial"
 radial_center = "circle_center"                    # "principal_point", "circle_center" or [x, y]
 radial_radius = "domain"                           # "domain": the largest distance from the centre to a domain pixel

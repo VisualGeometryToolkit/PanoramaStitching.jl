@@ -59,9 +59,9 @@ fov_deg = 89.0                                     # rays within 89° of the opt
 plane = 2                                          # the GREEN plane (the quad's two greens, at the quad centre)
 
 [vignetting]
-# "radial" or "tensor". This set has pitch diversity (two rows), so the 2-D tensor V is also fitted (compare_models) to test
-# whether its tilt is observed here. It is not (2026-11-04, summary.md): the free 2-D V put its maximum 522 px from the
-# principal point and was 32 % asymmetric, against the radial V's 8.8 %, and it left the seams WORSE than the radial V
+# "radial" or "tensor_product" (Core's VIGNETTING_TAGS). This set has pitch diversity (two rows), so the 2-D tensor V is also
+# fitted (compare_models) to test whether its tilt is observed here. It is not (2026-11-04, summary.md): the free 2-D V put its
+# maximum 522 px from the principal point and was 32 % asymmetric, against the radial V's 8.8 %, and it left the seams WORSE than the radial V
 # (1.4826·MAD 0.163 against 0.107; uncorrected 0.183) although it fitted the rows slightly better (weighted rms 0.168 against
 # 0.170): the extra freedom went into scene and lighting structure, not into V. Two rows 14° apart are not enough pitch
 # diversity; the radial model is the one these data support.
@@ -71,7 +71,7 @@ radial_radius = "domain"                           # "domain": the largest dista
 radial_controls = 16
 tensor_box = "domain"                              # "domain": the domain's bounding box
 tensor_controls = [16, 12]                         # the sensor's 3:2 aspect
-compare_models = ["tensor"]                        # also fitted and reported, not used for the renders
+compare_models = ["tensor_product"]                # also fitted and reported, not used for the renders
 chart_spacing_deg = 1.0                            # L's control spacing on the azimuthal-equidistant chart
 penalty_order = 3                                  # Δ³ on L along both chart axes
 penalty_weight = 0.01                              # λ, in units of one row of mean I² weight (the self-test's choice)

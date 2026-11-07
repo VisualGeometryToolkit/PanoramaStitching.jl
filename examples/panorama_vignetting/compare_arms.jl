@@ -12,7 +12,7 @@ include(joinpath(@__DIR__, "run.jl"))
 
 # The run key: this comparison's config, the set's config and the set's registration record, byte for byte.
 arms_key(arms_path, set_path, rotations_path) =
-    bytes2hex(SHA.sha256(join([read(arms_path, String), read(set_path, String), read(rotations_path, String)], "\0")))[1:16]
+    VgtkCore.sha256_hex(join([read(arms_path, String), read(set_path, String), read(rotations_path, String)], "\0"))[1:16]
 
 # V's mean in 100 px rings about the lens circle's centre (camera pixels), relative to the first ring: the profile summary.
 function ring_profile(v, center, rmax)
