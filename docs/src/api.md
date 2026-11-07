@@ -17,7 +17,6 @@ RotationBundleMetadata
 PanoramaStitching.FrameFeatures
 PanoramaStitching.detect_features
 PanoramaStitching.pair_bearings
-PanoramaStitching.LOMA_SIZE
 ```
 
 ## Sampling the frames at directions

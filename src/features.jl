@@ -4,13 +4,9 @@
 #
 # VisualGeometryToolkitFeatures' ASIFT keypoints (affine frames with their covariances) on
 # the tone-mapped green channel inside the image circle, the strongest by |response|,
-# described by DeDoDe at them (`LoMaDescriptor`, on the frame resampled to the network's
-# fixed 784 × 784 input by Core's `image_warp!`), and matched by the LoMa matcher
-# (`LoMaMatcher`, LightGlue architecture).
+# described by DeDoDe at them (`LoMaDescriptor`, which resamples the frame to its network's
+# fixed input), and matched by the LoMa matcher (`LoMaMatcher`, LightGlue architecture).
 # =============================================================================
-
-"The DeDoDe/LoMa graphs' fixed input side (VisualGeometryToolkitFeatures' `LoMaDescriptor`)."
-const LOMA_SIZE = 784
 
 """
     FrameFeatures
@@ -39,8 +35,10 @@ pixel): ASIFT on `sqrt(G / p)` clamped to `[0, 1]` (`p` the `tone_percentile`-th
 percentile of the green channel inside the image `circle` — a Core `Circle` or
 `Ellipse` in camera pixels, `WholePlane()` for a lens with none), the detections
 inside the circle less `detector_margin_px`, the
-`max_detections` strongest by |response|, described by `descriptor` (a
-`LoMaDescriptor`) on the frame's tone-mapped RGB resampled to the network's input.
+`max_detections` strongest by |response| (VisualGeometryToolkitFeatures'
+`strongest`), described by `descriptor` (a `LoMaDescriptor`) on the frame's
+tone-mapped RGB, the detections in the frame's pixels (the descriptor resamples
+the image to its network's input).
 `asift_tilts` is VisualGeometryToolkitFeatures' tilt schedule (`nothing`: IMAS-25).
 """
 function detect_features(frame::AbstractArray{<:Real, 3}, descriptor; raw_scale::Integer, circle, tone_percentile::Real,
@@ -52,28 +50,14 @@ function detect_features(frame::AbstractArray{<:Real, 3}, descriptor; raw_scale:
     dets = VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts = asift_tilts, uncertainty = VgtkFeatures.FeatureCovariance())
     n = length(dets)
     kept = _rim(circle, detector_margin_px)
-    keep = [i for i in 1:n if VgtkCore.Point2(s * dets[i].center[1], s * dets[i].center[2]) ∈ kept]
-    keep = sort!(keep[sortperm(abs.(getproperty.(dets[keep], :response)); rev = true)][1:min(end, max_detections)])
-    # the network's input: the frame scaled to LOMA_SIZE², a COLMAP point x ↦ (Wf, Hf)/LOMA_SIZE ⊙ x (a downscale, so every tap
-    # lies on the frame and the warp's fill never enters)
-    bm = VgtkCore.image_warp(AffineMap(SMatrix{2, 2, Float64, 4}(Wf / LOMA_SIZE, 0.0, 0.0, Hf / LOMA_SIZE), SVector(0.0, 0.0)),
-                             VgtkCore.Rect(0, 0, LOMA_SIZE, LOMA_SIZE))
-    img = Array{Float32}(undef, 3, LOMA_SIZE, LOMA_SIZE); plane = Matrix{Float32}(undef, LOMA_SIZE, LOMA_SIZE)
-    for c in 1:3
-        img[c, :, :] .= VgtkCore.image_warp!(plane, bm, view(toned, :, :, c))
-    end
-    # the detections in the network's coordinates (the descriptor reads their centres); the order is kept. A frame's moment
-    # matrix moves by the scaling A = diag(sx, sy) as A·M·Aᵀ
-    sx, sy = LOMA_SIZE / Wf, LOMA_SIZE / Hf
-    A = SMatrix{2, 2, Float64, 4}(sx, 0, 0, sy)
-    scaled = [VgtkFeatures.Detection(VgtkCore.EllipticFrame(VgtkCore.Point2(sx * dets[i].center[1], sy * dets[i].center[2]),
-                                                            A * VgtkCore.moment_matrix(dets[i]) * A'),
-                                     dets[i].metadata) for i in keep]
-    pixels = [SVector(s * dets[i].center[1], s * dets[i].center[2]) for i in keep]
+    dets = VgtkFeatures.strongest(filter(d -> VgtkCore.Point2(s * d.center[1], s * d.center[2]) ∈ kept, dets), max_detections)
+    pixels = [SVector(s * d.center[1], s * d.center[2]) for d in dets]
     # the centres' position covariance (the top-left 2 × 2 of the (x, y, log σ) covariance, detection-image pixels²), in camera
     # pixels² as the centres are scaled: s²·Σ
-    covs = [(Σ = Statistics.cov(dets[i]); s^2 * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2])) for i in keep]
-    return FrameFeatures(pixels, covs, descriptor(img, scaled), n)
+    covs = [(Σ = Statistics.cov(d); s^2 * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2])) for d in dets]
+    # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
+    # the image to its network's input)
+    return FrameFeatures(pixels, covs, descriptor(permutedims(toned, (3, 1, 2)), dets), n)
 end
 
 """

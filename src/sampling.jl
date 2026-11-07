@@ -36,9 +36,9 @@ _rim(c::VgtkCore.Circle, m) = VgtkCore.Circle(c.center, c.r - m)
 _rim(e::VgtkCore.Ellipse, m) = VgtkCore.Ellipse(e.center, e.a - m, e.b - m, e.θ)
 _rim(w::VgtkCore.WholePlane, m) = w
 
-# The image circle in the pixels of a frame binned by `s` (a COLMAP coordinate scales by exactly 1/s).
-_binned(c::VgtkCore.Circle, s) = VgtkCore.Circle(c.center / s, c.r / s)
-_binned(e::VgtkCore.Ellipse, s) = VgtkCore.Ellipse(e.center / s, e.a / s, e.b / s, e.θ)
+# The image circle in the pixels of a frame binned by `s` (a COLMAP coordinate scales by exactly 1/s): Core's similarity image of
+# the `Circle` or `Ellipse`. Core's similarity has no action on `WholePlane` yet, which a scaling leaves as it is.
+_binned(c, s) = VgtkCore.SimilarityMap(LinearMap(I / s))(c)
 _binned(w::VgtkCore.WholePlane, s) = w
 
 # The three planes' sample offsets (frame pixels): `nothing` puts every plane at the pixel centre.

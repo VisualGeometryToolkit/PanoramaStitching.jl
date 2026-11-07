@@ -121,12 +121,12 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")
         f
     end
-    sz = (3, LOMA_SIZE, LOMA_SIZE)
+    sz(k) = (size(frames[k], 1), size(frames[k], 2))                         # the image a frame's features are in: the frame
     verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}()
     inlier_matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
     stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
     function verify(i, j)
-        ms = match(feats[i].features, feats[j].features, sz, sz; min_score)
+        ms = match(feats[i].features, feats[j].features, sz(i), sz(j); min_score)
         if length(ms) < min_inliers
             say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches → dropped"); return nothing
         end

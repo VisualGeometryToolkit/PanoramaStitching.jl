@@ -45,7 +45,7 @@ function sequence(; K = 4, spline = false, yaw_deg = 35.0 .* (0:(K - 1)))
             u = SVector((j - 0.5) * s, (i - 0.5) * s)
             hypot(u[1] - 500.0, u[2] - 500.0) < 480.0 || continue
             f = backproject(cam, u)
-            f === nothing && continue
+            all(isfinite, f) || continue                    # a grid model's backproject is NaN where it images nothing
             img[i, j, :] .= gains[k] * V(angle_between(f, axis)) .* texture(R[k] * f)
         end
         img

@@ -76,7 +76,7 @@ end
     res2 = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., eliminate = false)
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - SMatrix{3, 3}(VgtkCore.estimate(res2)[k])), 1:K) < 1.0e-8
     # the closed-form Jacobian blocks against ForwardDiff through the variables' updates
-    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = PanoramaStitching._TrackDirection{false}(VgtkCore.SphereManifold(dirs[1]))
+    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(dirs[1]))
     x = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * dirs[1]) + SVector(0.3, -0.2)
     fwd = PanoramaStitching._forward_map(CAM)
     obs = PanoramaStitching._Observation{false, typeof(CAM), typeof(fwd), Nothing, Nothing}(CAM, fwd, x, SVector(1, 2), nothing, nothing)
@@ -133,7 +133,7 @@ end
     # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
     fwd = PanoramaStitching._forward_map(sp)
     o = PanoramaStitching._Observation{false, typeof(grid), typeof(fwd), Nothing, Nothing}(grid, fwd, SVector(500.0, 400.0), SVector(1, 2), nothing, nothing)
-    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(I)); far = PanoramaStitching._TrackDirection{false}(VgtkCore.SphereManifold(SVector(0.9, 0.0, 0.3)))
+    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(I)); far = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(SVector(0.9, 0.0, 0.3)))
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
     @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
     @test all(isfinite, sp(SVector(0.9, 0.0, 0.3)))                   # (the forward map itself extrapolates)

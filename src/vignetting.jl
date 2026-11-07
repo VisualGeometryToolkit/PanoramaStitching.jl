@@ -75,7 +75,6 @@ struct IntensityNoise end
 
 """
     IntensityAndPositionNoise(; point_covariance, log_intensity_scale = 0.01, iterations = 1)
-    IntensityAndPositionNoise(; point_scale, log_intensity_scale = 0.01, iterations = 1)
 
 [`fit_vignetting`](@ref)'s `measurement_noise`: noise in the pixel value and
 in the pixel's sensor position. A row is the implicit constraint
@@ -91,32 +90,30 @@ gradient `G_x = [−∇_u(log L∘R_k∘f + log V)ᵀ, 1]` of the MODEL (its sce
 spline and V) at the previous solve; the first solve is
 [`IntensityNoise`](@ref)'s.
 
-- `point_covariance`: `Σ_u`, the 2 × 2 covariance of a pixel's sensor point
-  in camera pixels² — the registration's: a rotation bundle's robust core
-  scale is its `loss_width / scale_multiple` ([`RotationBundleMetadata`](@ref)),
-  `point_scale` that scale itself (`Σ_u = point_scale²·I`).
+- `point_covariance`: `Σ_u`, VisualGeometryToolkitCore's `CovMat{2}` of a
+  pixel's sensor point in camera pixels² — the registration's: a rotation
+  bundle's robust core scale `σ_u` is its `loss_width / scale_multiple`
+  ([`RotationBundleMetadata`](@ref)), and `CovMat{2}(σ = σ_u)` its isotropic
+  covariance `σ_u²·I`. A full or diagonal `CovMat` must be symmetric positive
+  definite.
 - `log_intensity_scale`: `σ`, the standard deviation of log I (a constant
   floor: 0.01 is 1 % of the value).
 - `iterations`: the reweight-and-solve cycles after the `IntensityNoise`
   solve, 1 or 2 (the second re-evaluates G_x at the first's solution).
 """
-struct IntensityAndPositionNoise
-    point_covariance::SMatrix{2, 2, Float64, 4}
+struct IntensityAndPositionNoise{C <: VgtkCore.CovMat{2}}
+    point_covariance::C
     log_intensity_scale::Float64
     iterations::Int
 end
-function IntensityAndPositionNoise(; point_covariance = nothing, point_scale = nothing, log_intensity_scale::Real = 0.01,
-                                   iterations::Integer = 1)
-    (point_covariance === nothing) == (point_scale === nothing) &&
-        throw(ArgumentError("IntensityAndPositionNoise: give the point's noise as exactly one of point_covariance and point_scale"))
-    Σ = point_covariance === nothing ? SMatrix{2, 2, Float64, 4}(Float64(point_scale)^2, 0.0, 0.0, Float64(point_scale)^2) :
-        SMatrix{2, 2, Float64, 4}(point_covariance)
+function IntensityAndPositionNoise(; point_covariance::VgtkCore.CovMat{2}, log_intensity_scale::Real = 0.01, iterations::Integer = 1)
+    Σ = SMatrix{2, 2, Float64, 4}(point_covariance)
     (Σ[1, 2] == Σ[2, 1] && LinearAlgebra.isposdef(Matrix(Σ))) ||
         throw(ArgumentError("IntensityAndPositionNoise: the point covariance must be symmetric positive definite, got $Σ"))
     (log_intensity_scale > 0 && isfinite(log_intensity_scale)) ||
         throw(ArgumentError("IntensityAndPositionNoise: log_intensity_scale must be positive, got $log_intensity_scale"))
     iterations in (1, 2) || throw(ArgumentError("IntensityAndPositionNoise: iterations is 1 or 2, got $iterations"))
-    return IntensityAndPositionNoise(Σ, Float64(log_intensity_scale), Int(iterations))
+    return IntensityAndPositionNoise(point_covariance, Float64(log_intensity_scale), Int(iterations))
 end
 """
     IntensityGains()
@@ -175,82 +172,47 @@ function _measurement_covariance(w::IntensityAndPositionNoise)
     return SMatrix{3, 3, Float64, 9}(Σ[1, 1], Σ[2, 1], 0.0, Σ[1, 2], Σ[2, 2], 0.0, 0.0, 0.0, s2)
 end
 
-# The first control (0-based) and the weights at x (in control spacings) of an n-control uniform cubic spline: x clamped to
-# its knot range [0, n − 3), the weights Core's at the span's local coordinate t − i ∈ [0, 1) (in x's type: ForwardDiff's
-# `floor` of a dual is its value's, so a dual x gives the span of its value and dual weights).
-@inline function _spline_span(x, n)
-    t = clamp(x, 0.0, (n - 3) * (1 - 1.0e-12))
-    i = unsafe_trunc(Int, floor(t))
-    return i, VgtkCore.cubic_bspline_weights(t - i)
-end
-
-# The second differences of a vignetting's control points along each axis of its lattice (Core's `difference_stencil`): DᵀD,
-# the weak penalty that fixes the control points the domain does not reach.
-function _vignetting_penalty(v::VgtkCore.AbstractVignetting)
-    sz = size(VgtkCore.control_points(v)); lin = LinearIndices(sz); s = VgtkCore.difference_stencil(2)
-    rows = Vector{Vector{Float64}}()
-    for axis in 1:2, I in CartesianIndices(sz)
-        I[axis] + 2 <= sz[axis] || continue
-        r = zeros(prod(sz))
-        for j in 0:2
-            r[lin[I + CartesianIndex(ntuple(a -> a == axis ? j : 0, 2))]] = s[j + 1]
-        end
-        push!(rows, r)
-    end
-    isempty(rows) && return zeros(prod(sz), prod(sz))
-    D = permutedims(reduce(hcat, rows))
-    return D' * D
-end
-
 """
-    AzimuthalChart
+    AzimuthalChart(axis, half_extent, spacing)
 
-The chart of the scene's log L: the azimuthal-equidistant map of the sphere
-about `e3` (`(a, b) = θ·(cos φ, sin φ)` degrees, θ the angle from `e3`, φ the
-azimuth from `e1` towards `e2`), singular only at `-e3`, and a uniform cubic
-tensor B-spline of `n × n` controls `spacing_deg` apart over
-`[−half_extent_deg, half_extent_deg]²`. [`fit_vignetting`](@ref) centres it so
-that its singular point is as far from the frames' coverage as the sphere
-allows (for a cap-like coverage, close to the mean optical axis; for a full
-360° sweep, the pole the frames do not see).
+The chart of the scene's log L: VisualGeometryToolkitCore's azimuthal-equidistant
+direction chart about `axis` (`chart`, Core's `equidistant_chart(axis)`: a
+direction at angle θ from the axis lands at radius θ, radians, in the
+direction of its azimuth; singular only at `-axis`), and the uniform cubic
+tensor B-spline of `n × n` controls laid over the closed square `area` of it,
+`[−half_extent, −half_extent + (n − 3)·spacing]²` with
+`n = ⌈2·half_extent / spacing⌉ + 4`, so the controls are `spacing` (radians)
+apart: Core's `spline_window` / `spline_value` lattice, the controls
+`[row, column]` along the chart's (second, first) coordinate.
+[`fit_vignetting`](@ref) centres it so that its singular point is as far from
+the frames' coverage as the sphere allows (for a cap-like coverage, close to
+the mean optical axis; for a full 360° sweep, the pole the frames do not see).
 """
-struct AzimuthalChart
-    e1::SVector{3, Float64}
-    e2::SVector{3, Float64}
-    e3::SVector{3, Float64}
-    half_extent_deg::Float64
-    spacing_deg::Float64
+struct AzimuthalChart{C}
+    chart::C
+    area::VgtkCore.Rect{2, Float64}
     n::Int
 end
-function AzimuthalChart(center::StaticVector{3}, half_extent_deg::Real, spacing_deg::Real)
-    e3 = normalize(SVector{3, Float64}(center))
-    x = abs(e3[1]) < 0.9 ? SVector(1.0, 0.0, 0.0) : SVector(0.0, 1.0, 0.0)
-    e1 = normalize(x - dot(x, e3) * e3); e2 = cross(e3, e1)
-    n = ceil(Int, 2 * half_extent_deg / spacing_deg) + 4
-    return AzimuthalChart(e1, e2, e3, Float64(half_extent_deg), Float64(spacing_deg), n)
+function AzimuthalChart(axis::StaticVector{3}, half_extent::Real, spacing::Real)
+    n = ceil(Int, 2 * half_extent / spacing) + 4
+    h = Float64(half_extent); w = (n - 3) * Float64(spacing)
+    return AzimuthalChart(VgtkCore.equidistant_chart(axis), VgtkCore.Rect(-h, -h, w, w), n)
 end
 
-# The chart point of the direction d (degrees), and its spline span: the first controls (0-based) and the weights per axis.
-@inline function _chart_point(ch::AzimuthalChart, d)
-    x = dot(d, ch.e1); y = dot(d, ch.e2); z = dot(d, ch.e3)
-    s = sqrt(x * x + y * y)
-    θ = rad2deg(atan(s, z))
-    return s > 0 ? SVector(θ * x / s, θ * y / s) : SVector(zero(θ), zero(θ))    # θ's type: a dual stays a dual
-end
-@inline function _chart_span(ch::AzimuthalChart, d)
-    p = _chart_point(ch, d)
-    ia, wa = _spline_span((p[1] + ch.half_extent_deg) / ch.spacing_deg, ch.n)
-    ib, wb = _spline_span((p[2] + ch.half_extent_deg) / ch.spacing_deg, ch.n)
-    return ia, ib, wa, wb
-end
-@inline _chart_index(n, a, b) = (b - 1) * n + a
+# The spline window of the direction d (Core's `spline_window` at its chart point): the controls `[iy − 3 + r, ix − 3 + c]` and
+# the weights `wx[c]`, `wy[r]` (in d's number type: a dual direction gives dual weights).
+@inline _chart_window(ch::AzimuthalChart, d) = VgtkCore.spline_window(ch.area, (ch.n, ch.n), ch.chart(d))
+# The linear index of the control (row, col) in the scene's column-major n × n controls.
+@inline _chart_index(n, row, col) = (col - 1) * n + row
 
 """
     VignettingMetadata
 
 The metadata of [`fit_vignetting`](@ref)'s `FitResult`: `chart` (the scene's
-[`AzimuthalChart`](@ref)), `scene` (log L's `n²` controls, host, the chart's
-column-major order; `NaN` where no observation reached a control), `gains`
+[`AzimuthalChart`](@ref)), `scene` (log L's `n × n` controls, host, the
+chart's layout, so that `VisualGeometryToolkitCore.spline_value(scene, chart.area,
+chart.chart(d))` is log L at the direction `d`; `NaN` where no observation
+reached a control), `gains`
 (`K × 3`: the frames' exposure gains `g_kc` of `I_kc = g_kc·L_c·V`, one per frame
 and colour plane, `g_1c = 1`; all 1 without gain correction, and one per frame
 — every column the same — with [`IntensityGains`](@ref)), the residual spread of
@@ -268,9 +230,9 @@ between the last two solves; 0 for one solve), `n_pixels` (the domain's
 pixels), `n_active` (scene controls with data) and `seconds` (the stages' wall
 times, summed over the solves).
 """
-struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityNoise, IntensityAndPositionNoise}}
-    chart::AzimuthalChart
-    scene::Vector{Float64}
+struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityNoise, IntensityAndPositionNoise}, C <: AzimuthalChart}
+    chart::C
+    scene::Matrix{Float64}
     gains::Matrix{Float64}
     residual_rms::Float64
     residual_mad::Float64
@@ -291,12 +253,12 @@ _upload(be, x::AbstractArray) = copyto!(KA.allocate(be, eltype(x), size(x)), Arr
 _elapsed(be, t0) = (KA.synchronize(be); (time_ns() - t0) / 1.0e9)
 
 # The sensor point of a frame pixel (row, col) for a plane whose sample sits at `offset` (frame pixels): the frame's COLMAP point
-# (col − ½, row − ½) + offset, scaled by `s` camera pixels per frame pixel.
+# (Core's `pixel_centre`) + offset, scaled by `s` camera pixels per frame pixel.
 struct _PlanePoint{T}
     s::T
     offset::SVector{2, T}
 end
-@inline (p::_PlanePoint{T})(I) where {T} = SVector{2, T}(p.s * (I[2] - T(0.5) + p.offset[1]), p.s * (I[1] - T(0.5) + p.offset[2]))
+@inline (p::_PlanePoint{T})(I) where {T} = p.s * (VgtkCore.pixel_centre(T, I) + p.offset)
 
 # log V at a sensor point u and its ray f, in u's own number type (a ForwardDiff dual for the measurement gradient): a LogVignetting's
 # spline of log V, else the log of any vignetting held fixed (any vignetting the render takes, `v(u, f)`; a Core model reads u
@@ -328,16 +290,6 @@ Adapt.@adapt_structure _ActiveIndices
 Adapt.@adapt_structure _LogRows
 Adapt.@adapt_structure _LogV
 
-# log L at the world direction d: the chart spline's value at d's chart point (any number type: a dual differentiates it).
-Base.@propagate_inbounds function _log_radiance(ch::AzimuthalChart, cL, d)
-    ia, ib, wa, wb = _chart_span(ch, d)
-    lL = zero(eltype(wa))
-    for jb in 0:3, ja in 0:3
-        lL += wa[ja + 1] * wb[jb + 1] * cL[_chart_index(ch.n, ia + ja + 1, ib + jb + 1)]
-    end
-    return lL
-end
-
 # ----------------------------------------------------------------------------- the observation as an implicit constraint
 
 # One frame's model of log I as the implicit constraint of a pixel's measurement x = (u, log I) (Core's
@@ -345,16 +297,17 @@ end
 #
 #     g(θ; x) = log I − log L(R·f(u)) − log V(u) − γ,     G_x = [−∇_u(log L∘R∘f + log V)ᵀ, 1]
 #
-# `scene` log L's chart controls, `vignetting` V (a LogVignetting or one held fixed), `rotation` the frame's R and `log_gain` its
+# `scene` log L's n × n chart controls (log L at d is Core's `spline_value` at d's chart point), `vignetting` V (a LogVignetting or one held fixed), `rotation` the frame's R and `log_gain` its
 # γ. The pixel's ray `ray = f(u)` and its back-projection Jacobian `ray_jacobian = ∂f/∂u` (Core's `backproject_with_jacobian`,
 # tangent to the sphere) are its keywords, as the bearing models' `M₁`, `M₂`: the camera is evaluated once per pixel, not per
 # frame. ∇_u is exact (ForwardDiff through the two splines along the tangent directions f + M·δ: the chart point is scale
 # invariant, so the first order is the ray's). A gradient that is not finite (the radial profile's centre, the chart's) is
 # zero, the value at the point (both splines are smooth there). G_θ is over the row's active coefficients: log L's 16 chart
-# controls (the span's column-major order), then V's active control points (none for a V held fixed), then γ.
-struct _LogIntensityModel{V, A}
+# controls (the window's column-major order, `[iy − 3 + r, ix − 3 + c]` with r fastest), then V's active control points (none
+# for a V held fixed), then γ.
+struct _LogIntensityModel{V, C, A}
     vignetting::V
-    chart::AzimuthalChart
+    chart::AzimuthalChart{C}
     scene::A
     rotation::SMatrix{3, 3, Float64, 9}
     log_gain::Float64
@@ -364,15 +317,15 @@ Adapt.@adapt_structure _LogIntensityModel
 @inline function VgtkCore.constraint_with_jacobians(m::_LogIntensityModel, x::StaticVector{3}; ray, ray_jacobian)
     u = SVector{2, Float64}(x[1], x[2]); f = SVector{3, Float64}(ray)
     lm, G_x = _model_with_measurement_gradient(m, u, f, SMatrix{3, 2, Float64, 6}(ray_jacobian))
-    _, _, wa, wb = _chart_span(m.chart, m.rotation * f)
-    G_L = SVector{16, Float64}(ntuple(k -> -wa[(k - 1) % 4 + 1] * wb[(k - 1) ÷ 4 + 1], Val(16)))
+    _, _, wx, wy = _chart_window(m.chart, m.rotation * f)
+    G_L = SVector{16, Float64}(ntuple(k -> -wy[(k - 1) % 4 + 1] * wx[(k - 1) ÷ 4 + 1], Val(16)))
     G_θ = vcat(G_L, -_active_log_rows(m.vignetting, u), SVector(-1.0))
     return x[3] - lm - m.log_gain, G_x, G_θ
 end
 # The model's log L + log V at the pixel (u, its ray f, ∂f/∂u = M) and the constraint's measurement gradient
 # G_x = [−∇_u(log L∘R∘f + log V), 1]: the weights' part of `constraint_with_jacobians` (the whitened weight needs no G_θ).
 @inline function _model_with_measurement_gradient(m::_LogIntensityModel, u, f, M)
-    model(δ) = _log_radiance(m.chart, m.scene, m.rotation * (f + M * δ)) + _log_vignetting(m.vignetting, u + δ, f + M * δ)
+    model(δ) = VgtkCore.spline_value(m.scene, m.chart.area, m.chart.chart(m.rotation * (f + M * δ))) + _log_vignetting(m.vignetting, u + δ, f + M * δ)
     δ0 = zero(SVector{2, Float64})
     ∇ = ForwardDiff.gradient(model, δ0)
     ∇ = ifelse(isfinite(∇[1]) & isfinite(∇[2]), ∇, δ0)
@@ -449,23 +402,23 @@ end
         I = Float64(frame[j + plane_offset])
         Wk[p] = 0.0; Yk[p] = 0.0
         if !sat[j] && I > 0
-            ia, ib, wa, wb = _chart_span(ch, R * rays[p])
+            ix, iy, wx, wy = _chart_window(ch, R * rays[p])
             w = weight(I, p) * inv_scale
             y = log(I) - LV[p]
             vidx = VI[p]; vw = VW[p]
             Wp[p] += w; Yp[p] += w * y
             Wk[p] = w; Yk[p] = w * y
             n = ch.n
-            for jb in 0:3, ja in 0:3
-                Bq = wa[ja + 1] * wb[jb + 1]
-                q = _chart_index(n, ia + ja + 1, ib + jb + 1)
+            for c in 1:4, r in 1:4                                        # the window's controls [iy − 3 + r, ix − 3 + c]
+                Bq = wy[r] * wx[c]
+                q = _chart_index(n, iy - 3 + r, ix - 3 + c)
                 Atomix.@atomic bL[q] += w * Bq * y
                 gain_col > 0 && (Atomix.@atomic BG[q, gain_col] += w * Bq)
                 for m in 1:length(vidx)
                     Atomix.@atomic BV[q, vidx[m]] += w * Bq * vw[m]
                 end
-                for lb in 0:3, la in 0:3
-                    Atomix.@atomic S[q, (lb - jb + 3) * 7 + (la - ja + 3) + 1] += w * Bq * wa[la + 1] * wb[lb + 1]
+                for lc in 1:4, lr in 1:4
+                    Atomix.@atomic S[q, (lc - c + 3) * 7 + (lr - r + 3) + 1] += w * Bq * wy[lr] * wx[lc]
                 end
             end
         end
@@ -564,14 +517,15 @@ end
     end
 end
 
-# One frame's model of log I at every domain pixel, log L + log V + γ_k: its change between two solves.
+# One frame's model of log I at every domain pixel, log L + log V + γ_k (log L Core's `spline_value` of the n × n scene
+# controls `cL` at the ray's chart point): its change between two solves.
 @kernel function _model_kernel!(LM, @Const(rays), @Const(LV), @Const(cL), R, ch::AzimuthalChart, log_gain::Float64)
     p = @index(Global)
-    @inbounds LM[p] = _log_radiance(ch, cL, R * rays[p]) + LV[p] + log_gain
+    @inbounds LM[p] = VgtkCore.spline_value(cL, ch.area, ch.chart(R * rays[p])) + LV[p] + log_gain
 end
 
-# One frame's residuals of log I (NaN where the row is not an observation; `LV` log V at the domain pixels, `log_gain` the
-# frame's γ_k) and their weights `weight(I, p)`.
+# One frame's residuals of log I (NaN where the row is not an observation; `LV` log V at the domain pixels, `cL` the n × n scene
+# controls, `log_gain` the frame's γ_k) and their weights `weight(I, p)`.
 @kernel function _residual_kernel!(res, wout, @Const(frame), @Const(sat), @Const(lin), @Const(rays), @Const(LV), @Const(cL),
                                    R, ch::AzimuthalChart, plane_offset::Int, log_gain::Float64, weight)
     p = @index(Global)
@@ -579,7 +533,7 @@ end
         j = lin[p]
         I = Float64(frame[j + plane_offset])
         if !sat[j] && I > 0
-            res[p] = Float32(log(I) - _log_radiance(ch, cL, R * rays[p]) - LV[p] - log_gain); wout[p] = Float32(weight(I, p))
+            res[p] = Float32(log(I) - VgtkCore.spline_value(cL, ch.area, ch.chart(R * rays[p])) - LV[p] - log_gain); wout[p] = Float32(weight(I, p))
         else
             res[p] = NaN32; wout[p] = 0.0f0
         end
@@ -805,7 +759,8 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     stride = max(1, P ÷ 2000)
     center = _chart_center(Array(rays[1:stride:end]), Rs)
     mincos = minimum(minimum(_CosTo(center, R), rays) for R in Rs)
-    ch = AzimuthalChart(center, acosd(clamp(mincos, -1.0, 1.0)) + chart_spacing_deg, chart_spacing_deg)
+    spacing = deg2rad(Float64(chart_spacing_deg))
+    ch = AzimuthalChart(center, acos(clamp(mincos, -1.0, 1.0)) + spacing, spacing)
     nL = ch.n^2
     seconds[:chart] = _elapsed(be, t0)
 
@@ -825,7 +780,9 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
 
     # the frames' gains: frame k ≥ 2 has the gain column k − 1 (g₁ = 1, the gauge)
     nG = gains ? K - 1 : 0
-    D2 = fits_v ? _vignetting_penalty(vignetting) : zeros(1, 1)
+    # the second differences of V's control points along each axis of their lattice (Core's `difference_rows`): DᵀD, the weak
+    # penalty that fixes the control points the domain does not reach
+    D2 = fits_v ? (D = VgtkCore.difference_rows(size(VgtkCore.control_points(vignetting)), 2); Matrix(D' * D)) : zeros(1, 1)
     v = vignetting
     MA = fits_v ? length(VgtkCore.active_coefficients(VgtkCore.log_spline(v), Array(upix[1:1])[1])[1]) : 1
     VI = similar(frames[1], SVector{MA, Int}, P); VW = similar(frames[1], SVector{MA, Float64}, P); LV = similar(frames[1], Float64, P)
@@ -937,7 +894,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         end
         position_noise || break
         # the next solve's weights: the whitening at this solve's model of every frame (and its log I, for the change between solves)
-        lg = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG)); cLm = _upload(be, cL); mk! = _model_kernel!(be, 256)
+        lg = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG)); cLm = _upload(be, reshape(cL, ch.n, ch.n)); mk! = _model_kernel!(be, 256)
         change = 0.0
         for k in 1:K
             old = Array(LMs[k])
@@ -952,7 +909,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     end
     log_gains = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG))
     gains_only && return exp.(log_gains), retcode, iters
-    cLd = _upload(be, cL)
+    cLd = _upload(be, reshape(cL, ch.n, ch.n))
 
     # the residuals
     t0 = time_ns()
@@ -967,7 +924,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     q = Statistics.quantile(R_all, (0.01, 0.5, 0.99))
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
-    scene = copy(cL); scene[.!active] .= NaN
+    scene = reshape(copy(cL), ch.n, ch.n); scene[reshape(.!active, ch.n, ch.n)] .= NaN
     meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               measurement_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))

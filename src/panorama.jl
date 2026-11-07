@@ -188,8 +188,9 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
 end
 
 # The warp's sensor point of an output pixel (row, col), in camera pixels: the warp lands on the binned frame's (row, col), whose
-# COLMAP point scaled by `s` is the camera's. And the ray map of the output pixel's COLMAP centre. Isbits functors (a closure
-# over the element type would not reach a device).
+# COLMAP point scaled by `s` is the camera's (a fractional index, so not Core's `pixel_centre` of an array index). And the ray
+# map of the output pixel's COLMAP centre (Core's `pixel_centre`). Isbits functors (a closure over the element type would not
+# reach a device).
 struct _SensorPoint{T, B}
     bm::B
     s::T
@@ -203,7 +204,7 @@ struct _RayAt{T, M}
     rays::M
 end
 _RayAt{T}(rays::M) where {T, M} = _RayAt{T, M}(rays)
-@inline (r::_RayAt{T})(I) where {T} = SVector{3, T}(r.rays(SVector(I[2] - 0.5, I[1] - 0.5)))
+@inline (r::_RayAt{T})(I) where {T} = SVector{3, T}(r.rays(VgtkCore.pixel_centre(T, I)))
 
 """
     CUBE_FACES

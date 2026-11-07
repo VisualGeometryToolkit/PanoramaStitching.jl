@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+### Breaking: the VisualGeometryToolkit 0.7 stack
+
+- The stack packages resolve from the monorepo checkout through TEMPORARY `[sources]` (the package's and the example's
+  Project.toml) until the 0.7 stack registers; the compat entries keep the 0.6 series because the monorepo's version
+  fields are not bumped yet. Both are to be removed and set to the 0.7 series before release.
+- Core 0.7's renames: a keypoint's shape is `shape_matrix` (`moment_matrix` is retired); a grid model's `backproject` is
+  NaN where it images nothing (the tests' synthetic sequence reads it so).
+
+### Breaking: PanoramaStitching's copies of the stack deleted (no aliases)
+
+- `AzimuthalChart` is Core's chart and lattice: fields `chart` (Core's `equidistant_chart(axis)`), `area` (the square of the
+  chart the controls are laid over, radians) and `n`; the constructor `AzimuthalChart(axis, half_extent, spacing)` takes
+  radians (was `(center, half_extent_deg, spacing_deg)`, with fields `e1, e2, e3, half_extent_deg, spacing_deg, n`). log L is
+  Core's `spline_value` of the scene controls at the direction's chart point, and the normal equations scatter the 16
+  controls of Core's `spline_window`; the private `_spline_span`, `_chart_point`, `_chart_span` and `_log_radiance` are gone.
+  `fit_vignetting`'s `chart_spacing_deg` stays in degrees.
+  - `VignettingMetadata.scene` is the `n × n` controls matrix in Core's layout (`[row, column]` along the chart's second and
+    first coordinate: `spline_value(scene, chart.area, chart.chart(d))` is log L at `d`); it was an `n²` vector, first
+    coordinate fastest.
+  - Two numbers move. Core's chart basis is `e₁ = normalize(ŷ × axis)`, where PanoramaStitching's was the Gram–Schmidt of
+    x̂: the scene's lattice turns about the axis. And a direction outside the area continues the outer cubic piece instead of
+    clamping to the edge cell (the area holds the coverage plus one spacing, so no row reaches it). Measured on the test
+    suite's synthetic sequences (`chart_spacing_deg = 1`): log V's control points move by at most 1.5e-7 (radial, CG),
+    2.2e-8 (radial, Cholesky), 9.2e-9 (radial, value-and-position noise) and 1.9e-5 (16 × 16 tensor surface); the V errors
+    against the truth move in the third significant digit (radial max 4.303e-5 → 4.295e-5; tensor max 6.3034e-3 →
+    6.3033e-3), the gains by 7e-11, and the active scene controls are 42530 for 42523 (CG: 255 iterations for 248).
+- `IntensityAndPositionNoise(; point_covariance, log_intensity_scale, iterations)`: `point_covariance` is Core's `CovMat{2}`
+  (`CovMat{2}(σ = σ_u)` for the isotropic `σ_u²·I`), and the `point_scale` keyword is removed. A bare matrix is a
+  `TypeError`; the point's noise missing is an `UndefKeywordError` (was an `ArgumentError`).
+- `PanoramaStitching.LOMA_SIZE` is removed: Features' `LoMaDescriptor` takes the frame at its own size (it resamples to its
+  network's input, `VisualGeometryToolkitFeatures.LOMA_IMAGE_SIZE`, by the same bilinear warp), so the detections are no
+  longer rescaled to 784² by hand and the described features carry them in the frame's pixels; the matcher takes each
+  frame's `(H, W)`. The strongest `max_detections` are Features' `strongest`. The registration's matches, inliers and
+  rotations are unchanged on the synthetic sweep (rotations to 4e-14°, bundle rms to 4e-13 px).
+- A rotation bundle's track direction is Core's `Eliminable{E}` of its `SphereManifold` (the private `_TrackDirection` is
+  gone); the loss width's scale is Core's `noise_sigma(norms, 2)`; the image circle in a binned frame is Core's
+  `SimilarityMap` image of the `Circle` or `Ellipse`; an array index's COLMAP point is Core's `pixel_centre`; V's weak
+  penalty is Core's `difference_rows(size, 2)`. Each is the same number as before (bit for bit, or to rounding).
+
+### The example
+
+- `vignetting.model` and `compare_models` are tags of Core's `VIGNETTING_TAGS`: `"radial"` and `"tensor_product"` (the
+  retired `"tensor"` is refused by name). `config_fx3_14mm.toml`'s `compare_models = ["tensor_product"]` (was `["tensor"]`),
+  so its comparison files are `vignetting_compare_tensor_product.*`, and the records' `model.kind` is the tag. The edited
+  configs move the arms runs' keys (`compare_arms.jl`, the content of `arms.toml`, the set's config and its
+  `rotations.json`): `fx3_14mm_indoor` `1fe3af91b1e02a7a` → `bcd50f33a2b18240`, `fx3_8mm_rooftop` `248be13ee1c0ad3f` →
+  `a946d2c76bcfb407`. The registration's key (its own config sections) does not move.
+- The decode cache's, the registration's and the arms' hashes are Core's `sha256_hex` (the same digests); the example no
+  longer depends on SHA.
+
 ## 0.4.0
 
 ### Breaking: the VisualGeometryToolkit 0.6 stack

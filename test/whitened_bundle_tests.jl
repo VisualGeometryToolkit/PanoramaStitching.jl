@@ -57,7 +57,7 @@ end
     rng = Xoshiro(5)
     R = sweep_rotations(rng, 3)
     d = normalize(SMatrix{3, 3}(R[2]) * SVector(0.3, -0.2, 1.0))
-    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = PanoramaStitching._TrackDirection{false}(VgtkCore.SphereManifold(d))
+    ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(d))
     x = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * d) + SVector(0.3, -0.2)
     Σ = SMatrix{2, 2, Float64, 4}(2.0, 0.7, 0.7, 0.5)
     Li = PanoramaStitching._observation_whitening(VgtkCore.Uncertain(x, VgtkCore.CovMat(Σ)))

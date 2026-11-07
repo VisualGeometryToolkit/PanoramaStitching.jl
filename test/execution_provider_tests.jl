@@ -39,7 +39,7 @@ end
         img(x) = permutedims(repeat(x, 1, 1, 3), (3, 1, 2))
         dets(x) = VgtkFeatures.asift_detect(x; tilts = [(1.0, 0.0)])
         da, db = dets(a), dets(b)
-        sz = (3, PanoramaStitching.LOMA_SIZE, PanoramaStitching.LOMA_SIZE)
+        sz = size(a)                                    # the images the features are in
         run(ep) = (d = VgtkFeatures.LoMaDescriptor(:b; max_detections = 512, execution_provider = ep);
                    m = VgtkFeatures.LoMaMatcher(:b128; execution_provider = ep);
                    fa = d(img(a), da); fb = d(img(b), db); (fa, fb, m(fa, fb, sz, sz; min_score = 0.0)))

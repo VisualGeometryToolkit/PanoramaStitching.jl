@@ -138,7 +138,7 @@ end
         @test abs(d.rms - h.rms) < 1.0e-8
         # the value-and-position noise's weights on the device (the observation's constraint, ForwardDiff and Core's whitening
         # in the kernels)
-        sw = IntensityAndPositionNoise(; point_scale = 1.0, iterations = 2)
+        sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 2)
         hs = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, measurement_noise = sw, kw...)
         dsf = fit_vignetting(v0, q.model, df, q.R; saturated = ds, measurement_noise = sw, kw...)
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
@@ -213,19 +213,19 @@ end
 
     # the value-and-position noise (the observation's constraint whitened with the sensor point's noise too): frames that follow
     # the model exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
-    sw = IntensityAndPositionNoise(; point_scale = 1.5, iterations = 2)
+    sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5), iterations = 2)
     sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
                          measurement_noise = sw, kw...)
     @test sam.metadata.measurement_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
     sf = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                         gain_correction = IntensityGains(), solver = SparseCholesky(),
-                        measurement_noise = IntensityAndPositionNoise(; point_scale = 1.5), kw...)
+                        measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)), kw...)
     @test sf.metadata.measurement_noise.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
-    @test_throws ArgumentError IntensityAndPositionNoise()                                         # the point's noise is required
-    @test_throws ArgumentError IntensityAndPositionNoise(; point_scale = 1.0, point_covariance = [1.0 0; 0 1])
-    @test_throws ArgumentError IntensityAndPositionNoise(; point_scale = 1.0, iterations = 3)
-    @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = [1.0 2.0; 2.0 1.0])  # not positive definite
+    @test_throws UndefKeywordError IntensityAndPositionNoise()                                     # the point's noise is required
+    @test_throws TypeError IntensityAndPositionNoise(; point_covariance = [1.0 0; 0 1])            # a CovMat, not a bare matrix
+    @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 3)
+    @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat(SMatrix{2, 2}(1.0, 2.0, 2.0, 1.0)))   # not positive definite
 
     # the observation's constraint (Core's protocol): G_x is the model's exact gradient in u, and the weight is Core's whitening
     m = with.metadata
@@ -241,7 +241,7 @@ end
         fd = SVector((gat(u + SVector(h, 0)) - gat(u - SVector(h, 0))) / 2h, (gat(u + SVector(0, h)) - gat(u - SVector(0, h))) / 2h)
         @test isapprox(SVector(G_x[1], G_x[2]), fd; rtol = 1.0e-5, atol = 1.0e-9) && G_x[3] == 1.0
         @test length(G_θ) == 16 + 4 + 1 && G_θ[end] == -1.0
-        Σx = PanoramaStitching._measurement_covariance(IntensityAndPositionNoise(; point_scale = 1.5))
+        Σx = PanoramaStitching._measurement_covariance(IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)))
         @test VgtkCore.whitening_factor(G_x, Σx)^2 ≈ 1 / (1.5^2 * (G_x[1]^2 + G_x[2]^2) + 0.01^2)
     end
 
@@ -364,7 +364,8 @@ end
 @testitem "panorama_vignetting example: the renamed TOML keys refused by name; the configs of record are current" begin
     using Test, TOML
     using PanoramaStitching: PanoramaStitching
-    dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
+    import VisualGeometryToolkitCore as VgtkCore
+    dir =joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
@@ -385,8 +386,13 @@ end
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
         @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
+        # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
+        @test all(k -> VgtkCore.VIGNETTING_TAGS[k] in (VgtkCore.RadialVignetting, VgtkCore.TensorProductVignetting),
+                  vcat(v["model"], v["compare_models"]))
     end
+    @test_throws ArgumentError VgtkCore.VIGNETTING_TAGS["tensor"]
     arms = TOML.parsefile(joinpath(dir, "arms.toml"))
+    @test VgtkCore.VIGNETTING_TAGS[arms["kind"]] === VgtkCore.RadialVignetting
     @test refuse(arms) === arms && length(arms["arms"]) == 12 && allunique(a["name"] for a in arms["arms"])
     for a in arms["arms"]
         @test refuse(a) === a && N[a["measurement_noise"]] isa Type && (G[a["gain_correction"]]; true)

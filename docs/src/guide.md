@@ -164,7 +164,8 @@ res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCo
                      plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
-# or measurement_noise = IntensityAndPositionNoise(; point_scale = σ_u): σ_u the registration bundle's core scale (loss width / scale multiple), px
+# or measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration
+# bundle's core scale (loss width / scale multiple), px
 V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)
 ```

@@ -1,6 +1,6 @@
 name = "PanoramaStitching"
 uuid = "5b03ddb8-fc94-4165-83c9-5c94f3367646"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["James Pritts <jbpritts@gmail.com>"]
 
 [deps]
@@ -45,6 +45,13 @@ VisualGeometryToolkitCore = "0.6"
 VisualGeometryToolkitEstimation = "0.6.1"
 VisualGeometryToolkitFeatures = "0.5"
 julia = "1.12"
+
+# TEMPORARY until the VisualGeometryToolkit 0.7 stack registers: the stack packages from the monorepo checkout beside this one
+# (their version fields are not bumped yet, so the compat entries above keep the 0.6 series). Remove before release.
+[sources]
+VisualGeometryToolkitCore = {path = "../VisualGeometryToolkit.jl/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../VisualGeometryToolkit.jl/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../VisualGeometryToolkit.jl/VisualGeometryToolkitFeatures"}
 
 [workspace]
 projects = ["test", "docs"]
