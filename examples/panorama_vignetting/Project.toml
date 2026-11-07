@@ -21,10 +21,10 @@ VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
 [sources]
 PanoramaStitching = {path = "../.."}
-VisualGeometryToolkitCore = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitFeatures"}
-VisualGeometryToolkitIO = {path = "../../../VisualGeometryToolkit.jl/VisualGeometryToolkitIO"}
+VisualGeometryToolkitCore = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "11596d451a505476388c15ce3f7a6919fe16aa20", subdir = "VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "11596d451a505476388c15ce3f7a6919fe16aa20", subdir = "VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "11596d451a505476388c15ce3f7a6919fe16aa20", subdir = "VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitIO = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "11596d451a505476388c15ce3f7a6919fe16aa20", subdir = "VisualGeometryToolkitIO"}
 
 [compat]
 CUDA = "5"
@@ -32,8 +32,8 @@ GLMakie = "0.13"
 JSON = "1"
 LibRaw_jll = "0.22"
 PNGFiles = "0.4"
-VisualGeometryToolkitCore = "0.6"
-VisualGeometryToolkitEstimation = "0.6.1"
-VisualGeometryToolkitFeatures = "0.5"
-VisualGeometryToolkitIO = "0.6"
+VisualGeometryToolkitCore = "0.7"
+VisualGeometryToolkitEstimation = "0.7"
+VisualGeometryToolkitFeatures = "0.6"
+VisualGeometryToolkitIO = "0.7"
 julia = "1.12"
