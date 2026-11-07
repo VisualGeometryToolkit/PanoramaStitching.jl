@@ -1,12 +1,11 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-11-07)
 
 ### Breaking: the VisualGeometryToolkit 0.7 stack
 
-- The stack packages resolve from the monorepo checkout through TEMPORARY `[sources]` (the package's and the example's
-  Project.toml) until the 0.7 stack registers; the compat entries keep the 0.6 series because the monorepo's version
-  fields are not bumped yet. Both are to be removed and set to the 0.7 series before release.
+- Requires VisualGeometryToolkitCore 0.7, VisualGeometryToolkitEstimation 0.7 and VisualGeometryToolkitFeatures 0.6
+  (the example also VisualGeometryToolkitIO 0.7), all from General; NLLSsolver 5.3.2.
 - Core 0.7's renames: a keypoint's shape is `shape_matrix` (`moment_matrix` is retired); a grid model's `backproject` is
   NaN where it images nothing (the tests' synthetic sequence reads it so).
 
