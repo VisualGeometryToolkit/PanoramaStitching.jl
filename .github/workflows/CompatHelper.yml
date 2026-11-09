@@ -18,5 +18,17 @@ jobs:
       - name: Run CompatHelper
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # The package, its test and docs environments.
-        run: julia -e 'using CompatHelper; CompatHelper.main(; subdirs = ["", "test", "docs"])'
+          COMPATHELPER_PRIV: ${{ secrets.DOCUMENTER_KEY }}   # the deploy key: CI runs on its PRs
+        # Every workspace member with [compat]: a member left out keeps the old bound, and the workspace no longer resolves.
+        run: julia -e 'using CompatHelper; CompatHelper.main(; subdirs = ["", "docs", "examples/panorama_vignetting", "test"])'
+      # CompatHelper's own open PRs (opened by github-actions, branch compathelper/…) merge themselves once the CI jobs
+      # required on main (branch protection) pass. Every other PR is untouched. Merging is not a release: the stack's
+      # cascade still bumps the version, narrows compat to the latest only, and registers.
+      - name: "Auto-merge CompatHelper's PRs once the required checks pass"
+        run: |
+          for pr in $(gh pr list --repo "$GITHUB_REPOSITORY" --state open --author app/github-actions \
+                        --json number,headRefName --jq '.[] | select(.headRefName | startswith("compathelper/")) | .number'); do
+            gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash || echo "PR #$pr: auto-merge not enabled"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
