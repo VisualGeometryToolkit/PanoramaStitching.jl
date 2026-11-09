@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 (2026-11-09)
+
+On the VisualGeometryToolkit 0.8 stack, from General: VisualGeometryToolkitCore 0.8,
+VisualGeometryToolkitEstimation 0.8 and VisualGeometryToolkitFeatures 0.6.1 (its compat floor, the first on
+Core 0.8); the example also VisualGeometryToolkitIO 0.8. Nothing else changes.
+
 ## 0.5.0 (2026-11-07)
 
 ### Breaking: the VisualGeometryToolkit 0.7 stack
