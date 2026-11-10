@@ -86,13 +86,71 @@ end
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 end
 
-# The bundle's outcome (RotationBundleMetadata outcome, start_nonfinite): the Tamron 20 mm sequence's mechanism on a synthetic
-# sequence — a rectilinear grid lens calibrated over the sensor (a SplineLens camera, its forward spline over the same region), observations up to the
-# frame's border, a start ~0.6° off (an averaging's rotations). A start prediction near the border falls outside the grid's
-# domain, where the grid has no back-projection Jacobian: the start is not finite and NLLSsolver stops at once, "nonfinite_start",
-# the rotations the start's. Controls: the same data and start through the parametric camera converge, the grid from the true
-# rotations converges, and no iteration is "not_run".
-@testitem "refine_rotations' outcome: a grid lens's border observations from an imperfect start (nonfinite_start)" begin
+# Observations whose start prediction is not imaged (off the grid lens's lattice: no projection, no back-projection Jacobian)
+# are dropped and counted, and the bundle solves the rest: 5 tracks each gain an observation in a frame where the track's
+# direction images past the sensor's right edge (recorded at the edge: a detection at the border of a frame the direction
+# leaves). The bundle drops exactly those 5, converges, and its rotations are those of the same bundle without them to 1e-9;
+# when every track is left with fewer than two frames it is an ArgumentError.
+@testitem "refine_rotations drops and counts the observations whose start prediction is not imaged" begin
+    using Test, Random, LinearAlgebra, StaticArrays
+    import PanoramaStitching
+    using PanoramaStitching: refine_rotations
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    rot(v) = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector{3, Float64}(v)))
+    W, H = 1000, 800
+    pinhole = VgtkCore.CameraModel(800.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px])
+    bounded = VgtkCore.BoundedCamera(pinhole, VgtkCore.Size2(W, H))
+    grid = VgtkCore.with_model(bounded, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bounded, VgtkCore.imaged_region(bounded);
+                                                                                    tolerance = 0.01, grid_size = (20, 16))))
+    rng = Xoshiro(11); K = 4
+    R = Dict(k => rot(SVector(0.02randn(rng), 0.25 * (k - 1), 0.02randn(rng))) for k in 1:K)
+    inside(x) = 20 < x[1] < W - 20 && 20 < x[2] < H - 20
+    gaining = Vector{Vector{Pair{Int, SVector{2, Float64}}}}(); extra = Pair{Int, SVector{2, Float64}}[]
+    others = Vector{Vector{Pair{Int, SVector{2, Float64}}}}()
+    while length(others) < 295 || length(extra) < 5
+        d = normalize(randn(rng, SVector{3, Float64})); t = Pair{Int, SVector{2, Float64}}[]; past = nothing
+        for k in 1:K
+            c = R[k]' * d; c[3] > 0 || continue
+            u = VgtkCore.project(pinhole, c)
+            if inside(u)
+                push!(t, k => u + 0.3randn(rng, SVector{2, Float64}))
+            elseif W + 30 < u[1] < W + 60 && 20 < u[2] < H - 20
+                past = k => SVector(W - 2.0, u[2])          # imaged 30–60 px past the right edge, recorded at the edge
+            end
+        end
+        length(t) >= 2 || continue
+        if past !== nothing && length(extra) < 5
+            push!(extra, past); push!(gaining, t)
+        elseif length(others) < 295
+            push!(others, t)
+        end
+    end
+    tracks = [gaining; others]
+    with_extra = [j <= 5 ? [tracks[j]; extra[j]] : tracks[j] for j in eachindex(tracks)]   # the first 5 tracks gain one each
+    start = Dict(k => (k == 1 ? R[1] : rot(0.003 .* randn(rng, 3)) * R[k]) for k in 1:K)
+    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 3, max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
+    res = refine_rotations(grid, start, with_extra; kw...)
+    ref = refine_rotations(grid, start, tracks; kw...)
+    @test res.metadata.outcome === :converged && res.metadata.n_dropped_start == 5
+    @test ref.metadata.outcome === :converged && ref.metadata.n_dropped_start == 0
+    @test all(j -> isnan(res.metadata.residuals[j][end]), 1:5)                         # a dropped observation has no residual
+    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
+    @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:K) < 0.05
+    # every track a pair whose second observation is not imaged at the start: nothing is left to solve
+    lone = [[first(t), extra[j]] for (j, t) in enumerate(tracks[1:5]) if first(first(t)) != first(extra[j])]
+    @test !isempty(lone)
+    @test_throws ArgumentError refine_rotations(grid, start, lone; kw...)
+end
+
+# The bundle's outcome: the Tamron 20 mm sequence's mechanism on a synthetic sequence — a rectilinear grid lens calibrated over
+# the sensor (a SplineLens camera, its forward spline over the same region), observations up to the frame's border, a start
+# ~0.6° off (an averaging's rotations). A start prediction near the border falls outside the grid's domain, where the grid
+# has no back-projection Jacobian; until plan 2 that made the whole start non-finite and NLLSsolver stopped at once
+# ("nonfinite_start", the rotations the start's). Now those observations are dropped and counted, and the bundle converges.
+# Controls: the same data and start through the parametric camera converge with none dropped, as does the grid from the true
+# rotations, and no iteration is "not_run".
+@testitem "refine_rotations' outcome: a grid lens's border observations from an imperfect start converge (their misses dropped)" begin
     using Test, Random, LinearAlgebra, StaticArrays
     import NLLSsolver, PanoramaStitching
     using PanoramaStitching: refine_rotations
@@ -124,16 +182,16 @@ end
     err(Rs) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
 
     res = refine_rotations(grid, start, tracks; kw...)
-    @test res.retcode === :solve_failed && res.metadata.outcome === :nonfinite_start && res.metadata.start_nonfinite > 0
-    @test all(k -> SMatrix{3, 3}(VgtkCore.estimate(res)[k]) == start[k], 1:K)          # no step was tried
+    @info "the grid from an imperfect start: $(res.metadata.n_dropped_start) of $(res.metadata.n_observations) observations dropped"
+    @test res.metadata.outcome === :converged && res.metadata.n_dropped_start > 0 && err(VgtkCore.estimate(res)) < 0.05
     resp = refine_rotations(pinhole, start, tracks; kw...)
-    @test resp.metadata.outcome === :converged && resp.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(resp)) < 0.05
+    @test resp.metadata.outcome === :converged && resp.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(resp)) < 0.05
     # The grid from the TRUE rotations (a finite start) converges. Until 2026-11-04 it never returned: the grid's forward map
     # (then a separate spline) extrapolated past the grid's imaged region, so an iterate there had a finite residual but a NaN Jacobian, NLLSsolver
     # accepted it and its Levenberg–Marquardt trial loop spun on the NaN system. The residual is now NaN off the imaged region
     # too (`_project`): such a step is a rejected one.
     rest = refine_rotations(grid, R, tracks; kw...)
-    @test rest.metadata.outcome === :converged && rest.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(rest)) < 0.05
+    @test rest.metadata.outcome === :converged && rest.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(rest)) < 0.05
     # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
     fwd = sp
     bc = PanoramaStitching._BundleCamera(grid)

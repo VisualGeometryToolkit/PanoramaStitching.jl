@@ -66,8 +66,8 @@ Under `$VGTK_DATA_ROOT`:
    averaging over the view graph, tracks, and the bundle of the rotations and track directions. A grid lens is read
    as a `SplineLens` camera and projects through its forward spline, fitted over its imaged region. The rotations are
    cached in `rotations.json`, keyed by the registration settings, the inputs and the RAW files' hashes, with the bundle's
-   outcome (`converged`, `nonfinite_start` — its start not finite, a start prediction outside the lens's domain —, `not_run`
-   or another retcode) and its count of observations not finite at the start; `summary.md` states it.
+   outcome (`converged`, `not_run` or another retcode) and its count of observations dropped at its start (a start prediction
+   off the camera model's valid domain: such an observation is left out, the rest solved); `summary.md` states it.
 3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the camera's
    imaged region — the sensor ∩ its lens coverage ∩ its model's valid domain — less a rim margin at the coverage's edge; unsaturated; positive) is
    one observation of

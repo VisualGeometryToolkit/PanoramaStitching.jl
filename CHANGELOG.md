@@ -22,6 +22,12 @@
   `with_model`. The rotation
   bundle's residual is NaN only off the camera model's `valid_domain` (where its projection and back-projection Jacobian
   are defined: a grid lens's lattice), never off its lens coverage: a parametric camera's bundle is 0.5.1's.
+- The rotation bundle drops the observations whose start prediction is not imaged (off the camera model's valid domain,
+  where it has no projection and no back-projection Jacobian) and the rest of any track left in fewer than two frames, and
+  solves the rest: each track starts from the mean bearing of the observations it keeps. `RotationBundleMetadata` reports
+  them as `n_dropped_start` (a dropped observation's residual is NaN), replacing `start_nonfinite`; the outcome
+  `:nonfinite_start` is retired. A start that leaves nothing to solve is an `ArgumentError`. The example's `rotations.json`
+  (format v4) and `summary.md` record the count.
 - The example: `[inputs] circle` is refused with an `ArgumentError` naming the camera's `lens_coverage`; `load_lens` returns
   the `BoundedCamera` (a camera store's, or an old grid file read as a `SplineLens` camera whose coverage is the file's
   domain, its forward spline fitted over its imaged region). The configs of record no longer hold their circles; the
