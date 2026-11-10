@@ -6,7 +6,7 @@
 
 @testitem "register_rotations: execution_provider other than :cpu or :cuda is refused" begin
     using Test, StaticArrays
-    using PanoramaStitching: register_rotations
+    using PanoramaStitching: PanoramaStitching, register_rotations
     import VisualGeometryToolkitCore as VgtkCore
     cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[64.0VgtkCore.px, 64.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
                                  VgtkCore.Size2(128, 128))
@@ -18,6 +18,9 @@
     frames = [rand(128, 128, 3) for _ in 1:2]
     @test_throws ArgumentError register_rotations(frames, cam; kw..., execution_provider = :tensorrt)
     @test_throws ArgumentError register_rotations(frames, cam; kw..., bundle_whitening = :diagonal)
+    vkw = Base.structdiff(kw, NamedTuple{(:bundle_loss, :bundle_scale_multiple, :bundle_iterations, :bundle_max_iter, :bundle_ftol, :bundle_xtol)})
+    @test_throws ArgumentError PanoramaStitching.verify_pairs(frames, cam; vkw..., execution_provider = :tensorrt)
+    @test_throws ArgumentError PanoramaStitching.verify_pairs(frames, cam; vkw..., pairs = :every)
 end
 
 # cuDNN is not a test dependency (cuDNN 1.4, the last for CUDA.jl 5, does not resolve beside the workspace's

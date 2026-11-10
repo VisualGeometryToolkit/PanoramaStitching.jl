@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Breaking: one view graph across the stack — VisualGeometryToolkitEstimation's `ViewGraph`
+
+- **`PanoramaStitching.ViewGraph` is deleted** (no alias): the view graph of the verified pairs is
+  VisualGeometryToolkitEstimation 0.9's `ViewGraph`, each edge the pair's rotation `R_ij` (`f_j = R_ij·f_i`) as
+  VisualGeometryToolkitCore's `Attributed(R_ij, (; weight))`, its weight the pair's inlier count (read with Core's
+  `value_of` and `weight_of`; the former `graph.rotations` and `graph.inliers` dictionaries are gone, and `graph.frames` is
+  Estimation's `views(graph)`). `Registration.graph` holds it; `Registration` gains its type as a first parameter
+  (`Registration{G, A, B, F}`).
+- `register_rotations` averages the rotations with Estimation 0.9's `fit_rotation_averaging(graph; loss)` (the 0.8 form
+  `fit_rotation_averaging(rotations, weights; loss)` is gone from Estimation; it was the `MethodError` of the example on
+  the 0.9 stack). The algorithm, its spectral seed and its gauge (the first frame the identity) are 0.8's: the rotations
+  are unchanged. A disconnected sequence is refused by the averaging (Estimation's `require_connected`, which names the
+  components), as `ViewGraph` refused it before; `pairs = :lag_overlap` finds the parts with Estimation's `components`.
+- `chain_tracks` (same signature, same tracks) finds the tracks as the components of the match graph, Estimation's
+  `ViewGraph` on the observations, in place of its own union-find. Graphs.jl and DataStructures.jl are no longer
+  dependencies.
+- **New: `verify_pairs(frames, camera; …) -> VerifiedPairs`** — `register_rotations`' features, matching and pairwise
+  rotations, stopping before the view graph (per frame its `FrameFeatures`; per verified pair its rotation, inlier count,
+  inlier matches and statistics) — and **`register_rotations(pairs::VerifiedPairs, camera; averaging_loss, bundle_…)`**,
+  the averaging, the tracks and the bundle from them. `register_rotations(frames, camera; …)` composes the two, its
+  results unchanged.
+- The example caches the verified pairs as a stage of their own, `verified_pairs.json`, written before the view graph is
+  built and keyed by the matching and verification settings (every `[registration]` key but the averaging's and the
+  bundle's; the averaging loss too with `pairs = "lag_overlap"`, whose averaging aims the pairs), the inputs, the decode
+  settings and the RAW files' hashes: changing the averaging or the bundle reruns in seconds, and a failure past the pairs
+  loses none of the matching. `rotations.json` keeps its key and format (v5): its records are still reused.
+- TEMPORARY `[sources]` take Core, Estimation and Features (and the example's IO) from the read-only monorepo checkout
+  `~/src/vgtk-09-base`, in place of `~/src/vgtk-board-deform`; compat admits that tree's own version fields
+  (Estimation 0.8.0, Features 0.6.1, unbumped) until the cascade moves it to the released versions.
+
 ### Breaking: the VisualGeometryToolkit 0.9 camera — `imaged_region` replaces every `circle`
 
 - Requires VisualGeometryToolkitCore 0.9 (and Estimation and IO of the same stack). Until they register, TEMPORARY

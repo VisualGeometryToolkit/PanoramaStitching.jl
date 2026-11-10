@@ -62,12 +62,18 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    ([`PanoramaStitching.pair_bearings`](@ref)).
 3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `find_rotation` (RANSAC on bearings, its sampler seeded from
    `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
-4. **Rotation averaging**: the verified pairs form a [`ViewGraph`](@ref); `fit_rotation_averaging` with `averaging_loss`
+4. **Rotation averaging**: the verified pairs form VisualGeometryToolkitEstimation's `ViewGraph` (each edge the pair's rotation, weighted by its
+   inlier count); Estimation's `fit_rotation_averaging` of it with `averaging_loss`
    gives every frame's rotation.
-5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames; inconsistent tracks (two keypoints
+5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
+   Estimation's `ViewGraph` on the observations); inconsistent tracks (two keypoints
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
    robust (`bundle_loss`) pixel reprojection error through `projection` with NLLSsolver.
+
+Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold everything the rest reads;
+`register_rotations(pairs::VerifiedPairs, camera; …)` runs steps 4–6 from them, so a caller that keeps the verified pairs
+(the example caches them in `verified_pairs.json`) reruns the averaging and the bundle alone.
 
 The example's call states every setting: each is a keyword without a default, so a run states its whole configuration
 (`say = println` prints one line per frame, pair and step). The result, a [`Registration`](@ref), holds the rotations, the

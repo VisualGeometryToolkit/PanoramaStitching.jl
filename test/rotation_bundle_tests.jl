@@ -1,5 +1,5 @@
 # =============================================================================
-# The registration structure (src/view_graph.jl, src/rotation_bundle.jl): the view graph refuses a disconnected sequence, the tracks
+# The registration structure (src/tracks.jl, src/rotation_bundle.jl): the tracks
 # chain matches and drop the inconsistent ones, and the rotation bundle recovers the rotations and the directions of a synthetic
 # fisheye sweep past 90° with outliers; its Jacobian blocks against ForwardDiff; the eliminated and the joint solve agree.
 # =============================================================================
@@ -34,18 +34,18 @@ function sweep_tracks(rng, R, n; σ = 0.5, outl = 0.0, θmax = deg2rad(100))
 end
 end
 
-@testitem "ViewGraph and chain_tracks" begin
-    using Test, StaticArrays, LinearAlgebra
-    using PanoramaStitching: ViewGraph, chain_tracks
-    e(R) = (rotation = R, inliers = 10)
-    I3 = SMatrix{3, 3}(1.0I)
-    g = ViewGraph([1, 2, 3], Dict((1, 2) => e(I3), (2, 3) => e(I3)))
-    @test g.inliers[(1, 2)] == 10
-    @test_throws ArgumentError ViewGraph([1, 2, 3, 4], Dict((1, 2) => e(I3), (3, 4) => e(I3)))
+@testitem "chain_tracks; the view graph is VisualGeometryToolkitEstimation's" begin
+    using Test
+    using PanoramaStitching: PanoramaStitching, chain_tracks
+    @test !isdefined(PanoramaStitching, :ViewGraph)                       # one view graph across the stack: Estimation's
     # 1:5 ↔ 2:7 ↔ 3:1 chains into one track; 1:6 ↔ 2:8 and 2:8 ↔ 3:2 and 3:2 ↔ 1:9 put two keypoints of frame 1 in one track: dropped
     ts, dropped = chain_tracks(Dict((1, 2) => [(5, 7), (6, 8)], (2, 3) => [(7, 1), (8, 2)], (1, 3) => [(9, 2)]))
     @test ts == [[(1, 5), (2, 7), (3, 1)]]
     @test dropped == 1
+    # two tracks, sorted by their first observation; a match repeated through another pair adds nothing
+    ts, dropped = chain_tracks(Dict((1, 2) => [(4, 1), (2, 3)], (2, 3) => [(3, 6), (1, 5)], (1, 3) => [(2, 6)]))
+    @test ts == [[(1, 2), (2, 3), (3, 6)], [(1, 4), (2, 1), (3, 5)]]
+    @test dropped == 0
 end
 
 @testitem "refine_rotations: a fisheye sweep past 90°, outliers; Jacobian; eliminated = joint" setup = [SweepScene] begin

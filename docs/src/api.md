@@ -5,7 +5,8 @@
 ```@docs
 register_rotations
 Registration
-ViewGraph
+verify_pairs
+VerifiedPairs
 chain_tracks
 refine_rotations
 RotationBundleMetadata

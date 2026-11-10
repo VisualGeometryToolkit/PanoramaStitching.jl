@@ -7,9 +7,7 @@ authors = ["James Pritts <jbpritts@gmail.com>"]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
 CoordinateTransformations = "150eb455-5306-5404-9cee-2592286d6298"
-DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
-Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NLLSsolver = "50b5cf9e-bf7a-4e29-8981-4280cbba70cb"
@@ -28,9 +26,7 @@ VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
 Adapt = "4"
 Atomix = "1"
 CoordinateTransformations = "0.6.4"
-DataStructures = "0.19"
 ForwardDiff = "1.4"
-Graphs = "1.12"
 KernelAbstractions = "0.9.34"
 LinearAlgebra = "1"
 NLLSsolver = "5.3.2"
@@ -42,17 +38,19 @@ Static = "1"
 StaticArrays = "1.9"
 Statistics = "1"
 VisualGeometryToolkitCore = "0.9"
-VisualGeometryToolkitEstimation = "0.8"   # TEMPORARY: the snapshot's version field is unbumped (its 0.9.0 is unreleased); "0.9" at release
-VisualGeometryToolkitFeatures = "0.6.1"
+VisualGeometryToolkitEstimation = "0.8"   # TEMPORARY: admits the 0.9 tree's own unbumped version field (0.8.0); the released version at the cascade
+VisualGeometryToolkitFeatures = "0.6.1"   # the 0.9 tree's own version field; the released version at the cascade
 julia = "1.12"
 
 # TEMPORARY (never pushed or registered while it is here): the VisualGeometryToolkit 0.9 stack is not registered yet, so every
-# stack package resolves from the monorepo snapshot beside this repository (~/src/vgtk-board-deform, branch downstream-base).
-# Remove before release, with the compat above at the registered versions.
+# stack package PanoramaStitching or a workspace member (test, docs) uses resolves from the read-only monorepo checkout beside
+# this repository, ~/src/vgtk-09-base (detached at d2af91ef). The members take these [sources] from here (Pkg merges them per
+# UUID across a workspace). A sibling-worktree path is mutable and differs per machine: what it resolves to is whatever that
+# checkout holds. Remove before release, with the compat above at the registered versions.
 [sources]
-VisualGeometryToolkitCore = {path = "../vgtk-board-deform/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../vgtk-board-deform/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../vgtk-board-deform/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitCore = {path = "../vgtk-09-base/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../vgtk-09-base/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../vgtk-09-base/VisualGeometryToolkitFeatures"}
 
 [workspace]
 projects = ["test", "docs"]

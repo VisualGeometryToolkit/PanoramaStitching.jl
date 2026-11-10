@@ -29,7 +29,8 @@ from the registries (CauRegistry; General for those it holds).
 - `src/features.jl` — per frame ASIFT keypoints and DeDoDe descriptions, per pair the LoMa matches as bearings with their
   back-projection Jacobians.
 - `src/registration.jl` — `register_rotations` and its `Registration`.
-- `src/view_graph.jl` — `ViewGraph` (Graphs.jl) and `chain_tracks` (DataStructures.jl union-find).
+- `src/tracks.jl` — `chain_tracks` (the components of the match graph, VisualGeometryToolkitEstimation's `ViewGraph`). The view
+  graph of the verified pairs is Estimation's `ViewGraph` (registration.jl's `_view_graph`): PanoramaStitching has none of its own.
 - `src/rotation_bundle.jl` — `refine_rotations`: NLLSsolver, one `SO3Manifold` per frame and one `SphereManifold` per track.
 - `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
   render shares.

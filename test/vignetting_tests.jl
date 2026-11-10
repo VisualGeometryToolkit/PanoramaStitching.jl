@@ -408,3 +408,59 @@ end
         @test !any(t -> occursin(t, a["name"]), ("intensity", "channel", "none", "frame", "sampson", "free", "fixed"))
     end
 end
+
+@testitem "panorama_vignetting example: the verified pairs are a cached stage, reused when only the averaging or the bundle changes" begin
+    using Test, StaticArrays
+    import JSON
+    using PanoramaStitching: PanoramaStitching, VerifiedPairs
+    dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
+    code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
+    named(x, name) = x === name || (x isa Expr && x.head === :call && x.args[1] === name)
+    defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head in (:(=), :function) && named(x.args[1], name))
+    m = Module()
+    Core.eval(m, :(using PanoramaStitching, StaticArrays; import JSON; import VisualGeometryToolkitCore as VgtkCore))
+    for name in (:data_root, :input_path, :say, :stage_key, :cached_record, :REGISTRATION_FORMAT, :registration_key, :PAIRS_FORMAT,
+                 :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :pairs_record, :pairs_from_record)
+        Core.eval(m, only(filter(x -> defines(x, name), code.args)))
+    end
+    call(f, args...; kw...) = Base.invokelatest(getfield(m, f), args...; kw...)
+    # two frames' features (one keypoint unrefined: its covariance NaN) and one verified pair
+    F(px) = PanoramaStitching.FrameFeatures(px, [SMatrix{2, 2}(2.0, 0.1, 0.1, 3.0), SMatrix{2, 2}(fill(NaN, 2, 2))], nothing, 40)
+    R = SMatrix{3, 3, Float64, 9}(cosd(10), 0.0, -sind(10), 0.0, 1.0, 0.0, sind(10), 0.0, cosd(10))
+    vp = VerifiedPairs([F([SA[10.25, 20.5], SA[30.0, 40.125]]), F([SA[1.0 / 3, 2.0], SA[5.0, 6.0]])],
+                       Dict((1, 2) => (rotation = R, inliers = 2)), Dict((1, 2) => [(1, 2), (2, 1)]),
+                       Dict((1, 2) => (matches = 3, inliers = 2, rms_px = 0.4, rotation_deg = 10.0)))
+    root = mktempdir(); mkpath(joinpath(root, "raw"))
+    foreach(n -> write(joinpath(root, "raw", n), n), ("a.ARW", "b.ARW"))
+    cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW"),
+                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0),
+                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
+                                                                               "averaging_loss" => "huber", "bundle_loss" => "cauchy",
+                                                                               "bundle_scale_multiple" => 3.0), Dict{String, Any}(string(k) => v for (k, v) in kw)))
+    out = mktempdir(); inp = (; names = ["a.ARW", "b.ARW"])
+    path = joinpath(out, "verified_pairs.json")
+    withenv("VGTK_DATA_ROOT" => root) do
+        matched = Ref(0)                                                  # how often the matching ran
+        compute() = (matched[] += 1; merge!(call(:pairs_record, vp), Dict{String, Any}("seconds" => 1.0)))
+        stage(c) = call(:cached_record, compute, path, call(:pairs_key, (; cfg = c, out), inp); log = devnull, what = "verified pairs")
+        rec = stage(cfg())
+        @test matched[] == 1 && isfile(path) && haskey(rec, "key")
+        @test stage(cfg()) == rec && matched[] == 1                      # a second run with the same matching settings skips it
+        back = call(:pairs_from_record, rec)                              # the record reads back exactly
+        @test back isa VerifiedPairs && back.verified == vp.verified && back.inlier_matches == vp.inlier_matches && back.stats == vp.stats
+        @test all(k -> back.features[k].pixels == vp.features[k].pixels && isequal(back.features[k].pixel_covariances, vp.features[k].pixel_covariances) &&
+                       back.features[k].n_detected == 40, 1:2)
+        # a changed averaging or bundle setting: a new registration, the same pairs
+        key(f, c) = call(f, (; cfg = c, out), inp)
+        for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_scale_multiple = 2.5), cfg(; bundle_loss = "huber"))
+            @test key(:registration_key, c) != key(:registration_key, cfg()) && key(:pairs_key, c) == key(:pairs_key, cfg())
+            stage(c)
+        end
+        @test matched[] == 1
+        # a changed matching setting, or a changed RAW file: matched again
+        stage(cfg(; min_inliers = 30)); @test matched[] == 2
+        write(joinpath(root, "raw", "b.ARW"), "b, rewritten"); stage(cfg(; min_inliers = 30)); @test matched[] == 3
+        # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its loss keys the pairs there
+        @test key(:pairs_key, cfg(; pairs = "lag_overlap", averaging_loss = "cauchy")) != key(:pairs_key, cfg(; pairs = "lag_overlap"))
+    end
+end

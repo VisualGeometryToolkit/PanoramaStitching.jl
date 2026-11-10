@@ -15,13 +15,13 @@ frames alone, interpolation free, or the gains alone under a given vignetting
 
 Built on the VisualGeometryToolkit stack: VisualGeometryToolkitFeatures' ASIFT
 detector and LoMa descriptor and matcher, VisualGeometryToolkitEstimation's
-`find_rotation` and `fit_rotation_averaging`, VisualGeometryToolkitCore's
+`find_rotation`, `ViewGraph` and `fit_rotation_averaging`, VisualGeometryToolkitCore's
 cameras, vignetting models, rotation charts, panorama projections and warping
 machinery (`image_warp`, `image_sample!`, `pointwise!`: KernelAbstractions
 kernels on GPU arrays, the same code on the host); KernelAbstractions.jl and
 Atomix.jl (the vignetting fit's normal equations), Adapt.jl (a camera's forward
 map moved to the frames' backend), SparseArrays (the fit's host Cholesky solve),
-Graphs.jl, DataStructures.jl, NLLSsolver.jl and StableRNGs.jl (the pairs'
+NLLSsolver.jl (the rotation bundle) and StableRNGs.jl (the pairs'
 RANSAC samplers, seeded by VisualGeometryToolkitCore's `stable_seed`).
 """
 module PanoramaStitching
@@ -33,8 +33,6 @@ using Static: static
 using StaticArrays: SVector, SMatrix, StaticVector
 using Rotations: RotMatrix
 using CoordinateTransformations: AffineMap, LinearMap, Translation
-import Graphs
-import DataStructures
 import NLLSsolver
 import KernelAbstractions as KA
 import Adapt
@@ -47,8 +45,8 @@ import VisualGeometryToolkitEstimation as VgtkEstimation
 import VisualGeometryToolkitFeatures as VgtkFeatures
 using PrecompileTools: @setup_workload, @compile_workload       # src/precompile.jl
 
-export register_rotations, Registration
-export ViewGraph, chain_tracks, refine_rotations, RotationBundleMetadata
+export register_rotations, Registration, verify_pairs, VerifiedPairs
+export chain_tracks, refine_rotations, RotationBundleMetadata
 export world_direction, FrameSamples, sample_frames, fibonacci_directions
 export true_up, up_frame, PanoramaView, panorama_view, render_panorama, render_cube_map
 export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, IntensityNoise, IntensityAndPositionNoise
@@ -56,7 +54,7 @@ export IntensityGains, ChannelGains
 export score_seams
 public FrameFeatures, detect_features, pair_bearings, frame_region, CUBE_FACES, GAIN_CORRECTIONS, MEASUREMENT_NOISES
 
-include("view_graph.jl")
+include("tracks.jl")
 include("sampling.jl")
 include("rotation_bundle.jl")
 include("features.jl")

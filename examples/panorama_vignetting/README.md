@@ -61,9 +61,13 @@ Under `$VGTK_DATA_ROOT`:
    pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (`raw_scale = 2`), with the
    planes' true sample positions (G at the quad centre, R and B ¼ px off) and a per-quad saturation mask (any of the four
    photosites at the white level). Decoding is done once and cached (below).
-2. **Register** (`registration`). `register_rotations`: ASIFT keypoints described by DeDoDe and matched by LoMa, the rotation
-   of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring with a 5 px half-width), robust rotation
-   averaging over the view graph, tracks, and the bundle of the rotations and track directions. A grid lens is read
+2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints described by DeDoDe and matched by LoMa,
+   the rotation of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring with a 5 px half-width), cached in
+   `verified_pairs.json` before anything else runs on them, keyed by the matching and verification settings (every
+   `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files' hashes: changing only the
+   averaging or the bundle reuses the pairs, and a failure past them loses none of the hour they take. Then
+   `register_rotations` on the pairs: robust rotation averaging over VisualGeometryToolkitEstimation's view graph, tracks,
+   and the bundle of the rotations and track directions. A grid lens is read
    as a `SplineLens` camera and projects through its forward spline, fitted over its imaged region. The rotations are
    cached in `rotations.json`, keyed by the registration settings, the inputs and the RAW files' hashes, with the bundle's
    outcome (`converged`, `not_run` or another retcode) and its count of observations dropped at its start (a start prediction
@@ -136,6 +140,7 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 | `decoded/<stem>.png` | the cached frame: 16-bit RGB of per-plane photosite code sums (R and B `2·raw`, G `raw₁ + raw₂`) |
 | `decoded/<stem>_saturated.png` | its saturation mask, 8-bit 0/1, the same size |
 | `decoded/decode.json` | once per set: the decode settings (mode, gain), black and white levels, the planes' sample offsets, and per frame the RAW's SHA-256 |
+| `verified_pairs.json` | the verified pairs (the frames' keypoints and covariances; per pair its rotation, counts and inlier matches), with its cache key |
 | `rotations.json` | the registration (`d = R_k·f_k`, the first frame's camera frame), with its cache key |
 | `vignetting.json`, `vignetting_profile.csv`, `vignetting_map.csv`, `vignetting_map.png` | the fitted V of record: its spline space and log-V coefficients; V(ρ) every 4 px (radial); V on the sensor every 32 px; V as an image (normalized to its maximum) |
 | `vignetting_compare_<model>.*` | the comparison fits (`compare_models`), the same record |
