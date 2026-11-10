@@ -43,14 +43,13 @@ VisualGeometryToolkitFeatures = "0.6.1"   # the 0.9 tree's own version field; th
 julia = "1.12"
 
 # TEMPORARY (never pushed or registered while it is here): the VisualGeometryToolkit 0.9 stack is not registered yet, so every
-# stack package PanoramaStitching or a workspace member (test, docs) uses resolves from the read-only monorepo checkout beside
-# this repository, ~/src/vgtk-09-base (detached at d2af91ef). The members take these [sources] from here (Pkg merges them per
-# UUID across a workspace). A sibling-worktree path is mutable and differs per machine: what it resolves to is whatever that
-# checkout holds. Remove before release, with the compat above at the registered versions.
+# stack package resolves from the monorepo snapshot beside this repository (~/src/vgtk-bounded-camera-region, branch
+# bounded-camera-region: the 0.9 release branch, whose Features has LoMa's :auto ONNX Runtime provider).
+# Remove before release, with the compat above at the registered versions.
 [sources]
-VisualGeometryToolkitCore = {path = "../vgtk-09-base/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../vgtk-09-base/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../vgtk-09-base/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitCore = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitFeatures"}
 
 [workspace]
 projects = ["test", "docs"]

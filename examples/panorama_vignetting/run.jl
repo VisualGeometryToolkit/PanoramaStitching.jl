@@ -8,12 +8,10 @@
 # `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
-using CUDA
-# ONNX Runtime's CUDA provider (registration.execution_provider = "cuda") needs cuDNN loaded beside CUDA, and CUDA's runtime
-# 12.x (CUDA.set_runtime_version!(v"12.9")); cuDNN is loaded only where the environment holds it, so one without it runs "cpu"
-if Base.find_package("cuDNN") !== nothing
-    import cuDNN
-end
+using CUDA                                         # the [compute] device's kernels
+# LoMa's ONNX Runtime CUDA provider (registration.execution_provider = "auto" or "cuda") takes its CUDA 12 runtime and cuDNN
+# from this environment's CUDA_Runtime_jll and CUDNN_jll (VisualGeometryToolkitFeatures loads them for ONNX Runtime alone,
+# whatever runtime CUDA.jl uses); "auto" runs on the CPU, warning why, where they or a device are missing.
 using PanoramaStitching
 import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -191,11 +189,13 @@ end
 const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.CauchyShape())
 
 # The stages' records (the verified pairs, the registration): one JSON record each in the output folder, reused while its key —
-# a SHA-256 of the record's format, the stage's settings, the inputs, the decode settings and the RAW files' hashes — matches.
+# a SHA-256 of the record's format, the stage's settings, the ONNX Runtime provider LoMa runs on (`execution_provider = "auto"`
+# resolved: a CPU record is not a CUDA run's, whose matches differ in the pairs at the network's threshold), the inputs, the
+# decode settings and the RAW files' hashes — matches.
 # `cached_record` is the one reader and writer: a record whose key differs is recomputed by `compute()` and written over.
-function stage_key(C, inp, format, settings)
+function stage_key(C, inp, format, settings, provider::Symbol)
     canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
-    return VgtkCore.sha256_hex(join([format, canon(settings), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
+    return VgtkCore.sha256_hex(join([format, canon(settings), "provider=$provider", canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
                                      (open(VgtkCore.sha256_hex, joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names)...], "|"))
 end
 function cached_record(compute, path, key; log, what)
@@ -212,28 +212,31 @@ function cached_record(compute, path, key; log, what)
     return JSON.parsefile(path)                                   # read back: the record a later run reuses, exactly
 end
 
-# The registration's key: every [registration] setting. v3: PanoramaStitching 0.2.2 seeds each pair's sampler by
-# stable_seed(seed, i, j), so a v2 record's rotations are not this code's; they are recomputed. v5: PanoramaStitching 0.6's bundle
-# drops the observations not imaged at its start and counts them (`n_dropped_start`, replacing v3's start finiteness count), and
-# holds the frames left with none (`frames_unconstrained`).
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v5 (the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
-registration_key(C, inp) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"])
+# The registration's key: every [registration] setting and LoMa's provider. v3: PanoramaStitching 0.2.2 seeds each pair's sampler
+# by stable_seed(seed, i, j), so a v2 record's rotations are not this code's; they are recomputed. v5: PanoramaStitching 0.6's
+# bundle drops the observations not imaged at its start and counts them (`n_dropped_start`, replacing v3's start finiteness
+# count), and holds the frames left with none (`frames_unconstrained`). v6: the key holds the provider LoMa runs on, and the
+# record LoMa's provenance (`loma`).
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v6 (LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
 # rotation averaging's and the bundle's, so changing those reuses the pairs. With pairs = "lag_overlap" the averaging loss aims
 # the pairs past the lag, so it keys the pairs too.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v1 (features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v2 (LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "bundle_loss", "bundle_scale_multiple", "bundle_iterations", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol", "bundle_whitening")
 function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_loss"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
 end
-pairs_key(C, inp) = stage_key(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]))
+pairs_key(C, inp, provider::Symbol) = stage_key(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
 
 # The verified pairs as a record and back (frame indices 1-based; a matrix row by row; a NaN — an unrefined keypoint's covariance
 # — as null). The record keeps no descriptions: the pairs read back are `VerifiedPairs{FrameFeatures{Nothing}}`.
 nan_null(x) = isnan(x) ? nothing : x
+# LoMa's provenance (a `loma_provenance` NamedTuple per model, or a record's Dict read back) as a record: text values.
+loma_record(loma) = Dict(string(k) => Dict(string(f) => string(v) for (f, v) in pairs(p)) for (k, p) in pairs(loma))
 function pairs_record(vp::VerifiedPairs)
     feats = [Dict("pixels" => [collect(p) for p in f.pixels], "pixel_covariances" => [nan_null.(vec(Σ)) for Σ in f.pixel_covariances],
                   "n_detected" => f.n_detected) for f in vp.features]
@@ -241,7 +244,7 @@ function pairs_record(vp::VerifiedPairs)
                   "inlier_matches" => [collect(m) for m in vp.inlier_matches[(i, j)]],
                   "matches" => vp.stats[(i, j)].matches, "rms_px" => vp.stats[(i, j)].rms_px, "rotation_deg" => vp.stats[(i, j)].rotation_deg)
              for ((i, j), e) in sort!(collect(vp.verified); by = first)]
-    return Dict{String, Any}("features" => feats, "pairs" => pairs)
+    return Dict{String, Any}("features" => feats, "pairs" => pairs, "loma" => loma_record(vp.loma))
 end
 function pairs_from_record(rec)
     num(x) = x === nothing ? NaN : Float64(x)
@@ -254,18 +257,15 @@ function pairs_from_record(rec)
     matches = Dict(key(p) => [(Int(m[1]), Int(m[2])) for m in p["inlier_matches"]] for p in rec["pairs"])
     stats = Dict(key(p) => (matches = Int(p["matches"]), inliers = Int(p["inliers"]), rms_px = Float64(p["rms_px"]),
                             rotation_deg = Float64(p["rotation_deg"])) for p in rec["pairs"])
-    return VerifiedPairs(feats, verified, matches, stats)
+    loma = (; descriptor = rec["loma"]["descriptor"], matcher = rec["loma"]["matcher"])
+    return VerifiedPairs(feats, verified, matches, stats, loma)
 end
 
 # The verified pairs, cached (verified_pairs.json): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
 # setting, and written before the view graph is built, so a failure past it (the averaging, the bundle) loses none of it.
-function verified_pairs(C, inp, lens; log)
+function verified_pairs(C, inp, lens, provider::Symbol; log)
     r = C.cfg["registration"]
-    rec = cached_record(joinpath(C.out, "verified_pairs.json"), pairs_key(C, inp); log, what = "verified pairs") do
-        ep = r["execution_provider"]
-        ep in ("cpu", "cuda") || error("registration.execution_provider = $ep is not \"cpu\" or \"cuda\"")
-        ep == "cuda" && !isdefined(@__MODULE__, :cuDNN) &&
-            error("registration.execution_provider = \"cuda\" needs cuDNN in the environment (ONNX Runtime's CUDA provider)")
+    rec = cached_record(joinpath(C.out, "verified_pairs.json"), pairs_key(C, inp, provider); log, what = "verified pairs") do
         t0 = time()
         vp = verify_pairs(inp.frames, lens; raw_scale = 2, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = r["asift_tilts"] == "imas25" ? nothing : [Tuple(t) for t in r["asift_tilts"]],
@@ -274,7 +274,7 @@ function verified_pairs(C, inp, lens; log)
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = Float64(r["scoring_threshold_px"])),
                           max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_loss = LOSSES[r["averaging_loss"]],
-                          execution_provider = Symbol(ep), say = m -> say(log, m))
+                          execution_provider = provider, say = m -> say(log, m))
         merge!(pairs_record(vp), Dict{String, Any}("frames" => inp.names, "seconds" => time() - t0))
     end
     return (; pairs = pairs_from_record(rec), seconds = Float64(rec["seconds"]))
@@ -282,8 +282,10 @@ end
 
 function registration(C, inp, lens; log)
     r = C.cfg["registration"]
-    rec = cached_record(joinpath(C.out, "rotations.json"), registration_key(C, inp); log, what = "registration") do
-        vp = verified_pairs(C, inp, lens; log)
+    # "auto" → "cuda" or "cpu" (warning why) here, before the keys; "cuda" that cannot run is an error naming why
+    provider = VgtkFeatures.resolve_execution_provider(Symbol(r["execution_provider"]))
+    rec = cached_record(joinpath(C.out, "rotations.json"), registration_key(C, inp, provider); log, what = "registration") do
+        vp = verified_pairs(C, inp, lens, provider; log)
         t0 = time()
         reg = register_rotations(vp.pairs, lens; averaging_loss = LOSSES[r["averaging_loss"]], bundle_loss = LOSSES[r["bundle_loss"]],
                                  bundle_scale_multiple = r["bundle_scale_multiple"], bundle_iterations = r["bundle_iterations"],
@@ -302,7 +304,10 @@ function registration(C, inp, lens; log)
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                           # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor
                           # point's σ of IntensityAndPositionNoise
-                          "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]))
+                          "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]),
+                          # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
+                          # the ONNX Runtime provider used, its threads and, on CUDA, the driver, runtime and cuDNN versions
+                          "loma" => loma_record(reg.loma))
     end
     # a record written before 2026-11-04 holds no bundle loss width: no point scale (IntensityAndPositionNoise then refuses to run;
     # delete the record to recompute it)
@@ -310,7 +315,7 @@ function registration(C, inp, lens; log)
             pairs = rec["pairs"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
-            point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
+            loma = rec["loma"], point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -617,6 +622,10 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                     "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
                     "rotation: no observation kept).")
+        lm = reg.loma["descriptor"]
+        println(io, "- LoMa ($(lm["model"]), $(reg.loma["matcher"]["model"])): ONNX Runtime $(lm["onnxruntime"]) on $(lm["execution_provider"])" *
+                    "$(lm["execution_provider"] == "cuda" ? " (CUDA runtime $(lm["cuda_runtime"]), cuDNN $(lm["cudnn"]), driver $(lm["cuda_driver"]))" : ""), " *
+                    "$(lm["threads"]) threads (registration.execution_provider = \"$(C.cfg["registration"]["execution_provider"])\").")
         println(io, "- Principal point (the ray (0, 0, 1)): ($(f(pp[1]; d = 1)), $(f(pp[2]; d = 1))) px.")
         println(io, "- Compute backend: $(get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])).")
         println(io, "- Seam raster: equirectangular, $(C.cfg["seams"]["deg_per_pixel"])°/px over lon $(f(ext[1]; d = 1))…$(f(ext[2]; d = 1))°, lat $(f(ext[3]; d = 1))…$(f(ext[4]; d = 1))° (up frame).")

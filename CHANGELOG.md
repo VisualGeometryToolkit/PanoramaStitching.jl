@@ -27,10 +27,30 @@
   built and keyed by the matching and verification settings (every `[registration]` key but the averaging's and the
   bundle's; the averaging loss too with `pairs = "lag_overlap"`, whose averaging aims the pairs), the inputs, the decode
   settings and the RAW files' hashes: changing the averaging or the bundle reruns in seconds, and a failure past the pairs
-  loses none of the matching. `rotations.json` keeps its key and format (v5): its records are still reused.
-- TEMPORARY `[sources]` take Core, Estimation and Features (and the example's IO) from the read-only monorepo checkout
-  `~/src/vgtk-09-base`, in place of `~/src/vgtk-board-deform`; compat admits that tree's own version fields
-  (Estimation 0.8.0, Features 0.6.1, unbumped) until the cascade moves it to the released versions.
+  loses none of the matching.
+
+### LoMa on the GPU wherever it runs: `execution_provider = :auto`
+
+- `register_rotations`' `execution_provider` defaults to `:auto` (was `:cpu`): LoMa's descriptor and matcher run on ONNX
+  Runtime's CUDA provider where VisualGeometryToolkitFeatures finds a CUDA device and the environment holds
+  `CUDA_Runtime_jll` and `CUDNN_jll` (their CUDA 12 builds, loaded for ONNX Runtime alone, beside CUDA.jl's runtime), and on
+  the CPU otherwise, warning once why. `:cpu` and `:cuda` stay; `:cuda` that cannot run is an error naming why. The provider
+  is resolved once per registration by Features' `resolve_execution_provider` (in `verify_pairs`), and the `VerifiedPairs`
+  and the `Registration` record what ran LoMa in their new `loma` field (Features' `loma_provenance` of the descriptor and of the matcher: the models, the provider used,
+  ONNX Runtime's threads and, on CUDA, the driver, runtime and cuDNN versions). cuDNN.jl is no longer needed (cuDNN 1.4, the
+  last for CUDA.jl 5, never resolved beside CUDA_Runtime_Discovery 2, so the configs had stated `"cpu"`).
+- ONNX Runtime's threads are Julia's (`Threads.nthreads()`), not the machine's: a Slurm job's registration stays in its
+  allotment (on dgx01 six 28-CPU jobs had driven a load of 673 at ~70 min of CPU registration each, the GPUs idle).
+- The example: the configs of record state `execution_provider = "cuda"` (never the CPU); its environment holds `CUDA_Runtime_jll` and `CUDNN_jll`
+  (lazy artifacts: downloaded on the first LoMa session where a device is visible), and `run.jl` no longer loads cuDNN. The
+  keys of both cached stages hold the provider `"auto"` resolved to (a CPU record is not reused by a CUDA run: their matches
+  differ at the network's threshold); `verified_pairs.json` (format v2) and `rotations.json` (format v6; older records of
+  either are recomputed) record LoMa's provenance
+  and `summary.md` states the provider, its library versions and the threads.
+- TEMPORARY `[sources]` take Core, Estimation and Features (and the example's IO) from the monorepo snapshot
+  `~/src/vgtk-bounded-camera-region` (the 0.9 release branch, a descendant of `~/src/vgtk-09-base`'s d2af91ef), in place of
+  `~/src/vgtk-board-deform`; compat admits that tree's own version fields (Estimation 0.8.0, Features 0.6.1, unbumped) until
+  the cascade moves it to the released versions.
 
 ### Breaking: the VisualGeometryToolkit 0.9 camera — `imaged_region` replaces every `circle`
 

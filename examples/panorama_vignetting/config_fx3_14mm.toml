@@ -52,7 +52,7 @@ bundle_iterations = 3
 bundle_max_iter = 100
 bundle_ftol = 1.0e-10
 bundle_xtol = 1.0e-10
-execution_provider = "cpu"                         # LoMa's ONNX Runtime provider: "cpu" or "cuda" (needs CUDA and cuDNN loaded)
+execution_provider = "cuda"                        # LoMa's ONNX Runtime provider: "auto" (CUDA where it runs, else the CPU), "cpu" or "cuda"
 
 [domain]                                           # the pixels a measurement may use (fit and seam score)
 rim_margin_px = 120.0                              # the circle's soft edge (the falloff from ρ ≈ 1520 px to the 1680 px midpoint)

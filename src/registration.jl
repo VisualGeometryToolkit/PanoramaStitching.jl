@@ -37,8 +37,10 @@ its rotation angle in degrees), `averaging` (the `fit_rotation_averaging`
 result), `tracks` (the tracks as `(frame, keypoint)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 metadata's `outcome` and `n_dropped_start` say how the bundle ended and how many
-observations it left out at its start, [`RotationBundleMetadata`](@ref)) and `features` (the
-frames' [`FrameFeatures`](@ref)).
+observations it left out at its start, [`RotationBundleMetadata`](@ref)), `features` (the
+frames' [`FrameFeatures`](@ref)) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
+`loma_provenance` of the descriptor and of the matcher — the models, the ONNX Runtime
+provider used and its threads).
 """
 struct Registration{G, A, B, F}
     rotations::Vector{RotMatrix{3, Float64, 9}}
@@ -49,6 +51,7 @@ struct Registration{G, A, B, F}
     dropped::Int
     bundle::B
     features::Vector{F}
+    loma::NamedTuple    # (; descriptor, matcher): loma_provenance of each
 end
 
 """
@@ -63,7 +66,9 @@ and the rotation averaging consume), `inlier_matches` (per verified pair its
 inliers as keypoint index pairs `(a, b)`, keypoint `a` of frame `i` ↔ keypoint `b`
 of frame `j`: what the tracks consume) and `stats` (per verified pair: matches,
 inliers, the rms Sampson distance of its inliers in pixels and its rotation
-angle in degrees). Everything a registration needs after the features, the
+angle in degrees) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
+`loma_provenance` of the descriptor and of the matcher, `(; descriptor,
+matcher)`). Everything a registration needs after the features, the
 matching and the verification, so a caller may keep it and rerun the averaging
 and the bundle alone.
 """
@@ -72,13 +77,14 @@ struct VerifiedPairs{F}
     verified::Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}
     inlier_matches::Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}
     stats::Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}
+    loma::NamedTuple    # (; descriptor, matcher): loma_provenance of each
 end
 
 """
     verify_pairs(frames, camera::BoundedCamera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                  descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                  scoring = nothing, local_optimization = nothing, max_trials, min_trials, averaging_loss,
-                 execution_provider = :cpu, say = _ -> nothing) -> VerifiedPairs
+                 execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
 The verified frame pairs of the pure-rotation sequence `frames`: the features,
 the matching and the pairwise rotations of [`register_rotations`](@ref) (its
@@ -86,19 +92,21 @@ keywords of the same names), stopping before the view graph. `averaging_loss` is
 read only by `pairs = :lag_overlap`, whose rotation averaging of the verified
 pairs aims the pairs past the lag. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap` and an
-`execution_provider` other than `:cpu` or `:cuda` are an `ArgumentError` before
-any feature is detected.
+`execution_provider` other than `:auto`, `:cpu` or `:cuda` are an `ArgumentError`
+before any feature is detected.
 """
 function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; raw_scale::Integer,
                       tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol,
                       min_score::Real, pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                       scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
-                      averaging_loss::VgtkCore.AbstractLossShape, execution_provider::Symbol = :cpu, say = _ -> nothing)
-    _check_pair_settings("verify_pairs", pairs, max_lag, execution_provider)
+                      averaging_loss::VgtkCore.AbstractLossShape, execution_provider::Symbol = :auto, say = _ -> nothing)
+    _check_pair_settings("verify_pairs", pairs, max_lag)
+    # resolved once (one warning on a fallback to the CPU), refusing an unknown provider, before any feature is detected
+    provider = VgtkFeatures.resolve_execution_provider(execution_provider)
     K = length(frames)
-    # one ONNX session each for the whole registration, on `execution_provider`
-    desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider)
-    match = VgtkFeatures.LoMaMatcher(matcher; execution_provider)
+    # one ONNX session each for the whole registration, on the resolved provider
+    desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider = provider)
+    match = VgtkFeatures.LoMaMatcher(matcher; execution_provider = provider)
     feats = map(1:K) do k
         f = detect_features(camera, frames[k], desc; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections)
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")
@@ -135,15 +143,15 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; ra
         (pairs === :all || j - i <= max_lag) && verify(i, j)
     end
     pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag, overlap_deg, averaging_loss)
-    return VerifiedPairs(feats, verified, inlier_matches, stats)
+    loma = (; descriptor = VgtkFeatures.loma_provenance(desc), matcher = VgtkFeatures.loma_provenance(match))
+    return VerifiedPairs(feats, verified, inlier_matches, stats, loma)
 end
 
 # The settings every entry checks before any feature is detected.
-function _check_pair_settings(what, pairs, max_lag, execution_provider)
+# (The execution provider: VisualGeometryToolkitFeatures' `resolve_execution_provider`, which refuses an unknown one.)
+function _check_pair_settings(what, pairs, max_lag)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("$what: pairs = :$pairs is not :all or :lag_overlap"))
     pairs === :all || max_lag >= 1 || throw(ArgumentError("$what: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
-    execution_provider in (:cpu, :cuda) ||
-        throw(ArgumentError("$what: execution_provider = :$execution_provider is not :cpu or :cuda"))
     return nothing
 end
 _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint_covariance) ||
@@ -154,7 +162,7 @@ _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
-                       bundle_xtol, bundle_whitening = :none, execution_provider = :cpu, say = _ -> nothing) -> Registration
+                       bundle_xtol, bundle_whitening = :none, execution_provider = :auto, say = _ -> nothing) -> Registration
     register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; averaging_loss, bundle_loss, bundle_scale_multiple,
                        bundle_iterations, bundle_max_iter, bundle_ftol, bundle_xtol, bundle_whitening = :none,
                        say = _ -> nothing) -> Registration
@@ -171,9 +179,12 @@ RANSAC's:
   `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections` — see
   [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
-  each for the whole registration on `execution_provider` (`:cpu`, the default,
-  or `:cuda`, which needs `import CUDA, cuDNN` and a functional device);
-  `min_score`.
+  each for the whole registration on ONNX Runtime's `execution_provider`
+  (`:auto`, the default: CUDA where VisualGeometryToolkitFeatures finds a device and
+  the environment holds `CUDA_Runtime_jll` and `CUDNN_jll`, else the CPU with a
+  warning naming why; `:cpu`; `:cuda`, an error naming why where it cannot run),
+  on `Threads.nthreads()` ONNX Runtime threads; `min_score`. The provider used is
+  in the result's `loma`.
 - pairs: `pairs = :all` (every frame pair) or `:lag_overlap` (pairs at most
   `max_lag` apart; while the verified pairs leave the frames in more than one
   part, as when a lag pair is dropped, the pair between two parts nearest in
@@ -203,7 +214,7 @@ pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
 stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a `bundle_whitening`
 other than `:none` or `:keypoint_covariance` and an `execution_provider` other
-than `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
+than `:auto`, `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `ArgumentError` too.
 """
@@ -213,8 +224,8 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
-                            bundle_xtol::Real, bundle_whitening::Symbol = :none, execution_provider::Symbol = :cpu, say = _ -> nothing)
-    _check_pair_settings("register_rotations", pairs, max_lag, execution_provider)
+                            bundle_xtol::Real, bundle_whitening::Symbol = :none, execution_provider::Symbol = :auto, say = _ -> nothing)
+    _check_pair_settings("register_rotations", pairs, max_lag)
     _check_whitening("register_rotations", bundle_whitening)
     vp = verify_pairs(frames, camera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections, descriptor, matcher,
                       min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization, max_trials, min_trials,
@@ -240,7 +251,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.n_dropped_start) observations dropped at the start: not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
-    return Registration(Rs, graph, vp.stats, avg, ts, dropped, bundle, feats)
+    return Registration(Rs, graph, vp.stats, avg, ts, dropped, bundle, feats, vp.loma)
 end
 
 # The view graph of the frames 1:K and the verified pairs: VisualGeometryToolkitEstimation's `ViewGraph`, each edge the pair's

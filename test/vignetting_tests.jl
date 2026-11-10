@@ -420,7 +420,7 @@ end
     m = Module()
     Core.eval(m, :(using PanoramaStitching, StaticArrays; import JSON; import VisualGeometryToolkitCore as VgtkCore))
     for name in (:data_root, :input_path, :say, :stage_key, :cached_record, :REGISTRATION_FORMAT, :registration_key, :PAIRS_FORMAT,
-                 :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :pairs_record, :pairs_from_record)
+                 :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :loma_record, :pairs_record, :pairs_from_record)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     call(f, args...; kw...) = Base.invokelatest(getfield(m, f), args...; kw...)
@@ -429,7 +429,9 @@ end
     R = SMatrix{3, 3, Float64, 9}(cosd(10), 0.0, -sind(10), 0.0, 1.0, 0.0, sind(10), 0.0, cosd(10))
     vp = VerifiedPairs([F([SA[10.25, 20.5], SA[30.0, 40.125]]), F([SA[1.0 / 3, 2.0], SA[5.0, 6.0]])],
                        Dict((1, 2) => (rotation = R, inliers = 2)), Dict((1, 2) => [(1, 2), (2, 1)]),
-                       Dict((1, 2) => (matches = 3, inliers = 2, rms_px = 0.4, rotation_deg = 10.0)))
+                       Dict((1, 2) => (matches = 3, inliers = 2, rms_px = 0.4, rotation_deg = 10.0)),
+                       (; descriptor = (; model = "loma_b", execution_provider = :cuda, threads = 8),
+                          matcher = (; model = "loma_b128", execution_provider = :cuda, threads = 8)))
     root = mktempdir(); mkpath(joinpath(root, "raw"))
     foreach(n -> write(joinpath(root, "raw", n), n), ("a.ARW", "b.ARW"))
     cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW"),
@@ -442,16 +444,19 @@ end
     withenv("VGTK_DATA_ROOT" => root) do
         matched = Ref(0)                                                  # how often the matching ran
         compute() = (matched[] += 1; merge!(call(:pairs_record, vp), Dict{String, Any}("seconds" => 1.0)))
-        stage(c) = call(:cached_record, compute, path, call(:pairs_key, (; cfg = c, out), inp); log = devnull, what = "verified pairs")
+        stage(c) = call(:cached_record, compute, path, call(:pairs_key, (; cfg = c, out), inp, :cuda); log = devnull, what = "verified pairs")
         rec = stage(cfg())
         @test matched[] == 1 && isfile(path) && haskey(rec, "key")
         @test stage(cfg()) == rec && matched[] == 1                      # a second run with the same matching settings skips it
         back = call(:pairs_from_record, rec)                              # the record reads back exactly
         @test back isa VerifiedPairs && back.verified == vp.verified && back.inlier_matches == vp.inlier_matches && back.stats == vp.stats
+        @test back.loma.descriptor["execution_provider"] == "cuda" && back.loma.matcher["model"] == "loma_b128"   # LoMa's provenance
         @test all(k -> back.features[k].pixels == vp.features[k].pixels && isequal(back.features[k].pixel_covariances, vp.features[k].pixel_covariances) &&
                        back.features[k].n_detected == 40, 1:2)
         # a changed averaging or bundle setting: a new registration, the same pairs
-        key(f, c) = call(f, (; cfg = c, out), inp)
+        key(f, c; provider = :cuda) = call(f, (; cfg = c, out), inp, provider)
+        # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
+        @test key(:pairs_key, cfg(); provider = :cpu) != key(:pairs_key, cfg()) && key(:registration_key, cfg(); provider = :cpu) != key(:registration_key, cfg())
         for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_scale_multiple = 2.5), cfg(; bundle_loss = "huber"))
             @test key(:registration_key, c) != key(:registration_key, cfg()) && key(:pairs_key, c) == key(:pairs_key, cfg())
             stage(c)

@@ -17,8 +17,8 @@ julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vign
 ```
 
 `<env>` is a Julia environment with PanoramaStitching, VisualGeometryToolkitCore, VisualGeometryToolkitEstimation,
-VisualGeometryToolkitFeatures, VisualGeometryToolkitIO, CUDA, LibRaw_jll, PNGFiles, JSON, SHA and TOML; `Project.toml` in
-this folder is that environment (`julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'`).
+VisualGeometryToolkitFeatures, VisualGeometryToolkitIO, CUDA, CUDA_Runtime_jll, CUDNN_jll, LibRaw_jll, PNGFiles, JSON, SHA
+and TOML; `Project.toml` in this folder is that environment (`julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'`).
 **It needs the VisualGeometryToolkit 0.5 stack** (VisualGeometryToolkitCore 0.5, VisualGeometryToolkitEstimation 0.6, and
 the Features release that ships `load_raw`). Until those are registered, use an environment whose `[sources]` point at a
 checkout of the monorepo (the author's scratch environment does exactly that).
@@ -32,6 +32,13 @@ The compute backend is the config's `[compute] device` (`"cuda"`). On a shared G
 atomic sums run in another order; the package's tests check log V device against host to 1e-6, the CG iteration count varies
 by a few percent from run to run for the same reason); `run.log` and `summary.md` record which backend ran. A grid lens (the 8 mm rooftop) renders
 on the device too (Core's Adapt rules carry its `SplineLens` into `image_warp`).
+
+LoMa (the registration's descriptor and matcher) runs on ONNX Runtime's CUDA provider: the configs of record state
+`[registration] execution_provider = "cuda"` (an error naming why where it cannot run; never the CPU). The CUDA 12 runtime
+and cuDNN come from this environment's `CUDA_Runtime_jll` and `CUDNN_jll`, downloaded on first use, whatever runtime CUDA.jl
+uses; `"auto"` runs there where a device is visible and on the CPU otherwise, with a warning naming why. ONNX Runtime uses
+Julia's threads (`--threads`; in a Slurm job `--threads=$SLURM_CPUS_PER_TASK`). The provider is part of the cache keys of
+the verified pairs and of the registration, both records hold LoMa's provenance, and `summary.md` states it.
 
 ## Inputs
 
