@@ -8,7 +8,7 @@
   rotations and the track directions, in the same bundle (one more NLLSsolver variable: VisualGeometryToolkitCore's
   `ParameterManifold` of the camera's model restricted to those parameters, the camera block of Estimation's
   `refine_camera_and_poses`; its Jacobian ForwardDiff through the chart, the frame and direction blocks the closed form).
-  The first frame's rotation stays the one gauge. `register_rotations` passes it as `bundle_camera_free`. A SplineLens
+  The first frame's rotation stays the one gauge. `register_rotations` takes it as `bundle_camera_free`. A SplineLens
   camera is refused (its parameters are its lattice's controls, Estimation's own spline route).
 - `RotationBundleMetadata` gains `camera` (the camera at the result: the given one when held) and `calibration`
   (`nothing` when held; else the free parameters' values, standard deviations and covariance — `s²·H⁻¹` of the robust

@@ -414,7 +414,7 @@ end
 _camera_chart(camera, free::Tuple{}) = nothing
 function _camera_chart(camera, free::Tuple{Vararg{Symbol}})
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
-    (m isa VgtkCore.CameraModel && VgtkCore.Cameras.IntrinsicsRole(m.lens) isa VgtkCore.Cameras.FreeIntrinsics) ||
+    (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
         throw(ArgumentError("refine_rotations: camera_free needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
     names = VgtkCore.parameter_names(m)
     for p in free
