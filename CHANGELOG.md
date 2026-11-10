@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Rotation averaging on the stack's Attributed edges
+
+- `register_rotations` (and its `:lag_overlap` overlap step) passes VisualGeometryToolkitEstimation's
+  `fit_rotation_averaging` one dict of edges, each `Attributed(R_ij, (; weight = inliers))`: the stack's 2026-11-10 API
+  (weights travel as Attributed data; the positional weights dict is gone). The weights and the fit are unchanged.
+
 ### Breaking: the VisualGeometryToolkit 0.9 camera — `imaged_region` replaces every `circle`
 
 - Requires VisualGeometryToolkitCore 0.9 (and Estimation and IO of the same stack). Until they register, TEMPORARY

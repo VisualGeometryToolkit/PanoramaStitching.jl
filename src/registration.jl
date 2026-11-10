@@ -148,7 +148,9 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     end
     pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag, overlap_deg, averaging_loss)
     graph = ViewGraph(collect(1:K), verified)
-    avg = VgtkEstimation.fit_rotation_averaging(graph.rotations, Dict(p => Float64(n) for (p, n) in graph.inliers); loss = averaging_loss)
+    # each edge its relative rotation weighted by its inlier count (Estimation reads the weight off the Attributed edge)
+    avg = VgtkEstimation.fit_rotation_averaging(Dict(p => VgtkCore.Attributed(R, (; weight = Float64(graph.inliers[p])))
+                                                     for (p, R) in graph.rotations); loss = averaging_loss)
     say("  rotation averaging: $(length(graph.rotations)) edges, σ̂ $(round(rad2deg(avg.sigma); digits = 4))°, $(avg.retcode)")
     ts, dropped = chain_tracks(inlier_matches)
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
@@ -203,8 +205,8 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_
         attempt(argmin(p -> (p[2] - p[1], p[1]), joins))
     end
     K > 1 || return nothing
-    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(Dict(p => e.rotation for (p, e) in verified),
-                                                               Dict(p => Float64(e.inliers) for (p, e) in verified); loss = averaging_loss))
+    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(Dict(p => VgtkCore.Attributed(e.rotation, (; weight = Float64(e.inliers)))
+                                                                    for (p, e) in verified); loss = averaging_loss))
     axis = [SMatrix{3, 3}(A[k]) * SVector(0.0, 0.0, 1.0) for k in 1:K]
     for i in 1:K, j in (i + max_lag + 1):K
         ((i, j) ∉ tried && rad2deg(VgtkCore.angle_between(axis[i], axis[j])) < overlap_deg) && attempt((i, j))
