@@ -284,6 +284,12 @@ end
 linear_raws(C, inp) = [VgtkFeatures.load_raw(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n); mode = Symbol(C.cfg["decode"]["mode"]),
                                              gain = Float64(C.cfg["decode"]["gain"])) for n in inp.names]
 
+# The pairs' RANSAC local optimization, `[registration] local_optimization`: an Estimation strategy table
+# (`{ type = "triggs", loss = "welsch", scale_multiple = 2.5 }`, `{ type = "irls", loss = "tls" }`), read by Estimation's own
+# loader (an unknown type, loss or key refused).
+rotation_local_optimization(r) = VgtkEstimation.local_optimization_from_toml(r["local_optimization"]; class = :rotation,
+                                                                             section = "registration.local_optimization")
+
 # The verified pairs, cached (verified_pairs.json): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
 # setting, and written before the view graph is built, so a failure past it (the averaging, the bundle) loses none of it.
 function verified_pairs(C, inp, lens, provider::Symbol; log)
@@ -298,6 +304,7 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = Float64(r["scoring_threshold_px"])),
+                          local_optimization = rotation_local_optimization(r),
                           max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_loss = LOSSES[r["averaging_loss"]],
                           execution_provider = provider, say = m -> say(log, m))
         merge!(pairs_record(vp), Dict{String, Any}("frames" => inp.names, "seconds" => time() - t0))

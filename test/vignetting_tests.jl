@@ -365,6 +365,7 @@ end
     using Test, TOML
     using PanoramaStitching: PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
     dir =joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
@@ -395,7 +396,9 @@ end
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
         # the view-graph filters' tolerances and the detector's variant are stated
         reg = TOML.parsefile(joinpath(dir, f))["registration"]
-        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg", "selection", "detection_image"))
+        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg", "selection", "detection_image", "local_optimization"))
+        # the pairs' local optimization is an Estimation strategy table, read by Estimation's own loader
+        @test VgtkEstimation.local_optimization_from_toml(reg["local_optimization"]; class = :rotation) isa VgtkCore.AbstractLocalOptimization
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
         @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)

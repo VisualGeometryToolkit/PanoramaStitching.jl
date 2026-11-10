@@ -19,6 +19,10 @@
 - The example: `[registration]` keys `cycle_tol_deg`, `orientation_tol_deg`, `selection`, `detection_image` and, with
   `"vst"`, `electrons_per_dn`, `read_noise_dn`, `noise_sigmas` (refused with `"tone"`); `"vst"` reads the frames as
   `load_raw`'s `LinearRaw`. The records: verified pairs v3, rotations v7 (the tolerances and the removed pairs).
+- The example: `[registration] local_optimization`, the pairs' RANSAC local optimization as an Estimation strategy table
+  (read by Estimation's `local_optimization_from_toml`; `{ type = "irls", loss = "tls" }` is Estimation's rotation default,
+  `{ type = "triggs", loss = "welsch", scale_multiple = 2.5 }` the robustified LM). `scoring_threshold_px` is MSAC's inlier
+  threshold (its comment called it a half-width).
 
 ### New: the rotation bundle with the camera free — a rotating camera's self-calibration
 
