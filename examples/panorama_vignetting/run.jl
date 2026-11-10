@@ -192,9 +192,9 @@ const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.Cauch
 
 # The registration's cache key: its record's format, its settings, the inputs, the decode settings and the RAW files' hashes.
 # v3: PanoramaStitching 0.2.2 seeds each pair's sampler by stable_seed(seed, i, j), so a v2 record's rotations are not this
-# code's; they are recomputed. v4: PanoramaStitching 0.6's bundle drops the observations not imaged at its start and counts them
-# (`n_dropped_start`, replacing v3's start finiteness count).
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v4 (the bundle's retcode, outcome and observations dropped at its start; pair samplers by stable_seed)"
+# code's; they are recomputed. v5: PanoramaStitching 0.6's bundle drops the observations not imaged at its start and counts them
+# (`n_dropped_start`, replacing v3's start finiteness count), and holds the frames left with none (`frames_unconstrained`).
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v5 (the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 function registration_key(C, inp)
     canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
     return VgtkCore.sha256_hex(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
@@ -214,7 +214,7 @@ function registration(C, inp, lens; log)
             return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
                     pairs = rec["pairs"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
                     bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
-                    bundle_dropped_start = rec["bundle_dropped_start"], provenance = get(rec, "provenance", nothing),
+                    bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
                     point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
         end
     end
@@ -240,15 +240,17 @@ function registration(C, inp, lens; log)
                "frames" => inp.names, "rotations" => [[collect(R[i, :]) for i in 1:3] for R in Rs],
                "pairs" => length(reg.pairs), "bundle_rms_px" => reg.bundle.rms, "seconds" => secs,
                # the bundle's outcome (RotationBundleMetadata): converged, not_run, or another retcode; the observations it dropped
-               # at its start (a start prediction off the camera model's valid domain)
+               # at its start (a start prediction off the camera model's valid domain); the frames it held at their start rotation
+               # (left with no kept observation: their 0-based indices)
                "bundle_retcode" => string(reg.bundle.retcode), "bundle_outcome" => string(reg.bundle.metadata.outcome),
                "bundle_dropped_start" => reg.bundle.metadata.n_dropped_start,
+               "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor point's σ of
                # IntensityAndPositionNoise
                "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]))
     open(io -> JSON.print(io, rec, 2), path, "w")
     return (; rotations = Rs, pairs = length(reg.pairs), bundle_rms_px = reg.bundle.rms, seconds = secs, bundle_retcode = rec["bundle_retcode"],
-            bundle_outcome = rec["bundle_outcome"], bundle_dropped_start = rec["bundle_dropped_start"], provenance = nothing,
+            bundle_outcome = rec["bundle_outcome"], bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = nothing,
             point_scale_px = reg.bundle.metadata.loss_width / r["bundle_scale_multiple"])
 end
 
@@ -553,7 +555,9 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = reg.bundle_rms_px === nothing ? "not recorded" : "$(f(reg.bundle_rms_px; d = 3)) px"
         println(io, "- Registration: $(reg.pairs) verified pairs, bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
-                    "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there).")
+                    "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
+                    "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
+                    "rotation: no observation kept).")
         println(io, "- Principal point (the ray (0, 0, 1)): ($(f(pp[1]; d = 1)), $(f(pp[2]; d = 1))) px.")
         println(io, "- Compute backend: $(get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])).")
         println(io, "- Seam raster: equirectangular, $(C.cfg["seams"]["deg_per_pixel"])°/px over lon $(f(ext[1]; d = 1))…$(f(ext[2]; d = 1))°, lat $(f(ext[3]; d = 1))…$(f(ext[4]; d = 1))° (up frame).")

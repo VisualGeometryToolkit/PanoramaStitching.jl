@@ -29,8 +29,8 @@
   them as `n_dropped_start` (a dropped observation's residual is NaN), replacing `start_nonfinite`; the outcome
   `:nonfinite_start` is retired. A start that leaves nothing to solve is an `ArgumentError`. A frame other than the gauge left with no kept
   observation is held at its start rotation and listed (`frames_unconstrained`; the metadata is
-  `RotationBundleMetadata{K}`). The example's `rotations.json` (format v4: v3 records are recomputed) and `summary.md` record
-  the count.
+  `RotationBundleMetadata{K}`). The example's `rotations.json` (format v5: older records are recomputed) and `summary.md` record
+  the count and the frames held.
 - The example: `[inputs] circle` is refused with an `ArgumentError` naming the camera's `lens_coverage`; `load_lens` returns
   the `BoundedCamera` (a camera store's, or an old grid file read as a `SplineLens` camera whose coverage is the file's
   domain, its forward spline fitted over its imaged region). The configs of record no longer hold their circles; the

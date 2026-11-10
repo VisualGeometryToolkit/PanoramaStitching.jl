@@ -156,7 +156,8 @@ end
         return n, keep
     end
     twice = Vector{Pair{Int, SVector{2, Float64}}}[]
-    while length(twice) < 2
+    for _ in 1:100_000                                       # a bounded search: too few found is a failure, not a hang
+        length(twice) >= 2 && break
         d = normalize(randn(rng, SVector{3, Float64})); t = Pair{Int, SVector{2, Float64}}[]
         for k in 1:K
             c = R[k]' * d; c[3] > 0 || continue
@@ -171,6 +172,7 @@ end
         n, keep = rounds(t)
         n >= 2 && !any(keep) && push!(twice, t)
     end
+    @test length(twice) == 2
     res2 = refine_rotations(grid, start, [tracks; twice]; kw...)
     @test res2.metadata.outcome === :converged && res2.metadata.n_dropped_start == sum(length, twice)
     @test all(j -> res2.metadata.directions[length(tracks) + j] ≈ mean_bearing(twice[j]), eachindex(twice))

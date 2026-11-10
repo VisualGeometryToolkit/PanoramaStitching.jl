@@ -365,13 +365,17 @@ end
 
 @testitem "render_panorama, sample_frames: nothing outside the camera's imaged region" setup = [SyntheticSequence] begin
     # the camera's lens coverage bounds every mask: with a smaller, off-centre image circle every pixel the render shows and every
-    # direction the sampling sees lies at a sensor point inside that circle less the rim margin, and fewer pixels are seen
+    # direction the sampling sees lies at a sensor point inside that circle less the rim margin, and fewer pixels are seen. The
+    # circle is a lit region, not a limit of the lens: the forward map is finite and on the sensor well beyond it (so only the
+    # coverage term of the masks keeps those pixels out; without it this item fails, checked 2026-11-10)
     using Test, StaticArrays
     using PanoramaStitching: render_panorama, sample_frames, panorama_view
     import VisualGeometryToolkitCore as VgtkCore
     q = sequence(; K = 2)
     small = VgtkCore.with_lens_coverage(q.model, VgtkCore.Circle(VgtkCore.Point2(560.0, 470.0), 300.0))
     inside(u) = hypot(u[1] - 560.0, u[2] - 470.0) <= 300.0 - 12.0 + 1.0e-9
+    beyond = VgtkCore.project(VgtkCore.model(q.model), VgtkCore.backproject(VgtkCore.model(q.model), SVector(940.0, 470.0)))
+    @test all(isfinite, beyond) && !inside(beyond) && VgtkCore.valid_domain(VgtkCore.model(q.model)) isa VgtkCore.WholePlane
     eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 120.0, -60.0, 60.0), 0.5)
     kw = (; vignetting = (u, f) -> 1.0, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0)
     r = render_panorama(small, q.frames, q.R, eq; kw...); full = render_panorama(q.model, q.frames, q.R, eq; kw...)
@@ -405,7 +409,8 @@ end
         @test count(>(0), h.owner) > 0.4 * length(h.owner)
         @test count(Array(d.owner) .!= h.owner) <= 1.0e-4 * length(h.owner)
         @test count(Array(d.coverage) .!= h.coverage) <= 1.0e-4 * length(h.coverage)
-        di = Array(d.image); both = .!isnan.(h.image) .& .!isnan.(di)
+        same = repeat(Array(d.owner) .== h.owner, 1, 1, 3)                 # a pixel whose owner flipped holds another frame's value
+        di = Array(d.image); both = same .& .!isnan.(h.image) .& .!isnan.(di)
         @test count(isnan.(di) .!= isnan.(h.image)) <= 3.0e-4 * length(h.image)
         δ = maximum(abs.(di[both] .- h.image[both]))
         @info "Review focus 5: GPU against CPU render, max |difference| $δ (image max $(maximum(h.image[both])))"
