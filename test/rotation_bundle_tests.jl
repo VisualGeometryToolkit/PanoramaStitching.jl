@@ -137,6 +137,53 @@ end
     @test all(j -> isnan(res.metadata.residuals[j][end]), 1:5)                         # a dropped observation has no residual
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:K) < 0.05
+    # A track left out entirely keeps its START direction (the mean bearing of all its observations), its residuals NaN, every
+    # observation counted: here tracks that lose one observation in a first round, restart from the kept bearings, and lose a
+    # second at that restart (left in one frame: out). Found by search with the bundle's rule as the oracle; the bundle with
+    # them converges and equals the bundle without them.
+    fwd = PanoramaStitching._forward_map(grid); dom = VgtkCore.valid_domain(VgtkCore.model(grid))
+    imaged(u) = all(isfinite, u) && VgtkCore.Point2(u[1], u[2]) ∈ dom
+    mean_bearing(obs) = normalize(sum(SMatrix{3, 3}(start[k]) * VgtkCore.backproject(grid, x) for (k, x) in obs))
+    function rounds(t)                                       # the drop rounds of a track at the start, and what it keeps
+        keep = trues(length(t)); n = 0
+        while any(keep)
+            m = mean_bearing([t[i] for i in eachindex(t) if keep[i]])
+            new = [keep[i] && imaged(fwd(SMatrix{3, 3}(start[first(t[i])])' * m)) for i in eachindex(t)]
+            length(unique(first(t[i]) for i in eachindex(t) if new[i])) >= 2 || (new = falses(length(t)))
+            new == keep && break
+            keep = new; n += 1
+        end
+        return n, keep
+    end
+    twice = Vector{Pair{Int, SVector{2, Float64}}}[]
+    while length(twice) < 2
+        d = normalize(randn(rng, SVector{3, Float64})); t = Pair{Int, SVector{2, Float64}}[]
+        for k in 1:K
+            c = R[k]' * d; c[3] > 0 || continue
+            u = VgtkCore.project(pinhole, c)
+            if inside(u)
+                push!(t, k => u)
+            elseif -60 < u[1] < W + 60 && -60 < u[2] < H + 60          # just past an edge: recorded at it
+                push!(t, k => SVector(clamp(u[1], 2.0, W - 2.0), clamp(u[2], 2.0, H - 2.0)))
+            end
+        end
+        length(unique(first.(t))) >= 2 || continue
+        n, keep = rounds(t)
+        n >= 2 && !any(keep) && push!(twice, t)
+    end
+    res2 = refine_rotations(grid, start, [tracks; twice]; kw...)
+    @test res2.metadata.outcome === :converged && res2.metadata.n_dropped_start == sum(length, twice)
+    @test all(j -> res2.metadata.directions[length(tracks) + j] ≈ mean_bearing(twice[j]), eachindex(twice))
+    @test all(j -> all(isnan, res2.metadata.residuals[length(tracks) + j]), eachindex(twice))
+    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res2)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
+    @test isempty(res2.metadata.frames_unconstrained)
+    # a frame that keeps no observation is held at its start rotation and listed: frame 5, started 90° off, is seen by one track
+    # whose start prediction there is off the lattice
+    start5 = merge(start, Dict(5 => rot(SVector(0.0, π / 2, 0.0)) * start[4]))
+    res5 = refine_rotations(grid, start5, [tracks; [[first(tracks[6]), 5 => SVector(500.0, 400.0)]]]; kw...)
+    @test res5.metadata.outcome === :converged && res5.metadata.frames_unconstrained == [5]
+    @test SMatrix{3, 3}(VgtkCore.estimate(res5)[5]) == start5[5]
+    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res5)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
     # every track a pair whose second observation is not imaged at the start: nothing is left to solve
     lone = [[first(t), extra[j]] for (j, t) in enumerate(tracks[1:5]) if first(first(t)) != first(extra[j])]
     @test !isempty(lone)

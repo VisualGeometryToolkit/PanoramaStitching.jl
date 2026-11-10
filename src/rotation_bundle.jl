@@ -119,18 +119,22 @@ domain, where it has no projection and no back-projection Jacobian, as for a
 grid lens calibrated over the sensor whose frames' observations reach its
 corners from a start a fraction of a degree off, the Tamron 20 mm of
 2026-10-29 — and the rest of a track left in fewer than two frames; a
-dropped observation's residual is NaN) and `outcome`, the bundle's outcome:
+dropped observation's residual is NaN, and a track left out keeps its start
+direction), `frames_unconstrained` (the frames other than the gauge left with
+no kept observation: each is held at its start rotation) and `outcome`, the
+bundle's outcome:
 
 - `:not_run` — `iterations = 0` (the start's rotations are the result);
 - `:converged` — the retcode is `:converged`;
 - otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …).
 """
-struct RotationBundleMetadata
+struct RotationBundleMetadata{K}
     directions::Vector{SVector{3, Float64}}
     residuals::Vector{Vector{Float64}}
     loss_width::Float64
     n_observations::Int
     n_dropped_start::Int
+    frames_unconstrained::Vector{K}
     outcome::Symbol
 end
 
@@ -155,6 +159,17 @@ per track minimizing the robust sum of the pixel reprojection errors
 `VisualGeometryToolkitEstimation.fit_rotation_averaging`) and each track's mean
 bearing in the common frame.
 
+An observation whose start prediction is not imaged (its residual or Jacobian
+not finite at the start: the prediction off the model's valid domain) is
+dropped, a track left in fewer than two frames is dropped whole (it keeps its
+start direction, held), and a partly kept track restarts from the mean bearing
+of the observations it keeps, its observations tested again until none is
+dropped: the solve is that of the kept observations alone. A frame other than
+the gauge left with no kept observation is held at its start rotation. The
+result's `n` is the number of observations kept; its metadata's
+`n_observations` the number given and `n_dropped_start` their difference
+([`RotationBundleMetadata`](@ref)).
+
 - `tracks` — `AbstractVector` of tracks, each an `AbstractVector` of `frame =>
   pixel` observations (pixels in the camera's frame), two frames at least. A
   pixel may be VisualGeometryToolkitCore's `Uncertain(pixel, CovMat(Σ))`, its
@@ -176,8 +191,9 @@ A refine ends in the local minimum its start leads to; the result's `retcode`
 and its metadata's `outcome` ([`RotationBundleMetadata`](@ref)) say how the
 bundle ended. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
-without, and a covariance that is not finite and positive definite are an
-`ArgumentError`.
+without, a covariance that is not finite and positive definite, and a start
+that keeps no observation (every track left in fewer than two imaged frames)
+are an `ArgumentError`.
 """
 function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector;
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
@@ -202,26 +218,33 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     # the start: the frames' rotations, each track's mean bearing in the common frame over the observations it keeps
     nf = length(frames)
     bearing(o) = SMatrix{3, 3, Float64, 9}(rotations[first(o)]) * VgtkCore.backproject(camera, pixel(o))
+    # (a track none of whose kept pixels back-projects has no start direction: NaN, and its observations are then dropped)
     function start_direction(t, keep)
         rays = [r for (i, o) in enumerate(t) if keep[i] for r in (bearing(o),) if all(isfinite, r)]
-        return VgtkCore.Eliminable{E}(VgtkCore.SphereManifold(isempty(rays) ? SVector(0.0, 0.0, 1.0) : sum(rays)))
+        return VgtkCore.Eliminable{E}(VgtkCore.SphereManifold(isempty(rays) ? SVector(NaN, NaN, NaN) : sum(rays)))
     end
     vars = V[[VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(rotations[k])) for k in frames];
              [start_direction(t, trues(length(t))) for t in tracks]]
     width = NaN
     observation(kernel, j, i, o) = _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j),
                                                                               kernel, whitenings[j][i])
-    # the observations kept: those whose residual and Jacobian are finite at the start (a start prediction off the model's valid
-    # domain has neither), and of a track only while it keeps two frames; a track's start direction is then the mean bearing of
-    # the observations it keeps, so the solve is the solve of the kept observations alone
+    # the observations kept, a fixed point: an observation whose residual or Jacobian is not finite at its track's start (a
+    # start prediction off the model's valid domain has neither) is dropped, a track left in fewer than two frames is dropped
+    # whole, and a partly kept track restarts from the mean bearing of the observations it keeps — which moves its other
+    # predictions, so its kept observations are tested again, until no track loses one (each round only drops, so at most one
+    # round per observation). The solve is then the solve of the kept observations alone. A track left out keeps its start
+    # direction, held.
     finite_at_start(j, i, o) = (r = NLLSsolver.computeresjac(3, observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart,
                                                              vars[nf + j]::VgtkCore.Eliminable{E}); all(isfinite, r[1]) && all(isfinite, r[2]))
-    active = map(enumerate(tracks)) do (j, t)
-        keep = [finite_at_start(j, i, o) for (i, o) in enumerate(t)]
-        length(unique(first(o) for (i, o) in enumerate(t) if keep[i])) >= 2 ? keep : falses(length(t))
-    end
+    active = [trues(length(t)) for t in tracks]
     for (j, t) in enumerate(tracks)
-        all(active[j]) || (vars[nf + j] = start_direction(t, active[j]))
+        while any(active[j])
+            keep = [active[j][i] && finite_at_start(j, i, o) for (i, o) in enumerate(t)]
+            length(unique(first(o) for (i, o) in enumerate(t) if keep[i])) >= 2 || (keep = falses(length(t)))
+            keep == active[j] && break
+            active[j] = keep
+            vars[nf + j] = start_direction(t, any(keep) ? keep : trues(length(t)))   # left out: back to its start direction
+        end
     end
     nkept = sum(count, active; init = 0)
     nkept > 0 || throw(ArgumentError("refine_rotations: no observation is imaged at the start (every track keeps fewer than two " *
@@ -230,6 +253,13 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     for j in eachindex(tracks)
         any(active[j]) || (unfixed[nf + j] = false)                          # a track left out keeps its start direction
     end
+    # a frame left with no kept observation is held at its start rotation (no cost would constrain it), and listed
+    observed = falses(nf)
+    for (j, t) in enumerate(tracks), (i, o) in enumerate(t)
+        active[j][i] && (observed[fid[first(o)]] = true)
+    end
+    unconstrained = K[frames[i] for i in 2:nf if !observed[i]]
+    foreach(k -> (unfixed[fid[k]] = false), unconstrained)
     residual_norms(f) = [[active[j][i] ? norm(f(observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart,
                                                  vars[nf + j]::VgtkCore.Eliminable{E})) : NaN
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
@@ -257,5 +287,5 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
     outcome = iterations == 0 ? :not_run : code
     return VgtkCore.FitResult(out, code, iterations, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
-                              RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, outcome))
+                              RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, unconstrained, outcome))
 end

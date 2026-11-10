@@ -308,23 +308,41 @@ end
     end
 end
 
-@testitem "Review focus 1: a whole-sensor grid camera renders no taller than its parametric lens" setup = [SyntheticSequence] begin
-    # a SplineLens camera calibrated over its whole sensor (no stored coverage: the Tamron case) is bounded by its own lattice:
-    # its cylindrical panorama is no taller than the parametric lens's (+10 %), not stretched by a forward map imaging past it
-    using Test
+@testitem "Review focus 1: a whole-sensor grid camera renders no taller than its parametric lens" begin
+    # The Tamron case: a rectilinear lens whose distortion folds inside the sensor (its view-angle limit 64°, the fold's circle
+    # cutting the sensor's corners), as a SplineLens grid calibrated over the whole sensor with no stored coverage. Its
+    # cylindrical panorama is no taller than the parametric lens's + 10 %. Neither `fov_deg` (the same rows at 120° and 179°)
+    # nor the view (±85°) is the cap: the lens is. A projection that images past the lens's limit fails this (an equidistant
+    # map of the same focal length over the same sensor: 353 rows against 253, measured 2026-11-10).
+    using Test, StaticArrays
     using PanoramaStitching: render_panorama, panorama_view
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
-    q = sequence(; K = 3, lit = :sensor)
-    bare = VgtkCore.BoundedCamera(VgtkCore.model(q.model), VgtkCore.Size2(1000, 1000))
+    W, H, s = 1000, 800, 2
+    lens = VgtkCore.Lens(VgtkCore.Perspective(), VgtkCore.Radial((-0.08,)))
+    rect = VgtkCore.CameraModel(400.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px]; lens)
+    bare = VgtkCore.BoundedCamera(rect, VgtkCore.Size2(W, H))
+    @test VgtkCore.valid_domain(rect) isa VgtkCore.Ellipse                          # the fold cuts the sensor
+    scene(d) = 0.1 + 0.05 * sin(5d[1]) * cos(3d[2])
+    R = [SMatrix{3, 3}(VgtkCore.exp_so3(SVector(0.0, deg2rad(35.0 * k), 0.0))) for k in 0:2]
+    frames = map(R) do Rk
+        img = zeros(Float32, H ÷ s, W ÷ s, 3)
+        for j in 1:(W ÷ s), i in 1:(H ÷ s)
+            f = VgtkCore.backproject(rect, SVector((j - 0.5) * s, (i - 0.5) * s))
+            all(isfinite, f) && (img[i, j, :] .= Float32(scene(Rk * f)))
+        end
+        img
+    end
     grid = VgtkCore.with_model(bare, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bare, VgtkCore.imaged_region(bare);
-                                                                                 tolerance = 1.0e-2, grid_size = (40, 40))))
-    cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 200.0, -80.0, 80.0), 0.5)
-    kw = (; vignetting = (u, f) -> 1.0, raw_scale = q.raw_scale, rim_margin_px = 0.0, fov_deg = 89.0)
+                                                                                 tolerance = 1.0e-2, grid_size = (40, 32))))
+    cyl = panorama_view(VgtkCore.Cylindrical(), (-100.0, 170.0, -85.0, 85.0), 0.5)
     rows(r) = count(i -> any(>(0), view(r.owner, i, :)), axes(r.owner, 1))
-    p = render_panorama(bare, q.frames, q.R, cyl; kw...); g = render_panorama(grid, q.frames, q.R, cyl; kw...)
-    @info "Review focus 1: covered rows, parametric $(rows(p)), grid $(rows(g))"
-    @test rows(p) > 0 && rows(g) <= 1.1 * rows(p)
+    kw(fov) = (; vignetting = (u, f) -> 1.0, raw_scale = s, rim_margin_px = 0.0, fov_deg = fov)
+    p = rows(render_panorama(bare, frames, R, cyl; kw(120.0)...))
+    g = rows(render_panorama(grid, frames, R, cyl; kw(120.0)...))
+    @info "Review focus 1: covered rows, parametric $p, grid $g (of $(cyl.size[1]))"
+    @test 0 < p < cyl.size[1] && g <= 1.1 * p
+    @test rows(render_panorama(grid, frames, R, cyl; kw(179.0)...)) == g      # the field-angle cap does not bound it
 end
 
 @testitem "frame_region: the margin erodes the lens coverage's edge only" begin
@@ -382,9 +400,15 @@ end
               plane_offsets = (SVector(0.25, 0.25), SVector(0.0, 0.0), SVector(-0.25, -0.25)))
         h = render_panorama(q.cam, q.frames, q.R, eq; kw...)
         d = render_panorama(q.cam, CuArray.(q.frames), q.R, eq; kw...)
+        # Review focus 5: the image within 1e-4 relative (the plan's bound; a device's contracted FMAs may differ from the host in
+        # the last bits), owner and coverage on all but 1e-4 of the pixels (a near-tie of a mask can flip)
         @test count(>(0), h.owner) > 0.4 * length(h.owner)
-        @test Array(d.owner) == h.owner && Array(d.coverage) == h.coverage
-        di = Array(d.image); seen = .!isnan.(h.image)
-        @test isnan.(di) == .!seen && maximum(abs.(di[seen] .- h.image[seen])) == 0
+        @test count(Array(d.owner) .!= h.owner) <= 1.0e-4 * length(h.owner)
+        @test count(Array(d.coverage) .!= h.coverage) <= 1.0e-4 * length(h.coverage)
+        di = Array(d.image); both = .!isnan.(h.image) .& .!isnan.(di)
+        @test count(isnan.(di) .!= isnan.(h.image)) <= 3.0e-4 * length(h.image)
+        δ = maximum(abs.(di[both] .- h.image[both]))
+        @info "Review focus 5: GPU against CPU render, max |difference| $δ (image max $(maximum(h.image[both])))"
+        @test δ <= 1.0e-4 * maximum(abs, h.image[both])
     end
 end
