@@ -31,8 +31,7 @@ The compute backend is the config's `[compute] device` (`"cuda"`). On a shared G
 `PANORAMA_VIGNETTING_DEVICE=cpu`: the same kernels run on the host and give the same numbers to the solve's precision (the
 atomic sums run in another order; the package's tests check log V device against host to 1e-6, the CG iteration count varies
 by a few percent from run to run for the same reason); `run.log` and `summary.md` record which backend ran. A grid lens (the 8 mm rooftop) renders
-on the device too (since PanoramaStitching 0.2.1 with Core 0.5.1, whose Adapt rules carry its `SplineProjection` into
-`image_warp`).
+on the device too (Core's Adapt rules carry its `SplineLens` into `image_warp`).
 
 ## Inputs
 
@@ -64,13 +63,14 @@ Under `$VGTK_DATA_ROOT`:
    photosites at the white level). Decoding is done once and cached (below).
 2. **Register** (`registration`). `register_rotations`: ASIFT keypoints described by DeDoDe and matched by LoMa, the rotation
    of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring with a 5 px half-width), robust rotation
-   averaging over the view graph, tracks, and the bundle of the rotations and track directions. A grid lens has no
-   closed-form projection, so its forward map is a `SplineProjection` fitted to it over the image circle. The rotations are
+   averaging over the view graph, tracks, and the bundle of the rotations and track directions. A grid lens is read
+   as a `SplineLens` camera and projects through its forward spline, fitted over its imaged region. The rotations are
    cached in `rotations.json`, keyed by the registration settings, the inputs and the RAW files' hashes, with the bundle's
    outcome (`converged`, `nonfinite_start` — its start not finite, a start prediction outside the lens's domain —, `not_run`
    or another retcode) and its count of observations not finite at the start; `summary.md` states it.
-3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the image
-   circle less a rim margin, or the whole sensor; unsaturated; positive) is one observation of
+3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the camera's
+   imaged region — the sensor ∩ its lens coverage ∩ its model's valid domain — less a rim margin at the coverage's edge; unsaturated; positive) is
+   one observation of
    `I_k(p) = L(R_k·f(p)) · V(u(p))`: the scene's radiance L in the pixel's direction times the vignetting V at its sensor
    point. The photo is read at its own pixel centres — no interpolation anywhere: the pixel's ray `f(p)` is the lens's
    back-projection, and the scene is a B-spline on the sphere (an azimuthal-equidistant chart, 1° controls, a Δ³ smoothness
@@ -95,8 +95,9 @@ Under `$VGTK_DATA_ROOT`:
    its run also fits the tensor model — and it is not observed there either: its maximum lands 522 px off the principal
    point, it is 32 % asymmetric, and it leaves the seams worse than the radial V (config and `summary.md`).
    *The 14 mm image circle:* the sensor's corners lie outside this lens's image circle, so the frames go dark past
-   ρ ≈ 1700 px. The config's circle was measured from the frames (where log G falls through the midpoint between its plateau
-   and the corner floor); a whole-sensor fit put V at 0.07–0.2 in the corners and amplified their noise.
+   ρ ≈ 1700 px. The circle was measured from the frames (where log G falls through the midpoint between its plateau and the
+   corner floor) and is the camera's lens coverage, stored with the camera (a config's `[inputs] circle` is refused); a
+   whole-sensor fit put V at 0.07–0.2 in the corners and amplified their noise.
 4. **Score the seams** (`score_seams`, PanoramaStitching). At every pixel of an equirectangular raster seen by two or more
    frames: the median over the other frames of `log(I_k/V_k) − log(I_last/V_last)`, the frame shown last being the one the
    unblended render keeps. With the right V only noise, misregistration and parallax remain. Its rms and robust spread

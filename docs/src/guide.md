@@ -21,36 +21,38 @@ Steps 2 and 3 run on VisualGeometryToolkitCore's warping machinery — `image_wa
 `pointwise!`, KernelAbstractions kernels — on the backend that owns the frames: GPU arrays (`CuArray`) run on the device,
 host arrays run the same code on the CPU.
 
-This page continues from the [first example](index.md#A-first-example): its `camera`, `circle`, `frames` and `reg` are
+This page continues from the [first example](index.md#A-first-example): its `camera`, `frames` and `reg` are
 used below, and every block runs after it, in order, as the test suite runs them (the installation is the same).
 
 ## The inputs
 
 - **Frames**: a `Vector` of `H × W × 3` linear (not gamma-encoded) images in capture order. They may be binned relative to the
   calibration: `raw_scale` is the number of camera pixels per frame pixel.
-- **Camera**: a VisualGeometryToolkitCore camera. A parametric `CameraModel` serves every step. A grid model
-  (`CentralGenericModel`) back-projects in the registration but has no closed-form forward map: supply its
-  `SplineProjection`, fitted by VisualGeometryToolkitEstimation's `fit_camera`, as `projection` to the registration and as
-  the camera of the sampling and the render. The example's camera as a 40 × 40 grid, with its forward map:
+- **Camera**: a VisualGeometryToolkitCore `BoundedCamera` (a camera model and its sensor). A parametric `CameraModel` serves
+  every step. A grid lens is a `CameraModel` with a `SplineLens`; it projects through its forward spline, fitted by
+  VisualGeometryToolkitEstimation's `fit_camera`. The example's camera as a 40 × 40 grid, with its forward spline:
 
 ```julia
 # Illustrative: VisualGeometryToolkitEstimation's fit_camera, one more package (pkg> add VisualGeometryToolkitEstimation)
-using VisualGeometryToolkitCore: CentralGenericModel, SplineProjection, Rect, estimate
+using VisualGeometryToolkitCore: SplineLens, BoundedCamera, imaged_region, lens_coverage, estimate
 import VisualGeometryToolkitEstimation as VgtkEstimation
 
-grid = CentralGenericModel(camera, (1000, 1000); grid_size = (40, 40))
-projection = estimate(VgtkEstimation.fit_camera(SplineProjection, grid, Rect(0, 0, 1000, 1000) ∩ circle; tolerance = 1e-2))
-# register_rotations(frames, grid; projection, …), then sample_frames(projection, …) and render_panorama(projection, …)
+spline = estimate(VgtkEstimation.fit_camera(SplineLens, camera, imaged_region(camera); tolerance = 1e-2, grid_size = (40, 40)))
+grid = BoundedCamera(spline, camera.bound; lens_coverage = lens_coverage(camera))
+# register_rotations(frames, grid; …), sample_frames(grid, …), render_panorama(grid, …)
 ```
 
-- **Image circle**: `circle`, a Core `Circle` or `Ellipse` in camera pixels, the part of the sensor the lens illuminates, or
-  `WholePlane()` for a lens that fills the sensor. Features and samples outside it are ignored.
+- **Imaged region**: the camera is a VisualGeometryToolkitCore `BoundedCamera` (the model and its sensor), and its
+  `imaged_region` — the sensor ∩ its lens coverage (the image circle, a `Circle` or `Ellipse` in camera pixels:
+  `BoundedCamera(model, extent; lens_coverage = Circle(…))`; omitted, the whole sensor) ∩ its model's valid domain — is the
+  part of the sensor every step reads. Features and samples outside it are ignored; there is no separate circle argument.
 
 ## 1. Registering the rotations
 
 [`register_rotations`](@ref) composes the stack's estimators and does no estimation of its own:
 
-1. **Features** ([`PanoramaStitching.detect_features`](@ref)): ASIFT keypoints inside the image circle, described by
+1. **Features** ([`PanoramaStitching.detect_features`](@ref)): ASIFT keypoints inside the camera's imaged region less
+   `detector_margin_px`, described by
    VisualGeometryToolkitFeatures' DeDoDe/LoMa descriptor (`descriptor = :b`), at most `max_detections` per frame.
    `tone_percentile` sets the exposure the detector sees; `asift_tilts = [(1.0, 0.0)]` is the untilted view only.
 2. **Pairs**: `pairs = :all` matches every frame pair; `pairs = :lag_overlap` only those at most `max_lag` apart in capture
@@ -91,12 +93,12 @@ bilinearly and evaluates the vignetting model continuously at the same point, `v
 ```julia
 saturated = [falses(size(f, 1), size(f, 2)) for f in frames]     # mask clipped pixels here
 D = fibonacci_directions(reg.rotations, 200_000; fov_deg = 89.0)
-S = sample_frames(camera, frames, reg.rotations, D; saturated, circle, raw_scale = 2, rim_margin_px = 12.0,
-                  fov_deg = 89.0, vignetting = (u, f) -> 1.0)
+S = sample_frames(camera, frames, reg.rotations, D; saturated, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0,
+                  vignetting = (u, f) -> 1.0)
 ```
 
 A frame sees a direction (`S.seen[i, k]`) when the ray is within `fov_deg` of the camera's z axis, its sensor point lies inside
-the image circle less `rim_margin_px` and 2 px inside the sensor, and no saturated pixel enters its value. For every direction
+the camera's imaged region less `rim_margin_px` at its lens coverage's edge and 2 px inside the frame, and no saturated pixel enters its value. For every direction
 seen by several frames, `S.values[i, k, c] / S.vignetting[i, k]` must agree across `k`: the spread is the vignetting model's
 error, and `I_k = L(d)·V(u_k)` is the equation of a panorama vignetting fit.
 
@@ -109,8 +111,8 @@ frame that sees it — no gain, no seam, no blend. It renders the frames as they
 
 ```julia
 cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.25)  # columns longitude, rows tan(latitude)
-pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
-                       rim_margin_px = 12.0, fov_deg = 89.0)
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, raw_scale = 2, rim_margin_px = 12.0,
+                       fov_deg = 89.0)
 pano.image      # rows × columns × 3, NaN where no frame sees the pixel
 pano.owner      # the frame each pixel holds
 pano.coverage   # how many frames see each pixel
@@ -160,7 +162,7 @@ conjugate gradients there, or by a host Cholesky factorization:
 s = VgtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
 v0 = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
 res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCore.pole_regular_basis(v0),
-                     gain_correction = ChannelGains(), saturated, circle, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
+                     gain_correction = ChannelGains(), saturated, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
                      plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
@@ -176,10 +178,10 @@ measures the result where it matters, at the seams of the unblended panorama: pe
 the median log ratio of the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD:
 
 ```julia
-seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, circle, raw_scale = 2,
+seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, raw_scale = 2,
                     rim_margin_px = 12.0, fov_deg = 89.0, plane = 2, plane_offsets = nothing, chunk = 200_000)
 seams.rms, seams.mad              # the spread of the log ratio over the n pixels two frames or more measure
-corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, circle, raw_scale = 2,
+corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, raw_scale = 2,
                             rim_margin_px = 12.0, fov_deg = 89.0)   # the panorama with V and the frames' gains divided out
 ```
 

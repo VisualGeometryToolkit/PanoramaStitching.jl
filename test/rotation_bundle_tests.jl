@@ -86,7 +86,7 @@ end
 end
 
 # The bundle's outcome (RotationBundleMetadata outcome, start_nonfinite): the Tamron 20 mm sequence's mechanism on a synthetic
-# sequence — a rectilinear grid lens calibrated over the sensor (its SplineProjection over the same region), observations up to the
+# sequence — a rectilinear grid lens calibrated over the sensor (a SplineLens camera, its forward spline over the same region), observations up to the
 # frame's border, a start ~0.6° off (an averaging's rotations). A start prediction near the border falls outside the grid's
 # domain, where the grid has no back-projection Jacobian: the start is not finite and NLLSsolver stops at once, "nonfinite_start",
 # the rotations the start's. Controls: the same data and start through the parametric camera converge, the grid from the true
@@ -100,8 +100,10 @@ end
     rot(v) = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector{3, Float64}(v)))
     W, H = 1000, 800
     pinhole = VgtkCore.CameraModel(800.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px])
-    grid = VgtkCore.CentralGenericModel(pinhole, (W, H); grid_size = (20, 16))
-    sp = VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineProjection, grid, VgtkCore.Rect(0, 0, W, H); tolerance = 0.01))
+    # the grid: a 20 × 16 SplineLens fitted to the pinhole over the sensor, with its forward spline; bounded by the sensor
+    grid = VgtkCore.BoundedCamera(VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, VgtkCore.BoundedCamera(pinhole, VgtkCore.Size2(W, H)), VgtkCore.Rect(0, 0, W, H);
+                                                                               tolerance = 0.01, grid_size = (20, 16))), VgtkCore.Size2(W, H))
+    sp = PanoramaStitching._forward_map(grid)
     rng = Xoshiro(7); K = 5
     R = Dict(k => rot(SVector(0.02randn(rng), 0.3 * (k - 1), 0.02randn(rng))) for k in 1:K)
     tracks = Vector{Vector{Pair{Int, SVector{2, Float64}}}}()
@@ -119,23 +121,23 @@ end
     kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 3, max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
     err(Rs) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
 
-    res = refine_rotations(grid, start, tracks; projection = sp, kw...)
+    res = refine_rotations(grid, start, tracks; kw...)
     @test res.retcode === :solve_failed && res.metadata.outcome === :nonfinite_start && res.metadata.start_nonfinite > 0
     @test all(k -> SMatrix{3, 3}(VgtkCore.estimate(res)[k]) == start[k], 1:K)          # no step was tried
     resp = refine_rotations(pinhole, start, tracks; kw...)
     @test resp.metadata.outcome === :converged && resp.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(resp)) < 0.05
-    # The grid from the TRUE rotations (a finite start) converges. Until 2026-11-04 it never returned: the SplineProjection
-    # extrapolates past the grid's imaged region, so an iterate there had a finite residual but a NaN Jacobian, NLLSsolver
+    # The grid from the TRUE rotations (a finite start) converges. Until 2026-11-04 it never returned: the grid's forward map
+    # (then a separate spline) extrapolated past the grid's imaged region, so an iterate there had a finite residual but a NaN Jacobian, NLLSsolver
     # accepted it and its Levenberg–Marquardt trial loop spun on the NaN system. The residual is now NaN off the imaged region
     # too (`_project`): such a step is a rejected one.
-    rest = refine_rotations(grid, R, tracks; projection = sp, kw...)
+    rest = refine_rotations(grid, R, tracks; kw...)
     @test rest.metadata.outcome === :converged && rest.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(rest)) < 0.05
     # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
-    fwd = PanoramaStitching._forward_map(sp)
+    fwd = sp
     o = PanoramaStitching._Observation{false, typeof(grid), typeof(fwd), Nothing, Nothing}(grid, fwd, SVector(500.0, 400.0), SVector(1, 2), nothing, nothing)
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(I)); far = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(SVector(0.9, 0.0, 0.3)))
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
     @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
-    @test all(isfinite, sp(SVector(0.9, 0.0, 0.3)))                   # (the forward map itself extrapolates)
+    @test all(isnan, sp(SVector(0.9, 0.0, 0.3)))                      # (the forward spline is NaN off its fitted chart too)
     @test refine_rotations(pinhole, start, tracks; kw..., iterations = 0).metadata.outcome === :not_run
 end

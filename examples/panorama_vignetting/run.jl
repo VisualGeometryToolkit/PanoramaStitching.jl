@@ -45,9 +45,20 @@ function refuse_renamed_keys(table, where)
     return table
 end
 
+# The image circle of earlier releases (`[inputs] circle`): where light reaches the sensor is the camera's own lens coverage now,
+# stored with the camera, never a setting of the run — a config that holds it is refused, never read.
+function refuse_circle(inputs, where)
+    haskey(inputs, "circle") && throw(ArgumentError("$where: the key circle is retired (PanoramaStitching 0.6): the image circle is " *
+                                                    "the camera's lens_coverage, stored with the camera (VisualGeometryToolkitCore's " *
+                                                    "BoundedCamera(model, extent; lens_coverage = Circle(…)), saved in its " *
+                                                    "VisualGeometryToolkitIO camera record); remove the key"))
+    return inputs
+end
+
 function load_config(path)
     cfg = TOML.parsefile(path)
     refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
+    refuse_circle(cfg["inputs"], "$path [inputs]")
     out = joinpath(dirname(abspath(path)), cfg["output"])
     mkpath(out)
     return (; cfg, out, path = abspath(path))
@@ -152,23 +163,27 @@ end
 
 # ----------------------------------------------------------------------------- the lens
 
-"The camera (back-projection: the fit, the registration's bearings), its forward map (the render, the sampling) and the region."
+"""
+The camera, a `BoundedCamera` of the `raw_width × raw_height` sensor: its back-projection (the fit, the registration's
+bearings), its projection (the render, the sampling) and its `imaged_region` (the sensor ∩ its lens coverage ∩ its model's
+valid domain: every mask). A grid lens (an old vgio grid file, read as a `SplineLens` camera whose lens coverage is the file's
+domain; the file is never rewritten) gets its forward spline here, fitted over its imaged region.
+"""
 function load_lens(C; raw_width, raw_height)
     inp = C.cfg["inputs"]; path = input_path(inp["lens"])
-    if inp["lens_kind"] == "cameras"
-        camera = VgtkCore.model(VgtkIO.load(Dict{Symbol, VgtkCore.BoundedCamera}, path)[Symbol(inp["lens_camera"])])
-        forward = camera
+    camera = if inp["lens_kind"] == "cameras"
+        VgtkIO.load(VgtkCore.BoundedCamera, path; name = inp["lens_camera"])
     elseif inp["lens_kind"] == "grid"
-        camera = VgtkIO.load(VgtkCore.CentralGenericModel, path)
-        c = inp["circle"]; region = VgtkCore.Rect(0, 0, raw_width, raw_height) ∩ VgtkCore.Circle(VgtkCore.Point2(c[1], c[2]), c[3])
-        forward = VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineProjection, camera, region;
-                                                               tolerance = Float64(inp["spline_tolerance_px"])))
+        grid = VgtkIO.load(VgtkCore.BoundedCamera, path)
+        fwd = VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, grid, VgtkCore.imaged_region(grid);
+                                                           tolerance = Float64(inp["spline_tolerance_px"])))
+        VgtkCore.BoundedCamera(fwd, grid.bound; lens_coverage = VgtkCore.lens_coverage(grid))
     else
         error("inputs.lens_kind = $(inp["lens_kind"]) is not \"cameras\" or \"grid\"")
     end
-    c = inp["circle"]
-    circle = c == "none" ? VgtkCore.WholePlane() : VgtkCore.Circle(VgtkCore.Point2(Float64(c[1]), Float64(c[2])), Float64(c[3]))
-    return (; camera, forward, circle)
+    VgtkCore.extent(camera) == VgtkCore.Size2(raw_width, raw_height) ||
+        error("inputs.lens: the camera's sensor is $(VgtkCore.extent(camera)), the frames' $(raw_width) × $(raw_height) camera pixels")
+    return camera
 end
 
 # ----------------------------------------------------------------------------- registration (cached by its settings)
@@ -207,8 +222,7 @@ function registration(C, inp, lens; log)
     ep == "cuda" && !isdefined(@__MODULE__, :cuDNN) &&
         error("registration.execution_provider = \"cuda\" needs cuDNN in the environment (ONNX Runtime's CUDA provider)")
     t0 = time()
-    reg = register_rotations(inp.frames, lens.camera; projection = lens.forward, raw_scale = 2, circle = lens.circle,
-                             tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
+    reg = register_rotations(inp.frames, lens; raw_scale = 2, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                              asift_tilts = r["asift_tilts"] == "imas25" ? nothing : [Tuple(t) for t in r["asift_tilts"]],
                              max_detections = r["max_detections"], descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
                              min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
@@ -256,24 +270,28 @@ end
 
 # ----------------------------------------------------------------------------- vignetting spaces from the config
 
-# The principal point: the pixel of the optical axis (0, 0, 1) through the forward map.
-principal_point(lens) = (u = VgtkCore.pointwise!(lens.forward isa VgtkCore.CameraModel ? VgtkCore.imaging_transform(lens.forward) : lens.forward,
-                                                 [SVector(0.0, 0.0)], [SVector(0.0, 0.0, 1.0)]); u[1])
+# The principal point: the pixel of the optical axis (0, 0, 1) through the camera's projection.
+principal_point(lens) = (u = VgtkCore.pointwise!(VgtkCore.imaging_transform(VgtkCore.model(lens)), [SVector(0.0, 0.0)],
+                                                 [SVector(0.0, 0.0, 1.0)]); u[1])
 
-# The domain's extreme points: a circle less the rim margin inside the sensor, or the sensor less its 2 px border.
-function domain_box(lens, W, H, rim)
-    c = lens.circle
-    if c isa VgtkCore.WholePlane
-        return SVector(2.0, 2.0), SVector(W - 4.0, H - 4.0)
-    end
-    r = c.r - rim; lo = max.(SVector(2.0, 2.0), SVector(c.center[1] - r, c.center[2] - r))
-    hi = min.(SVector(W - 2.0, H - 2.0), SVector(c.center[1] + r, c.center[2] + r))
-    return lo, hi - lo
+# The fit's domain (camera pixels): the package's own, 2 px inside the frame and inside the camera's imaged region less the rim
+# margin — PanoramaStitching's one definition, which the fit, the sampling and the renders read.
+fit_domain(lens, W, H, rim) = PanoramaStitching._frame_region(lens, W, H, rim)
+# The domain's extreme points: its bounding box.
+domain_box(lens, W, H, rim) = (b = VgtkCore.Rect2(fit_domain(lens, W, H, rim)); (SVector{2, Float64}(b.origin), SVector{2, Float64}(b.widths)))
+# The centre of the camera's lens coverage, an image circle (or ellipse): `radial_center = "circle_center"`.
+function coverage_center(lens)
+    c = VgtkCore.lens_coverage(lens)
+    c isa Union{VgtkCore.Circle, VgtkCore.Ellipse} ||
+        error("vignetting.radial_center = \"circle_center\": the camera's lens coverage is a $(nameof(typeof(c))), not an image circle")
+    return SVector{2, Float64}(c.center[1], c.center[2])
 end
+# The domain's farthest radius from `center`: an image circle's less the rim margin, else the farthest corner of its box.
 function domain_radius(lens, center, W, H, rim)
-    c = lens.circle
-    c isa VgtkCore.WholePlane && return maximum(norm(SVector(x, y) - center) for x in (2.0, W - 2.0), y in (2.0, H - 2.0))
-    return norm(SVector(c.center[1], c.center[2]) - center) + c.r - rim
+    c = VgtkCore.lens_coverage(lens)
+    c isa VgtkCore.Circle && (r = PanoramaStitching._rim(c, rim); return norm(SVector(r.center[1], r.center[2]) - center) + r.r)
+    o, e = domain_box(lens, W, H, rim)
+    return maximum(norm(SVector(x, y) - center) for x in (o[1], o[1] + e[1]), y in (o[2], o[2] + e[2]))
 end
 
 # V's model and start (VisualGeometryToolkitCore's LogVignetting: a spline of log V, log V ≡ 0 at the start) and its free directions:
@@ -285,7 +303,7 @@ function vignetting_space(kind, C, lens, W, H)
     if T === VgtkCore.RadialVignetting
         rc = v["radial_center"]
         center = rc == "principal_point" ? SVector{2, Float64}(principal_point(lens)) :
-                 rc == "circle_center" ? SVector{2, Float64}(lens.circle.center[1], lens.circle.center[2]) : SVector{2, Float64}(rc...)
+                 rc == "circle_center" ? coverage_center(lens) : SVector{2, Float64}(rc...)
         radius = v["radial_radius"] == "domain" ? domain_radius(lens, center, W, H, rim) + 1.0 : Float64(v["radial_radius"])
         s = VgtkCore.RadialVignetting(v["radial_controls"], center, radius; degree = 3)
         m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(VgtkCore.n_control_points(s))))
@@ -322,8 +340,8 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
     solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
     gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
-    return fit_vignetting(m, lens.camera, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
-                          saturated = dev.saturated, circle = lens.circle, raw_scale = 2,
+    return fit_vignetting(m, lens, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
+                          saturated = dev.saturated, raw_scale = 2,
                           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_offsets = dev.plane_offsets,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
@@ -342,7 +360,7 @@ no_vignetting(u, f) = 1.0
 "The covered (lon, lat) box in the up frame: a coarse equirectangular render's seen pixels."
 function coverage_extent(lens, frames, rotations, up; δ = 0.5)
     v = panorama_view(VgtkCore.Equirectangular(), (-180.0, 180.0, -89.0, 89.0), δ; up)
-    r = render_panorama(lens.forward, frames, rotations, v; vignetting = no_vignetting, circle = lens.circle, raw_scale = 2,
+    r = render_panorama(lens, frames, rotations, v; vignetting = no_vignetting, raw_scale = 2,
                         rim_margin_px = 0.0, fov_deg = 89.0)
     seen = findall(>(0), Array(r.coverage))
     rows = extrema(I -> I[1], seen); cols = extrema(I -> I[2], seen)
@@ -461,11 +479,11 @@ function run_example(config_path)
     sc = C.cfg["seams"]; d = C.cfg["domain"]
     ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up) : Tuple(sc["extent"])
     sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
-    skw = (; saturated = dev.saturated, circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
+    skw = (; saturated = dev.saturated, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
            plane = d["plane"], plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
     t = time()
-    before = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
-    after = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
+    before = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
+    after = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
     T["score_seams (two)"] = time() - t
     save_ratio(joinpath(C.out, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.out, "seams_corrected.png"), Array(after.ratio))
     say(log, "seams (saturated pixels excluded): uncorrected rms $(round(before.rms; digits = 4)) MAD $(round(before.mad; digits = 4)); " *
@@ -474,10 +492,10 @@ function run_example(config_path)
     # the renders: the real images (no saturation mask), corrected and uncorrected at one exposure
     rc = C.cfg["render"]
     rext = rc["extent"] == "coverage" ? ext : Tuple(rc["extent"])
-    rkw = (; circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_offsets = dev.plane_offsets)
+    rkw = (; raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_offsets = dev.plane_offsets)
     V = VgtkCore.estimate(res)
     # the corrected renders divide by the frames' gains as well; the uncorrected ones show the frames as they are
-    render(view, vig) = Array(render_panorama(lens.forward, dev.frames, reg.rotations, view; vignetting = vig,
+    render(view, vig) = Array(render_panorama(lens, dev.frames, reg.rotations, view; vignetting = vig,
                                               gains = vig === no_vignetting ? nothing : fit_gains(C, res), rkw...).image)
     t = time()
     ℓ = Float64(rc["cylindrical_max_lat_deg"])                 # tan φ grows without bound: the cylindrical's latitude cap
@@ -512,15 +530,13 @@ function run_example(config_path)
 
     # the comparison fits (not used for the renders)
     rim = Float64(d["rim_margin_px"])
-    # the fit's domain as a Core region: 2 px inside the sensor and inside the circle less the rim margin
-    rimmed = lens.circle isa VgtkCore.WholePlane ? lens.circle : VgtkCore.Circle(lens.circle.center, lens.circle.r - rim)
-    domain = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ rimmed
+    domain = fit_domain(lens, W, H, rim)
     in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
     pp = SVector{2, Float64}(principal_point(lens))
     rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, W, H, rim, in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H; fkw...); T["fit_vignetting ($k, compare)"] = time() - t
-        s2 = score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
+        s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
         write_vignetting(C, "vignetting_compare_$k", r2, W, H)
         push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, W, H, rim, in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")

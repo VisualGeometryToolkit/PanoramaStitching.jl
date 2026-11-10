@@ -592,7 +592,7 @@ end
 # ----------------------------------------------------------------------------- the fit
 
 """
-    fit_vignetting(vignetting, camera, frames, rotations; free_directions, gain_correction, saturated, circle, raw_scale,
+    fit_vignetting(vignetting, camera::BoundedCamera, frames, rotations; free_directions, gain_correction, saturated, raw_scale,
                    rim_margin_px, fov_deg, plane, plane_offsets, chart_spacing_deg, penalty_order, penalty_weight,
                    vignetting_penalty_weight, solver, measurement_noise = IntensityNoise())
         -> FitResult{<:VisualGeometryToolkitCore.AbstractVignetting, VignettingMetadata}
@@ -603,8 +603,8 @@ radiance in its direction times V at its sensor point times the frame's gain,
 `I_k(p) = g_k·L(R_k·f(p))·V(u(p))`, and V is the factor the frames share
 where their views of the scene overlap (self-calibration). No interpolation
 of the frames: each value is read at its own pixel centre, its ray `f(p)` the
-`camera`'s back-projection (Core's batched `backproject` of a `CameraModel`,
-a `CentralGenericModel` or a `BoundedCamera` of one, computed once for the
+`camera`'s back-projection (Core's batched `backproject` of the model of the
+VisualGeometryToolkitCore `BoundedCamera`, computed once for the
 pixel grid the frames share), and the scene L is a B-spline over an
 [`AzimuthalChart`](@ref) of the covered sphere whose values are fitted with
 V and the gains.
@@ -637,9 +637,9 @@ V and the gains.
   channel when the white balance or the light's colour can change too.
   Required, no default (TOML: [`GAIN_CORRECTIONS`](@ref)).
 - The fit domain: every pixel of the `H × W × 3` `frames` (`raw_scale` camera
-  pixels per frame pixel) whose sensor point lies inside `circle` (a Core
-  `Circle` or `Ellipse` in camera pixels, `WholePlane()` for a lens without
-  one) less `rim_margin_px` and 2 px inside the sensor, with its ray within
+  pixels per frame pixel) whose sensor point lies inside the camera's
+  `imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain)
+  less `rim_margin_px` at its lens coverage's edge, and 2 px inside the frame, with its ray within
   `fov_deg` of the optical axis. A row (a pixel of a frame) counts when its
   `saturated` mask is false and its value positive. `plane` is the plane fitted
   (2: green), read at its own sample position: `plane_offsets` (frame pixels,
@@ -684,7 +684,7 @@ weights, and
 `gains` keyword of [`score_seams`](@ref) and [`render_panorama`](@ref); the
 residuals and the solves are the fitted `plane`'s).
 """
-function fit_vignetting(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
+function fit_vignetting(vignetting, camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector;
                         gain_correction::Union{Nothing, IntensityGains, ChannelGains}, plane::Integer, kw...)
     r = _fit_plane(vignetting, camera, frames, rotations; gains = gain_correction !== nothing, plane, kw...)::VgtkCore.FitResult
     if gain_correction isa ChannelGains
@@ -708,7 +708,7 @@ end
 # g₁ = 1; else all 1). `gains_only`: the K gains, the last solve's retcode and the CG iterations alone, without the residuals'
 # statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
-                    free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, circle, raw_scale::Integer,
+                    free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, raw_scale::Integer,
                     rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_offsets, chart_spacing_deg::Real,
                     penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
                     solver::Union{ConjugateGradient, SparseCholesky},
@@ -740,7 +740,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     Uall = vec(U2)
     Fall = VgtkCore.backproject(VgtkCore.model(camera), Uall)
     inside = similar(frames[1], Bool, Hf * Wf)
-    VgtkCore.pointwise!(_Sees(_frame_region(circle, Wf * raw_scale, Hf * raw_scale, rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
+    VgtkCore.pointwise!(_Sees(_frame_region(camera, Wf * raw_scale, Hf * raw_scale, rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
     lin = findall(inside)                                                 # the domain: linear indices into one H × W plane
     P = length(lin)
     P > 0 || throw(ArgumentError("fit_vignetting: the fit domain is empty"))

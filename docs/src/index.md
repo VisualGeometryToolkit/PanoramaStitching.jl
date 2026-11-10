@@ -36,8 +36,8 @@ frames alone and renders their cylindrical panorama.
 
 ```julia
 using PanoramaStitching
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, Circle, Point2, Equirectangular, Cylindrical, HuberShape,
-    CauchyShape, backproject, project, bilinear_sample, exp_so3, log_so3, px
+using VisualGeometryToolkitCore: CameraModel, BoundedCamera, Size2, KannalaBrandt, Circle, Point2, Equirectangular,
+    Cylindrical, HuberShape, CauchyShape, backproject, project, bilinear_sample, exp_so3, log_so3, px
 using StaticArrays: SA
 using LinearAlgebra: norm
 using Random: Xoshiro
@@ -56,10 +56,11 @@ function blob_scene(rng; width = 2048, height = 1024, n = 20_000)
 end
 radiance = blob_scene(Xoshiro(7))
 
-# A Kannala–Brandt fisheye (300 px focal length, 1000 × 1000 sensor, imaging to 100° off axis) turned 35° between
-# frames, each frame 2 × 2 binned: frame pixel (i, j) is centred at camera pixel (2j − 1, 2i − 1).
-camera = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))
-circle = Circle(Point2(500.0, 500.0), 480.0)                     # the image circle, camera pixels
+# A Kannala–Brandt fisheye (300 px focal length, 1000 × 1000 sensor, imaging to 100° off axis, its image circle of
+# radius 480 px the lens coverage: every mask reads the camera's imaged region) turned 35° between frames, each frame
+# 2 × 2 binned: frame pixel (i, j) is centred at camera pixel (2j − 1, 2i − 1).
+camera = BoundedCamera(CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02)), Size2(1000, 1000);
+                       lens_coverage = Circle(Point2(500.0, 500.0), 480.0))
 truth = [exp_so3(SA[0.0, deg2rad(35.0 * k), 0.0]) for k in 0:3]  # d = R_k·f, the first frame the common frame
 frames = map(truth) do R
     rgb = [hypot(2j - 501, 2i - 501) < 480 ? radiance(R * backproject(camera, SA[2j - 1.0, 2i - 1.0])) : SA[0f0, 0f0, 0f0]
@@ -68,7 +69,7 @@ frames = map(truth) do R
 end
 
 # The rotations from the frames alone, then the cylindrical panorama at 0.25° per pixel.
-reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile = 99.5, detector_margin_px = 20.0,
+reg = register_rotations(frames, camera; raw_scale = 2, tone_percentile = 99.5, detector_margin_px = 20.0,
                          asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                          min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
                          max_trials = 10_000, min_trials = 100, averaging_loss = HuberShape(), bundle_loss = CauchyShape(),
@@ -77,8 +78,8 @@ reg = register_rotations(frames, camera; raw_scale = 2, circle, tone_percentile 
 errors = [rad2deg(norm(log_so3(reg.rotations[k]' * truth[k]))) for k in 1:4]   # degrees, each below 0.05
 reg.bundle.rms                                                   # the bundle's rms reprojection error, below 1 px
 cyl = panorama_view(Cylindrical(), (-100.0, 205.0, -45.0, 45.0), 0.25)
-pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, circle, raw_scale = 2,
-                       rim_margin_px = 12.0, fov_deg = 89.0)
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, raw_scale = 2, rim_margin_px = 12.0,
+                       fov_deg = 89.0)
 size(pano.image)                                                 # (458, 1220, 3); NaN where no frame sees the pixel
 ```
 

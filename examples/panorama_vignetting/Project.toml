@@ -1,7 +1,8 @@
 # The example's environment (not a workspace member: it pulls CUDA and LibRaw_jll, which the package does not need).
 # Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
-# Needs the VisualGeometryToolkit 0.7 stack; until it registers, TEMPORARY [sources] below take it from the monorepo checkout
-# beside this repository (its version fields are not bumped yet, so the compat entries keep the 0.6 series). Remove before release.
+# Needs the VisualGeometryToolkit 0.9 stack; until it registers, TEMPORARY [sources] below take it from the monorepo snapshot
+# beside this repository (~/src/vgtk-board-deform; Estimation's version field is not bumped yet, so its compat keeps 0.8).
+# Never pushed or registered while they are here; remove before release.
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
@@ -21,6 +22,10 @@ VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
 [sources]
 PanoramaStitching = {path = "../.."}
+VisualGeometryToolkitCore = {path = "../../../vgtk-board-deform/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../../../vgtk-board-deform/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../../../vgtk-board-deform/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitIO = {path = "../../../vgtk-board-deform/VisualGeometryToolkitIO"}
 
 [compat]
 CUDA = "5"
@@ -28,8 +33,8 @@ GLMakie = "0.13"
 JSON = "1"
 LibRaw_jll = "0.22"
 PNGFiles = "0.4"
-VisualGeometryToolkitCore = "0.8"
+VisualGeometryToolkitCore = "0.9"
 VisualGeometryToolkitEstimation = "0.8"
 VisualGeometryToolkitFeatures = "0.6.1"
-VisualGeometryToolkitIO = "0.8"
+VisualGeometryToolkitIO = "0.9"
 julia = "1.12"

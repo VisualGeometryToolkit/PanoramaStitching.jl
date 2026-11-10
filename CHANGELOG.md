@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: the VisualGeometryToolkit 0.9 camera — `imaged_region` replaces every `circle`
+
+- Requires VisualGeometryToolkitCore 0.9 (and Estimation and IO of the same stack). Until they register, TEMPORARY
+  `[sources]` take them from a monorepo snapshot; never released while they are there.
+- `register_rotations`, `detect_features`, `sample_frames`, `render_panorama` (and `render_cube_map`), `score_seams` and
+  `fit_vignetting` take the camera as a VisualGeometryToolkitCore `BoundedCamera` and read where it images from the camera
+  itself: its `imaged_region` (the sensor ∩ its lens coverage ∩ its model's valid domain), its coverage's edge less
+  `detector_margin_px` for the features and `rim_margin_px` (and 2 px inside the frame) for the samples, the renders and the
+  fit. The sensor's edge is not eroded, so a camera with no stored coverage (its whole sensor) masks as 0.5.1 did with no
+  circle. The `circle` keyword is
+  deleted everywhere (no alias): the image circle is the camera's lens coverage,
+  `BoundedCamera(model, extent; lens_coverage = Circle(…))`; a camera without one images its whole sensor.
+  `detect_features(camera, frame, descriptor; …)` takes the camera first.
+- A grid lens is a `SplineLens` camera (Core 0.9 retired `CentralGenericModel` and `SplineProjection`); a bounded camera's
+  rotation-bundle residual is NaN off its `imaged_region`.
+- The example: `[inputs] circle` is refused with an `ArgumentError` naming the camera's `lens_coverage`; `load_lens` returns
+  the `BoundedCamera` (a camera store's, or an old grid file read as a `SplineLens` camera whose coverage is the file's
+  domain, its forward spline fitted over its imaged region). The configs of record no longer hold their circles: the
+  cameras they load must carry them as their lens coverage.
+
 ## 0.5.1 (2026-11-09)
 
 On the VisualGeometryToolkit 0.8 stack, from General: VisualGeometryToolkitCore 0.8,

@@ -110,14 +110,13 @@ function panorama_view(camera::VgtkCore.CameraModel, width::Integer, height::Int
 end
 
 """
-    render_panorama(camera, frames, rotations, view; vignetting, circle, raw_scale, rim_margin_px, fov_deg,
+    render_panorama(camera::BoundedCamera, frames, rotations, view; vignetting, raw_scale, rim_margin_px, fov_deg,
                     plane_offsets = nothing, gains = nothing) -> (; image, owner, coverage, extent)
 
 The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the REVERSE warp, Core's
 `image_warp`/`image_warp!`: every pixel's ray `d` (the view's pixel → ray map) is rotated into each frame `k`
-(`f = R_kᵀ·d`, `rotations[k]` with `d = R_k·f`), projected through the calibrated `camera` to a sensor point between pixels
-(a `CameraModel` through its `imaging_transform`, a `SplineProjection` — a grid model's forward map,
-`fit_camera(SplineProjection, grid, region; tolerance)`), and sampled there bilinearly — one fused map
+(`f = R_kᵀ·d`, `rotations[k]` with `d = R_k·f`), projected through the calibrated `camera` (a VisualGeometryToolkitCore
+`BoundedCamera`, through its model's `imaging_transform`) to a sensor point between pixels, and sampled there bilinearly — one fused map
 `camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
 (camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
 ray's direction (a field angle) reads `f`; a Core `AbstractVignetting` reads `u` — and by the frame's exposure gain
@@ -125,9 +124,9 @@ ray's direction (a field angle) reads `f`; a Core `AbstractVignetting` reads `u`
 `metadata.gains`; `nothing`, the frames taken as one exposure). No seam, no blend, and
 each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.
 
-A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside `circle`
-(a Core `Circle` or `Ellipse` in camera pixels, `WholePlane()` when the lens has no image circle) less `rim_margin_px` and
-at least 2 px inside the sensor — the geometric masks of [`sample_frames`](@ref), evaluated as batches at the warp's own
+A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z axis, its sensor point lies inside the camera's
+`imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain) less `rim_margin_px` at its lens coverage's edge,
+and at least 2 px inside the frame — the geometric masks of [`sample_frames`](@ref), evaluated as batches at the warp's own
 sensor points. The render shows the frames as they are: a saturated pixel is rendered with its clipped value (a window that
 clips in every frame comes out bright, not empty); saturation masks measurements only ([`sample_frames`](@ref),
 [`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images with `raw_scale` camera pixels
@@ -145,8 +144,8 @@ frames' element type.
 Returns `image` (rows × columns × 3, NaN where no frame sees the pixel), `owner` (the frame whose value a pixel holds, 0 for
 none), `coverage` (how many frames see each pixel), all on the frames' backend, and the view's `extent`.
 """
-function render_panorama(camera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView; vignetting, circle,
-                         raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane_offsets = nothing, gains = nothing)
+function render_panorama(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView;
+                         vignetting, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane_offsets = nothing, gains = nothing)
     offsets = _plane_offsets(plane_offsets)
     K = length(frames)
     length(rotations) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(rotations)) rotations"))
@@ -155,7 +154,7 @@ function render_panorama(camera, frames::AbstractVector, rotations::AbstractVect
     _check_gains("render_panorama", gains, K, C)
     T = float(eltype(frames[1])); s = raw_scale
     fwd = _forward_map(camera, frames[1])
-    sees = _Sees(_frame_region(circle, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
+    sees = _Sees(_frame_region(camera, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
     nv, nλ = view.size
     rect = VgtkCore.Rect(0, 0, nλ, nv)
     proto = frames[1]
@@ -196,7 +195,7 @@ struct _SensorPoint{T, B}
     s::T
 end
 _SensorPoint{T}(bm::B, s) where {T, B} = _SensorPoint{T, B}(bm, T(s))
-# The device form: the warp adapted by Core's rule (a SplineProjection's control grid moved to the device), the scale kept.
+# The device form: the warp adapted by Core's rule (a SplineLens's control grids moved to the device), the scale kept.
 Adapt.adapt_structure(to, p::_SensorPoint{T}) where {T} = _SensorPoint{T}(Adapt.adapt(to, p.bm), p.s)
 @inline (p::_SensorPoint{T})(I) where {T} =
     (q = p.bm(SVector{2, T}(I[1], I[2])); SVector{2, T}(p.s * (q[2] - T(0.5)), p.s * (q[1] - T(0.5))))

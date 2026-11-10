@@ -44,9 +44,9 @@ Base.eltype(::_Observation) = Float64
 
 @inline _camera_direction(ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable) = SMatrix{3, 3}(ch.R)' * VgtkCore.model(d.value)
 
-# π(f): the forward map in closed form, NaN where it does not image AND where the camera does not image the point — off a grid
-# model's imaged region (its calibrated area ∩ domain), where its back-projection Jacobian is NaN. A grid's SplineProjection
-# extrapolates past its region (a finite pixel), so without the second test the residual would be finite where its Jacobian
+# π(f): the forward map in closed form, NaN where it does not image AND where the camera does not image the point — off a
+# bounded camera's imaged region (a grid lens's calibrated area ∩ its lens coverage), where its back-projection Jacobian may be
+# NaN. A forward map can image past that region (a finite pixel), so without the second test the residual would be finite where its Jacobian
 # is not: NLLSsolver would accept such an iterate, linearize there and loop on its NaN system for ever (measured 2026-11-04,
 # the synthetic Tamron sequence from its true rotations). With it the residual and its Jacobian are defined on the same set,
 # an iterate past it is a NaN cost (a rejected step) and a start past it is a non-finite start (`:nonfinite_start`).
@@ -54,10 +54,9 @@ Base.eltype(::_Observation) = Float64
     u = r.projection(f); p = SVector(u[1], u[2])
     return _images(r.camera, p) ? p : SVector(NaN, NaN)
 end
-# Whether the camera images the sensor point `u` (its back-projection and Jacobian defined there): a grid model's imaged region;
-# a parametric camera's back-projection is defined on the whole plane.
-@inline _images(camera::VgtkCore.CentralGenericModel, u) = VgtkCore.Point2(u[1], u[2]) ∈ VgtkCore.imaged_region(camera)
-@inline _images(camera::VgtkCore.BoundedCamera, u) = _images(VgtkCore.model(camera), u)
+# Whether the camera images the sensor point `u` (its back-projection and Jacobian defined there): a bounded camera's
+# `imaged_region`; an unbounded camera model's back-projection is taken as defined on the whole plane.
+@inline _images(camera::VgtkCore.BoundedCamera, u) = VgtkCore.Point2(u[1], u[2]) ∈ VgtkCore.imaged_region(camera)
 @inline _images(camera, u) = true
 
 # An observation's pixel and whitening: a bare pixel has none; an `Uncertain` pixel's is Core's `whitening_factor` of the
@@ -90,7 +89,7 @@ NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::VgtkC
 function NLLSsolver.computeresjac(varflags, r::_Observation, ch::_FrameChart, d::VgtkCore.Eliminable)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
     u = _project(r, f)
-    _, M = VgtkCore.backproject_with_jacobian(r.camera, u)
+    _, M = VgtkCore.backproject_with_jacobian(VgtkCore.model(r.camera), u)
     Mp = _whiten(r.whitening, (M' * M) \ M')
     Jω = Mp * (R' * VgtkCore.skew(dir))
     Jv = Mp * (R' * VgtkCore.retract_jacobian(d.value))
@@ -137,10 +136,11 @@ end
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
 (fixed; its `backproject` and `backproject_with_jacobian` give the start and
 the Jacobian), projected through `projection`, the camera's closed-form forward
-map π: the `camera` itself when it is a `CameraModel` (its
-`imaging_transform`), or a `SplineProjection` — for a grid model, which has no
-closed-form forward map, its `VisualGeometryToolkitEstimation.fit_camera(SplineProjection,
-grid, region; tolerance)` (an `ArgumentError` names it when missing). The
+map π: the `camera` itself (its model's `imaging_transform`; a grid lens's
+`SplineLens` through its forward spline, VisualGeometryToolkitEstimation's
+`fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`); a
+`projection` that is no camera is an `ArgumentError`. A `BoundedCamera`'s
+residual is NaN off its `imaged_region`. The
 rotations `R_k` (`d = R_k·f_k`) of every frame but the first of
 the sorted keys of `rotations` (the gauge, held fixed) and one direction `d_j`
 per track minimizing the robust sum of the pixel reprojection errors

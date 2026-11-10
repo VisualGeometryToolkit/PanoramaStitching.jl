@@ -58,15 +58,15 @@ function compare_arms(arms_path)
         sc = C.cfg["seams"]; d = C.cfg["domain"]
         ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up) : Tuple(sc["extent"])
         sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
-        skw = (; saturated = dev.saturated, circle = lens.circle, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
+        skw = (; saturated = dev.saturated, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
                plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
         rim = Float64(d["rim_margin_px"])
-        rimmed = lens.circle isa VgtkCore.WholePlane ? lens.circle : VgtkCore.Circle(lens.circle.center, lens.circle.r - rim)
-        domain = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ rimmed
+        domain = fit_domain(lens, W, H, rim)
         in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
         pp = SVector{2, Float64}(principal_point(lens))
-        cc = lens.circle isa VgtkCore.WholePlane ? pp : SVector{2, Float64}(lens.circle.center[1], lens.circle.center[2])
-        rr = lens.circle isa VgtkCore.WholePlane ? norm(SVector(W, H)) / 2 : lens.circle.r - rim
+        # the profile about the image circle's centre, or about the principal point when the camera has none; out to the domain's edge
+        cc = VgtkCore.lens_coverage(lens) isa VgtkCore.Circle ? coverage_center(lens) : pp
+        rr = domain_radius(lens, cc, W, H, rim)
         Vref = nothing
         rows = Dict{String, Any}[]
         for a in order
@@ -80,7 +80,7 @@ function compare_arms(arms_path)
             V = VgtkCore.estimate(r); m = r.metadata
             a === ref && (Vref = V)
             G = fit_gains(Ca, r)
-            seams = [score_seams(lens.forward, dev.frames, reg.rotations, sview; vignetting = V, gains = G, plane = p, skw...) for p in 1:3]
+            seams = [score_seams(lens, dev.frames, reg.rotations, sview; vignetting = V, gains = G, plane = p, skw...) for p in 1:3]
             pooled = vcat([filter(!isnan, vec(Array(s.ratio))) for s in seams]...)
             summ = vignetting_summary(V, lens, pp, W, H, rim, in_domain)
             row = Dict{String, Any}("arm" => a["name"], "vignetting" => a["vignetting"], "gain_correction" => a["gain_correction"],

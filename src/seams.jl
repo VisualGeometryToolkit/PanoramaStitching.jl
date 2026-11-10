@@ -58,7 +58,7 @@ Adapt.@adapt_structure _SeamRatio
 end
 
 """
-    score_seams(camera, frames, rotations, view; vignetting, saturated, circle, raw_scale, rim_margin_px, fov_deg, plane,
+    score_seams(camera::BoundedCamera, frames, rotations, view; vignetting, saturated, raw_scale, rim_margin_px, fov_deg, plane,
                 plane_offsets, chunk, gains = nothing) -> (; ratio, rms, mad, n)
 
 How well `vignetting` makes the frames agree where they overlap, at every
@@ -77,14 +77,14 @@ colour plane: [`fit_vignetting`](@ref)'s `metadata.gains`) divides each
 frame's exposure gain of `plane` out as well, `log(I_k/(g_k,plane·V_k))`;
 `nothing` takes the frames as one exposure.
 
-The camera and the masks are [`sample_frames`](@ref)'s (`camera` its forward
-map: a `CameraModel` or a grid's `SplineProjection`). The raster is sampled in
+The camera and the masks are [`sample_frames`](@ref)'s (`camera` a
+VisualGeometryToolkitCore `BoundedCamera`: its forward map and its `imaged_region`). The raster is sampled in
 chunks of `chunk` pixels (the samples are `chunk × K × 3` values on the frames'
 backend: chunk to fit a shared GPU's memory). Returns `ratio` (rows × columns,
 NaN where fewer than two frames measure the pixel) on the frames' backend.
 """
-function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView; vignetting,
-                     saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane::Integer,
+function score_seams(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView;
+                     vignetting, saturated::AbstractVector, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane::Integer,
                      plane_offsets, chunk::Integer, gains = nothing)
     K = length(frames)
     1 <= plane <= 3 || throw(ArgumentError("score_seams: plane $plane of a 3-plane frame"))
@@ -100,7 +100,7 @@ function score_seams(camera, frames::AbstractVector, rotations::AbstractVector, 
     exec = VgtkCore.OnBackend(be)
     for lo in 1:chunk:N
         hi = min(lo + chunk - 1, N)
-        S = sample_frames(camera, frames, rotations, D[lo:hi]; saturated, circle, raw_scale, rim_margin_px, fov_deg, vignetting,
+        S = sample_frames(camera, frames, rotations, D[lo:hi]; saturated, raw_scale, rim_margin_px, fov_deg, vignetting,
                           plane_offsets)
         vals = Base.view(S.values, :, :, plane)
         G === nothing || (S.vignetting .*= G)                             # I_k / (g_k·V_k): the frame's exposure too

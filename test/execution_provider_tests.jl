@@ -8,8 +8,9 @@
     using Test, StaticArrays
     using PanoramaStitching: register_rotations
     import VisualGeometryToolkitCore as VgtkCore
-    cam = VgtkCore.CameraModel(300.0VgtkCore.px, SA[64.0VgtkCore.px, 64.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02))
-    kw = (; raw_scale = 1, circle = VgtkCore.WholePlane(), tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = nothing,
+    cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[64.0VgtkCore.px, 64.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
+                                 VgtkCore.Size2(128, 128))
+    kw = (; raw_scale = 1, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = nothing,
           max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 90.0,
           min_inliers = 10, seed = 1, max_trials = 10, min_trials = 1, averaging_loss = VgtkCore.HuberShape(),
           bundle_loss = VgtkCore.CauchyShape(), bundle_scale_multiple = 3.0, bundle_iterations = 1, bundle_max_iter = 1,

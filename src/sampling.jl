@@ -4,8 +4,8 @@
 #
 # The common frame is the first frame's camera frame (x right, y down, z forward); a direction
 # `d` of it is seen by frame k as the ray `f = R_kᵀ·d` (`rotations[k]` with `d = R_k·f`), imaged
-# at the sensor point `u = π(f)` of the calibrated camera's forward map (a parametric camera's
-# `imaging_transform`, a grid camera's `SplineProjection`). Every per-direction step is a batch
+# at the sensor point `u = π(f)` of the calibrated camera's forward map (its model's `imaging_transform`), where the camera
+# images it (`imaged_region`). Every per-direction step is a batch
 # on the backend that owns the arrays (Core's `pointwise!` and `image_sample!`, KernelAbstractions
 # kernels on a GPU, the same code on the host): the rays, the sensor points, the masks, the
 # frame's value and the vignetting at the point.
@@ -19,27 +19,36 @@ The unit direction of (latitude, longitude) in degrees: Core's `Equirectangular`
 """
 world_direction(lat, lon) = VgtkCore.backproject(VgtkCore.Equirectangular(), SVector(deg2rad(lon), deg2rad(lat)))
 
-# The camera's forward map ray → camera pixel as a Transformation (a kernel-lawful value on a device): a parametric camera's
-# `imaging_transform`, a `SplineProjection` itself. A grid model has no closed-form forward map (its projection is a pixel-space
-# solve): the caller fits one, Estimation's `fit_camera(SplineProjection, grid, region; tolerance)`.
+# The camera's forward map ray → camera pixel as a Transformation (a kernel-lawful value on a device): its model's
+# `imaging_transform` (a SplineLens camera's through its forward spline, VisualGeometryToolkitEstimation's
+# `fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`).
 _forward_map(m::VgtkCore.CameraModel) = VgtkCore.imaging_transform(m)
 _forward_map(b::VgtkCore.BoundedCamera) = _forward_map(VgtkCore.model(b))
-_forward_map(sp::VgtkCore.SplineProjection) = sp
-_forward_map(c) = throw(ArgumentError("PanoramaStitching: $(typeof(c).name.name) has no closed-form forward map; supply its " *
-                                      "SplineProjection, VisualGeometryToolkitEstimation.fit_camera(SplineProjection, camera, region; tolerance)"))
-# The forward map on the frames' backend: a SplineProjection's control grid moved to the device (Core's adapt_structure), a
-# parametric camera's map unchanged.
-_forward_map(camera, proto) = Adapt.adapt(KA.get_backend(proto), _forward_map(camera))
+_forward_map(c) = throw(ArgumentError("PanoramaStitching: a $(typeof(c).name.name) has no closed-form forward map; supply a CameraModel " *
+                                      "(a grid lens as a SplineLens camera with its forward spline, VisualGeometryToolkitEstimation." *
+                                      "fit_camera(SplineLens, camera, imaged_region(camera); tolerance))"))
+# The forward map on the frames' backend: the camera's model moved to the device first (Core's adapt_structure: a SplineLens's
+# control grids; a parametric model unchanged), then its map.
+_forward_map(camera, proto) = _forward_map(Adapt.adapt(KA.get_backend(proto), VgtkCore.model(camera)))
 
-# The image circle less a margin (camera pixels): a `Circle` or an `Ellipse` shrunk by `m` along its axes, the whole plane kept.
+# What the camera images less a margin `m` (camera pixels) at the edge of its lens coverage — the image circle's soft rim —
+# and nowhere else: Core's `imaged_region` of the camera with its coverage eroded by `m` (a `Circle` or `Ellipse` shrunk by `m`
+# along its axes, a `Rect` crop inset by `m`). The sensor and the model's valid domain are not eroded, and a camera whose
+# coverage is its whole sensor (none stored: Core's default, the sensor's own `Rect`) is unchanged.
+function _imaged_less_rim(camera::VgtkCore.BoundedCamera, m)
+    c = VgtkCore.lens_coverage(camera); e = VgtkCore.extent(camera)
+    c == VgtkCore.Rect2{Float64}(0, 0, e.width, e.height) && return VgtkCore.imaged_region(camera)
+    return VgtkCore.imaged_region(VgtkCore.with_lens_coverage(camera, _rim(c, m)))
+end
 _rim(c::VgtkCore.Circle, m) = VgtkCore.Circle(c.center, c.r - m)
 _rim(e::VgtkCore.Ellipse, m) = VgtkCore.Ellipse(e.center, e.a - m, e.b - m, e.θ)
-_rim(w::VgtkCore.WholePlane, m) = w
+_rim(r::VgtkCore.Rect, m) = VgtkCore.Rect(r.origin[1] + m, r.origin[2] + m, r.widths[1] - 2m, r.widths[2] - 2m)
 
-# The image circle in the pixels of a frame binned by `s` (a COLMAP coordinate scales by exactly 1/s): Core's similarity image of
-# the `Circle` or `Ellipse`. Core's similarity has no action on `WholePlane` yet, which a scaling leaves as it is.
-_binned(c, s) = VgtkCore.SimilarityMap(LinearMap(I / s))(c)
-_binned(w::VgtkCore.WholePlane, s) = w
+# A region in the pixels of a frame binned by `s` (a COLMAP coordinate scales by exactly 1/s), by its parts: a `Rect` scaled,
+# an `Ellipse` by Core's similarity image.
+_binned(r::VgtkCore.Rect, s) = VgtkCore.Rect(r.origin[1] / s, r.origin[2] / s, r.widths[1] / s, r.widths[2] / s)
+_binned(e::VgtkCore.Ellipse, s) = VgtkCore.SimilarityMap(LinearMap(I / s))(e)
+_binned(r::VgtkCore.RegionIntersection, s) = _binned(r.a, s) ∩ _binned(r.b, s)
 
 # The three planes' sample offsets (frame pixels): `nothing` puts every plane at the pixel centre.
 _plane_offsets(::Nothing) = ntuple(_ -> SVector(0.0, 0.0), 3)
@@ -48,9 +57,10 @@ function _plane_offsets(o)
     return ntuple(c -> SVector{2, Float64}(o[c][1], o[c][2]), 3)
 end
 
-# Where a frame's sensor point counts (camera pixels): at least 2 px inside the W × H sensor and inside the circle less the rim
-# margin.
-_frame_region(circle, W, H, rim_margin_px) = VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ _rim(circle, rim_margin_px)
+# Where a frame's sensor point counts (camera pixels): at least 2 px inside its W × H frame (the bilinear taps) and inside what
+# the camera images less the rim margin at its lens coverage's edge.
+_frame_region(camera::VgtkCore.BoundedCamera, W, H, rim_margin_px) =
+    VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ _imaged_less_rim(camera, rim_margin_px)
 
 # Whether a frame sees a direction: its sensor point `u` is finite and in the region and its ray `f` within the field angle of
 # the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. A measurement (the sampling, the seam score) also
@@ -92,15 +102,14 @@ struct FrameSamples{D, P, F, V, W, S}
 end
 
 """
-    sample_frames(camera, frames, rotations, directions; saturated, circle, raw_scale, rim_margin_px, fov_deg, vignetting,
-                  plane_offsets = nothing) -> FrameSamples
+    sample_frames(camera::BoundedCamera, frames, rotations, directions; saturated, raw_scale, rim_margin_px, fov_deg,
+                  vignetting, plane_offsets = nothing) -> FrameSamples
 
 The frames sampled at `directions` (unit 3-vectors of the common frame, any
 array): for every frame `k` and direction `d`, the ray `f = R_kᵀ·d`
 (`rotations[k]` with `d = R_k·f`), its exact sub-pixel sensor point
-`u = π(f)` through the calibrated `camera` (a `CameraModel` through its
-`imaging_transform`, or a `SplineProjection` — a grid model's forward map,
-`fit_camera(SplineProjection, grid, region; tolerance)`), the frame's value
+`u = π(f)` through the calibrated `camera` (a VisualGeometryToolkitCore
+`BoundedCamera`, projected through its model's `imaging_transform`), the frame's value
 there by bilinear sampling (Core's `image_sample!`, no smoothing) and the
 vignetting model evaluated continuously there, `vignetting(u, f)` (a model
 defined on the sensor reads `u`, one defined on the ray's direction reads
@@ -110,9 +119,9 @@ frames that see a direction: their spread is the model's error;
 [`score_seams`](@ref) scores them).
 
 A frame sees a direction by [`render_panorama`](@ref)'s masks: the ray within
-`fov_deg` of the camera frame's z axis, the sensor point inside `circle` (a
-Core `Circle` or `Ellipse` in camera pixels, or `WholePlane()` when the lens
-has no image circle) less `rim_margin_px` and at least 2 px inside the sensor,
+`fov_deg` of the camera frame's z axis, the sensor point inside the camera's
+`imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain)
+less `rim_margin_px` at its lens coverage's edge, and at least 2 px inside the frame,
 and no `saturated` pixel among those any plane's value blends (the four at
 each plane's own sample position). `frames` are
 `H × W × 3` linear images with `raw_scale` camera pixels per frame pixel,
@@ -128,8 +137,8 @@ same code on the host), so for device arrays `vignetting` must be
 kernel-lawful (isbits, no allocation, no throw); it is evaluated only where
 the frame sees the direction. The precision is the directions' element type.
 """
-function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector, directions::AbstractArray{<:StaticVector{3}};
-                       saturated::AbstractVector, circle, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, vignetting,
+function sample_frames(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
+                       directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, vignetting,
                        plane_offsets = nothing)
     offsets = _plane_offsets(plane_offsets); sat_offsets = unique(offsets)   # the planes' distinct sample positions
     K = length(frames)
@@ -138,7 +147,7 @@ function sample_frames(camera, frames::AbstractVector, rotations::AbstractVector
     C == 3 || throw(DimensionMismatch("sample_frames: frames are H × W × 3, got $(size(frames[1]))"))
     T = eltype(eltype(directions)); s = raw_scale
     fwd = _forward_map(camera, frames[1])
-    sees = _Sees(_frame_region(circle, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
+    sees = _Sees(_frame_region(camera, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
     N = length(directions); D = reshape(directions, N)
     proto = frames[1]
     pixels = similar(proto, SVector{2, T}, N, K); rays = similar(proto, SVector{3, T}, N, K)

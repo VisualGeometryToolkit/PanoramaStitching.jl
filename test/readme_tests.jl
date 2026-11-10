@@ -10,7 +10,7 @@
 # continuing from the example would. A block that starts with `# Illustrative` (one more package) is counted, not run.
 
 @testitem "README: the install line names what the examples load; the examples run in a fresh environment" begin
-    using Test, PanoramaStitching
+    using Test, TOML, PanoramaStitching
     root = pkgdir(PanoramaStitching)
     julia_blocks(text) = [m[1] for m in eachmatch(r"^```julia\n(.*?)^```"ms, text)]
     illustrative(block) = startswith(block, "# Illustrative")
@@ -45,10 +45,15 @@
     write(joinpath(env, "example.jl"), only(example))
     write(joinpath(env, "guide.jl"), join(guide, "\n"))
     registered = filter(!=("PanoramaStitching"), String.(packages))
+    # the package's own [sources] paths (a stack not yet registered, held there TEMPORARILY) come along: the fresh environment
+    # resolves the stack the package does; with none, everything but the package comes from the registries
+    sources = get(TOML.parsefile(joinpath(root, "Project.toml")), "sources", Dict{String, Any}())
+    sourced = [normpath(joinpath(root, s["path"])) for s in values(sources) if s isa AbstractDict && haskey(s, "path")]
+    registered = filter(∉(keys(sources)), registered)                        # a sourced package is developed, not added
     script = joinpath(env, "run.jl")
     write(script, """
     using Pkg
-    Pkg.develop(path = $(repr(root)); io = devnull)
+    Pkg.develop([Pkg.PackageSpec(path = p) for p in $(repr([sourced; root]))]; io = devnull)
     Pkg.add($(repr(registered)); io = devnull)
     readme = Module(:ReadmeSandbox)
     using Test

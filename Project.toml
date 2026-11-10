@@ -41,10 +41,18 @@ StableRNGs = "1.1"
 Static = "1"
 StaticArrays = "1.9"
 Statistics = "1"
-VisualGeometryToolkitCore = "0.8"
-VisualGeometryToolkitEstimation = "0.8"
+VisualGeometryToolkitCore = "0.9"
+VisualGeometryToolkitEstimation = "0.8"   # TEMPORARY: the snapshot's version field is unbumped (its 0.9.0 is unreleased); "0.9" at release
 VisualGeometryToolkitFeatures = "0.6.1"
 julia = "1.12"
+
+# TEMPORARY (never pushed or registered while it is here): the VisualGeometryToolkit 0.9 stack is not registered yet, so every
+# stack package resolves from the monorepo snapshot beside this repository (~/src/vgtk-board-deform, branch downstream-base).
+# Remove before release, with the compat above at the registered versions.
+[sources]
+VisualGeometryToolkitCore = {path = "../vgtk-board-deform/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../vgtk-board-deform/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../vgtk-board-deform/VisualGeometryToolkitFeatures"}
 
 [workspace]
 projects = ["test", "docs"]

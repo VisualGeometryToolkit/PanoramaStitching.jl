@@ -9,13 +9,13 @@ output = "out/fx3_8mm_rooftop"                     # relative to this file's fol
 [inputs]
 raw_dir = "vignetting/data/sony_fisheye"           # the RAW frames (*.ARW), in capture order by name
 raw_extension = ".ARW"
-lens = "vignetting/data/ref_grid.json"             # a generic grid lens (vgio/generic_camera/v2, 105 × 75 CentralGenericModel)
-lens_kind = "grid"                                 # its forward map is a SplineProjection fitted to it over the circle
-spline_tolerance_px = 0.01                         # fit_camera(SplineProjection, grid, region; tolerance)
+lens = "vignetting/data/ref_grid.json"             # a generic grid lens (vgio/generic_camera/v2, 105 × 75: a SplineLens camera)
+lens_kind = "grid"                                 # read as a SplineLens camera; its forward spline fitted over its imaged region
+spline_tolerance_px = 0.01                         # fit_camera(SplineLens, camera, imaged_region(camera); tolerance)
 lens_camera = "none"                               # (a grid file holds one camera)
-# The image circle (x, y, r), camera pixels: RC's registration record (vignetting/results/logs/registration/rotations.json,
-# "circle").
-circle = [2144.50, 1436.69, 1072.64]
+# The image circle is the camera's lens coverage, stored with the camera (PanoramaStitching 0.6 refuses a `circle` key here);
+# a grid file's domain is its coverage. For this lens: Circle((2144.50, 1436.69), 1072.64), camera pixels, RC's registration
+# record (vignetting/results/logs/registration/rotations.json, "circle").
 
 [compute]
 device = "cuda"                                    # "cuda" or "cpu": the same kernels (log V agrees to 1e-6)

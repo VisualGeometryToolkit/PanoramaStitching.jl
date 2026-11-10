@@ -1,20 +1,21 @@
 # register_rotations, sample_frames and render_panorama on a synthetic pure-rotation sequence rendered through a known fisheye
-# (a Kannala–Brandt lens as a generic grid model imaging past 90°): the rotations, the frames sampled at directions (every frame
-# seeing a direction sees one radiance once its gain and vignetting are divided out) and the panorama (it is the scene).
+# (a Kannala–Brandt lens as a SplineLens grid camera imaging past 90°, its lens coverage an image circle): the rotations, the
+# frames sampled at directions (every frame seeing a direction sees one radiance once its gain and vignetting are divided out),
+# the panorama (it is the scene), and the camera's `imaged_region` bounding the features and the render.
 
 @testsetup module SyntheticSequence
 using LinearAlgebra: I
 using StaticArrays: SVector, SMatrix, SA
 using StableRNGs: StableRNG
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, CentralGenericModel, backproject, bilinear_sample, Equirectangular,
-    project, exp_so3, angle_between, Circle, Point2, Rect, estimate
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, SplineLens, BoundedCamera, Size2, backproject, bilinear_sample,
+    Equirectangular, project, exp_so3, angle_between, Circle, Point2, imaged_region, estimate
 import VisualGeometryToolkitEstimation as VgtkEstimation
-using VisualGeometryToolkitCore: SplineProjection
 export sequence
 
 # the scene: random Gaussian blobs on an equirectangular texture; the camera: a KB fisheye (f = 300 px) imaging to 100° off axis;
-# K frames rotating 35° about the vertical (`yaw_deg[k]` for k ≥ 2; frame 1 is the common frame, at the identity), 2×2 binned; a vignetting V(θ) = exp(−θ²/2·1.4²) and per-frame gains
-function sequence(; K = 4, spline = false, yaw_deg = 35.0 .* (0:(K - 1)))
+# K frames rotating 35° about the vertical (`yaw_deg[k]` for k ≥ 2; frame 1 is the common frame, at the identity), 2×2 binned; a vignetting V(θ) = exp(−θ²/2·1.4²) and per-frame gains.
+# `cam` the grid camera, `model` the parametric one: both bounded by the sensor, their lens coverage the image circle.
+function sequence(; K = 4, yaw_deg = 35.0 .* (0:(K - 1)))
     rng = StableRNG(7)
     TW, TH = 2048, 1024
     tex = fill(0.15f0, TH, TW, 3)
@@ -33,9 +34,12 @@ function sequence(; K = 4, spline = false, yaw_deg = 35.0 .* (0:(K - 1)))
     texture(d) = (p = project(Equirectangular(), d); bilinear_sample(tex, Val(3), SVector((p[1] + π) / 2π, (π / 2 - p[2]) / π)))
     V(θ) = exp(-0.5 * (θ / 1.4)^2)
     W = H = 1000; s = 2; Wf, Hf = W ÷ s, H ÷ s
-    model = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))   # the parametric lens the grid resamples
-    cam = CentralGenericModel(model, (W, H); grid_size = (40, 40))
+    kb = CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02))   # the parametric lens the grid resamples
     circle = Circle(Point2(500.0, 500.0), 480.0)
+    model = BoundedCamera(kb, Size2(W, H); lens_coverage = circle)
+    # the grid: a 40 × 40 SplineLens fitted to the lens over its imaged region, with its forward spline (a grid's projection)
+    grid = estimate(VgtkEstimation.fit_camera(SplineLens, model, imaged_region(model); tolerance = 1.0e-2, grid_size = (40, 40)))
+    cam = BoundedCamera(grid, Size2(W, H); lens_coverage = circle)
     axis = backproject(cam, SVector(500.0, 500.0))
     R = [k == 1 ? SMatrix{3, 3}(1.0I) : SMatrix{3, 3}(exp_so3(SVector(0.05randn(rng), deg2rad(yaw_deg[k]), 0.05randn(rng)))) for k in 1:K]
     gains = [1.0; exp.(0.1 .* randn(rng, K - 1))]
@@ -50,31 +54,29 @@ function sequence(; K = 4, spline = false, yaw_deg = 35.0 .* (0:(K - 1)))
         end
         img
     end
-    # the grid's forward map: a SplineProjection fitted to it over the image circle (a grid model has no closed-form projection)
-    projection = spline ? estimate(VgtkEstimation.fit_camera(SplineProjection, cam, Rect(0, 0, W, H) ∩ circle; tolerance = 1.0e-2)) : nothing
-    return (; frames, cam, model, projection, circle, raw_scale = s, R, gains, V, texture, axis)
+    return (; frames, cam, model, circle, raw_scale = s, R, gains, V, texture, axis)
 end
 end
 
-@testitem "sample_frames: a parametric camera and a grid's SplineProjection agree" setup = [SyntheticSequence] begin
-    # the sequence's Kannala–Brandt lens as the parametric CameraModel itself and the 40 × 40 grid resampled from it, through the
-    # spline fitted to the grid: the frames sampled at the same directions agree
+@testitem "sample_frames: a parametric camera and a grid camera agree" setup = [SyntheticSequence] begin
+    # the sequence's Kannala–Brandt lens as the parametric CameraModel itself and the 40 × 40 SplineLens grid fitted to it,
+    # through the grid's forward spline: the frames sampled at the same directions agree
     using Test, StaticArrays
     using PanoramaStitching: sample_frames, fibonacci_directions
-    q = sequence(; K = 2, spline = true)
+    q = sequence(; K = 2)
     Hf, Wf = size(q.frames[1], 1), size(q.frames[1], 2)
     D = fibonacci_directions(q.R, 4000; fov_deg = 89.0)
     @test 0 < length(D) < 4000
-    samples(cam) = sample_frames(cam, q.frames, q.R, D; saturated = [falses(Hf, Wf) for _ in 1:2], circle = q.circle,
+    samples(cam) = sample_frames(cam, q.frames, q.R, D; saturated = [falses(Hf, Wf) for _ in 1:2],
                                  raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0)
-    p, g = samples(q.model), samples(q.projection)
+    p, g = samples(q.model), samples(q.cam)
     both = p.seen .& g.seen
     @test count(p.seen) > 0 && count(both) >= 0.99 * count(g.seen)
     @test maximum(i -> maximum(abs.(p.pixels[i] - g.pixels[i])), findall(both)) < 0.05                 # px: the spline's tolerance
     @test maximum(abs.(p.values[both, 2] .- view(g.values, :, :, 2)[both])) < 0.02
     @test all(isnan, view(p.values, :, :, 2)[.!p.seen]) && all(isnan, p.vignetting[.!p.seen])
     # a direction no frame sees: all of its row is unseen
-    back = sample_frames(q.model, q.frames, q.R, [SVector(0.0, 0.0, -1.0)]; saturated = [falses(Hf, Wf) for _ in 1:2], circle = q.circle,
+    back = sample_frames(q.model, q.frames, q.R, [SVector(0.0, 0.0, -1.0)]; saturated = [falses(Hf, Wf) for _ in 1:2],
                          raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0)
     @test !any(back.seen)
 end
@@ -84,15 +86,15 @@ end
     # measurement only when none of the pixels ANY plane's bilinear value blends is saturated, not only the centre's four
     using Test, LinearAlgebra, StaticArrays
     using PanoramaStitching: sample_frames
-    using VisualGeometryToolkitCore: CameraModel, Lens, Perspective, px, WholePlane, backproject
-    cam = CameraModel(100.0px, SA[50.0px, 50.0px]; lens = Lens(Perspective()))
+    using VisualGeometryToolkitCore: CameraModel, BoundedCamera, Size2, Lens, Perspective, px, backproject
+    cam = BoundedCamera(CameraModel(100.0px, SA[50.0px, 50.0px]; lens = Lens(Perspective())), Size2(100, 100))   # the whole sensor lit
     Hf = Wf = 50                                                                     # raw_scale 2: a 100 × 100 sensor
     frame = ones(Float32, Hf, Wf, 3); sat = falses(Hf, Wf)
     frame[25, 25, :] .= 1.0f6; sat[25, 25] = true                                    # clipped, its centre at (24.5, 24.5)
     offsets = (SVector(0.25, 0.25), SVector(0.0, 0.0), SVector(-0.25, -0.25))
     pts = vec([SVector(x, y) for x in 22.5:0.05:26.5, y in 22.5:0.05:26.5])          # frame COLMAP points around it
     D = [normalize(SVector{3, Float64}(backproject(cam, 2 .* p))) for p in pts]
-    samples(o) = sample_frames(cam, [frame], [SMatrix{3, 3}(1.0I)], D; saturated = [sat], circle = WholePlane(), raw_scale = 2,
+    samples(o) = sample_frames(cam, [frame], [SMatrix{3, 3}(1.0I)], D; saturated = [sat], raw_scale = 2,
                                rim_margin_px = 0.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0, plane_offsets = o)
     for o in (nothing, offsets)
         S = samples(o); seen = S.seen[:, 1]
@@ -108,9 +110,9 @@ end
     using Test, LinearAlgebra, Statistics, StaticArrays
     using PanoramaStitching: register_rotations, sample_frames, fibonacci_directions
     import VisualGeometryToolkitCore as VgtkCore
-    q = sequence(; spline = true)
+    q = sequence()
     K = length(q.frames)
-    reg = register_rotations(q.frames, q.cam; projection = q.projection, raw_scale = q.raw_scale, circle = q.circle, tone_percentile = 99.5,
+    reg = register_rotations(q.frames, q.cam; raw_scale = q.raw_scale, tone_percentile = 99.5,
                              detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                              min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
                              min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
@@ -120,18 +122,15 @@ end
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
     @test length(reg.pairs) == K * (K - 1) ÷ 2 && all(p -> p.inliers >= 100, values(reg.pairs))
     @test reg.bundle.rms < 0.5 && reg.dropped == 0
-    # a grid camera without its forward map is refused, before any work
-    @test_throws ArgumentError register_rotations(q.frames, q.cam; raw_scale = q.raw_scale, circle = q.circle, tone_percentile = 99.5,
-                             detector_margin_px = 20.0, asift_tilts = nothing, max_detections = 1, descriptor = :b, matcher = :b128,
-                             min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 1,
-                             min_trials = 1, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                             bundle_scale_multiple = 3.0, bundle_iterations = 1, bundle_max_iter = 1, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+    # every kept feature lies in the camera's imaged region eroded by the detector margin (the image circle less 20 px)
+    @test all(f -> all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, f.pixels), reg.features)
+    @test all(f -> !isempty(f.pixels), reg.features)
     # the frames sampled at directions spread uniformly over the covered sphere, the vignetting read on the ray: every frame
     # seeing a direction sees one radiance once its gain and the TRUE V are divided out; a wrong V leaves a spread
     Hf, Wf = size(q.frames[1], 1), size(q.frames[1], 2)
     D = fibonacci_directions(reg.rotations, 20000; fov_deg = 89.0)
     spread(V) = begin
-        S = sample_frames(q.projection, q.frames, reg.rotations, D; saturated = [falses(Hf, Wf) for _ in 1:K], circle = q.circle,
+        S = sample_frames(q.cam, q.frames, reg.rotations, D; saturated = [falses(Hf, Wf) for _ in 1:K],
                           raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0,
                           vignetting = (u, f) -> V(VgtkCore.angle_between(f, q.axis)))
         out = Float64[]
@@ -156,8 +155,8 @@ end
     using Test, LinearAlgebra, StaticArrays
     using PanoramaStitching: register_rotations
     import VisualGeometryToolkitCore as VgtkCore
-    q = sequence(; K = 3, spline = true, yaw_deg = [0.0, 180.0, 90.0])
-    reg = register_rotations(q.frames, q.cam; projection = q.projection, raw_scale = q.raw_scale, circle = q.circle, tone_percentile = 99.5,
+    q = sequence(; K = 3, yaw_deg = [0.0, 180.0, 90.0])
+    reg = register_rotations(q.frames, q.cam; raw_scale = q.raw_scale, tone_percentile = 99.5,
                              detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                              min_score = 0.0, pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0, min_inliers = 40, seed = 1,
                              max_trials = 10000, min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
@@ -203,20 +202,20 @@ end
     # every panorama pixel's ray, rotated into each frame and projected through the camera, sampled and divided by the vignetting
     # looked up at the sensor point or the ray: with the true rotations, constant exposure (the sequence's gains divided out of the
     # frames up front) and the true V, the panorama IS the scene's texture, equirectangular and cylindrical; the parametric
-    # Kannala–Brandt model and the grid's spline give the same panorama, and a V read on the sensor the same as one read on the ray
+    # Kannala–Brandt model and the grid camera give the same panorama, and a V read on the sensor the same as one read on the ray
     using Test, Statistics, LinearAlgebra, StaticArrays
     using PanoramaStitching: render_panorama, render_cube_map, panorama_view, world_direction, CUBE_FACES, sample_frames
     import VisualGeometryToolkitCore as VgtkCore
-    q = sequence(; K = 3, spline = true)
+    q = sequence(; K = 3)
     frames = [f ./ Float32(g) for (f, g) in zip(q.frames, q.gains)]                 # constant exposure
     Hf, Wf = size(frames[1], 1), size(frames[1], 2)
     on_ray(u, f) = q.V(VgtkCore.angle_between(f, q.axis))                           # V defined on the ray's direction
     on_sensor(u, f) = q.V(VgtkCore.angle_between(VgtkCore.backproject(q.cam, u), q.axis))   # V defined on the sensor
-    kw = (; circle = q.circle, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0)
+    kw = (; raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0)
     saturated = [falses(Hf, Wf) for _ in 1:3]                                       # the sampling's measurement masks
     eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 150.0, -60.0, 60.0), 0.5)
     pano(cam, view = eq; vignetting = on_ray) = render_panorama(cam, frames, q.R, view; vignetting, kw...)
-    g = pano(q.projection); p = pano(q.model)
+    g = pano(q.cam); p = pano(q.model)
     @test size(g.image) == (240, 460, 3) && all(g.extent .≈ (-80.0, 150.0, -60.0, 60.0))
     seen = findall(>(0), g.owner)
     @test length(seen) > 0.4 * length(g.owner)
@@ -228,7 +227,7 @@ end
     @test median(rel) < 0.02 && quantile(rel, 0.9) < 0.08                          # bilinear sampling of 2 × 2-binned frames
     both = findall((g.owner .> 0) .& (p.owner .> 0))
     @test length(both) >= 0.99 * length(seen) && maximum(abs.(g.image[both, 2] .- p.image[both, 2])) < 0.01
-    s = pano(q.projection; vignetting = on_sensor)                                  # the same V, read on the sensor
+    s = pano(q.cam; vignetting = on_sensor)                                  # the same V, read on the sensor
     @test s.owner == g.owner && maximum(abs.(s.image[seen, 2] .- g.image[seen, 2])) < 1.0e-3
     # the render and sample_frames are one pipeline: the frames sampled at the rays of the rendered pixels give, for the pixel's
     # owner, its value — with the planes' sample offsets too (R read ¼ px off, B the other way, G at the centre)
@@ -262,22 +261,66 @@ end
     @test f.owner[i, j] > 0 && abs(f.image[i, j, 2] - q.texture(d)[2]) / q.texture(d)[2] < 0.05
 end
 
-@testitem "render_panorama: a grid lens's SplineProjection renders on the device exactly as on the host" setup = [SyntheticSequence] begin
+@testitem "a camera with no stored lens coverage: no margin at the sensor's edge, the registration as with none (0.5.1)" setup = [SyntheticSequence] begin
+    # Review focus 4: the margins erode only a lens coverage's edge. A parametric camera bounded by its sensor alone (coverage
+    # the whole sensor, as 0.5.1's `circle = WholePlane()`) keeps every feature the sensor holds and samples 2 px inside the
+    # frame, whatever the margins: its registration does not depend on `detector_margin_px` (rotations to 1e-9).
+    using Test, LinearAlgebra, StaticArrays
+    using PanoramaStitching: PanoramaStitching, register_rotations
+    import VisualGeometryToolkitCore as VgtkCore
+    q = sequence(; K = 2)
+    bare = VgtkCore.BoundedCamera(VgtkCore.model(q.model), VgtkCore.Size2(1000, 1000))
+    @test PanoramaStitching._imaged_less_rim(bare, 30.0) == VgtkCore.imaged_region(bare)
+    region = PanoramaStitching._frame_region(bare, 1000, 1000, 12.0)
+    @test SVector(2.5, 2.5) ∈ region && SVector(997.5, 500.0) ∈ region && SVector(1.5, 500.0) ∉ region
+    reg(margin) = register_rotations(q.frames, bare; raw_scale = q.raw_scale, tone_percentile = 99.5, detector_margin_px = margin,
+                                     asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
+                                     pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
+                                     min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
+                                     bundle_scale_multiple = 3.0, bundle_iterations = 3, bundle_max_iter = 100, bundle_ftol = 1.0e-10,
+                                     bundle_xtol = 1.0e-10)
+    a, b = reg(0.0), reg(30.0)
+    @test [Set(f.pixels) for f in a.features] == [Set(f.pixels) for f in b.features]   # the same keypoints (ASIFT's order is its threads')
+    @test maximum(k -> norm(SMatrix{3, 3}(a.rotations[k]) - SMatrix{3, 3}(b.rotations[k])), 1:2) <= 1.0e-9
+end
+
+@testitem "render_panorama, sample_frames: nothing outside the camera's imaged region" setup = [SyntheticSequence] begin
+    # the camera's lens coverage bounds every mask: with a smaller, off-centre image circle every pixel the render shows and every
+    # direction the sampling sees lies at a sensor point inside that circle less the rim margin, and fewer pixels are seen
+    using Test, StaticArrays
+    using PanoramaStitching: render_panorama, sample_frames, panorama_view
+    import VisualGeometryToolkitCore as VgtkCore
+    q = sequence(; K = 2)
+    small = VgtkCore.with_lens_coverage(q.model, VgtkCore.Circle(VgtkCore.Point2(560.0, 470.0), 300.0))
+    inside(u) = hypot(u[1] - 560.0, u[2] - 470.0) <= 300.0 - 12.0 + 1.0e-9
+    eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 120.0, -60.0, 60.0), 0.5)
+    kw = (; vignetting = (u, f) -> 1.0, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0)
+    r = render_panorama(small, q.frames, q.R, eq; kw...); full = render_panorama(q.model, q.frames, q.R, eq; kw...)
+    seen = findall(>(0), r.owner)
+    @test !isempty(seen) && length(seen) < count(>(0), full.owner)
+    project(k, I) = VgtkCore.project(VgtkCore.model(q.model), SMatrix{3, 3}(q.R[k])' * eq.rays(SVector(I[2] - 0.5, I[1] - 0.5)))
+    @test all(I -> inside(project(r.owner[I], I)), seen)
+    D = [eq.rays(SVector(I[2] - 0.5, I[1] - 0.5)) for I in CartesianIndices(r.owner)[1:7:end]]
+    S = sample_frames(small, q.frames, q.R, D; saturated = [falses(size(f, 1), size(f, 2)) for f in q.frames], kw...)
+    @test count(S.seen) > 0 && all(i -> inside(S.pixels[i]), findall(S.seen))
+end
+
+@testitem "render_panorama: a grid lens's SplineLens camera renders on the device exactly as on the host" setup = [SyntheticSequence] begin
     # the warp's map wraps the projection in a BoundedMap and a ComposedTransformation chain, which reach image_warp!'s kernel by
-    # Core's Adapt rules (the spline's control grid moved to the device); the planes' offsets give each plane its own warp
+    # Core's Adapt rules (the spline's control grids moved to the device); the planes' offsets give each plane its own warp
     using Test, StaticArrays, CUDA
     using PanoramaStitching: render_panorama, panorama_view
     import VisualGeometryToolkitCore as VgtkCore
     if !CUDA.functional()
         @test_skip "no CUDA device"
     else
-        q = sequence(; K = 3, spline = true)
-        @test q.projection isa VgtkCore.SplineProjection
+        q = sequence(; K = 3)
+        @test VgtkCore.lens(VgtkCore.model(q.cam)) isa VgtkCore.SplineLens
         eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 150.0, -60.0, 60.0), 0.5)
-        kw = (; vignetting = (u, f) -> 1.0, circle = q.circle, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0,
+        kw = (; vignetting = (u, f) -> 1.0, raw_scale = q.raw_scale, rim_margin_px = 12.0, fov_deg = 89.0,
               plane_offsets = (SVector(0.25, 0.25), SVector(0.0, 0.0), SVector(-0.25, -0.25)))
-        h = render_panorama(q.projection, q.frames, q.R, eq; kw...)
-        d = render_panorama(q.projection, CuArray.(q.frames), q.R, eq; kw...)
+        h = render_panorama(q.cam, q.frames, q.R, eq; kw...)
+        d = render_panorama(q.cam, CuArray.(q.frames), q.R, eq; kw...)
         @test count(>(0), h.owner) > 0.4 * length(h.owner)
         @test Array(d.owner) == h.owner && Array(d.coverage) == h.coverage
         di = Array(d.image); seen = .!isnan.(h.image)

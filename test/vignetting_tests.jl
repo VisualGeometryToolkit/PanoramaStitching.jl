@@ -7,7 +7,7 @@
 @testsetup module VignettingSequence
 using LinearAlgebra: I, normalize
 using StaticArrays: SVector, SMatrix, SA
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, backproject, exp_so3, Circle, Point2
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, backproject, exp_so3, Circle, Point2, BoundedCamera, Size2
 export vignetting_sequence
 
 # the scene: a smooth log radiance on the sphere (wavelengths of about 30°; Cartesian, so no pole is singular)
@@ -34,7 +34,8 @@ function vignetting_sequence(logV; gains = ones(6))
         end
         img
     end
-    return (; frames, model, circle, raw_scale = s, R, saturated = [falses(Hf, Wf) for _ in R])
+    camera = BoundedCamera(model, Size2(W, H); lens_coverage = circle)                 # the sensor lit inside the image circle
+    return (; frames, camera, raw_scale = s, R, saturated = [falses(Hf, Wf) for _ in R])
 end
 end
 
@@ -55,7 +56,7 @@ end
         r = exp.(a .- b) .- 1
         return maximum(abs, r), sqrt(mean(abs2, r))
     end
-    kw = (; circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
+    kw = (; raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
           plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
           vignetting_penalty_weight = 1.0e-6, gain_correction = nothing)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
@@ -65,11 +66,11 @@ end
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     q = vignetting_sequence(radial)
     v0 = logv(RadialVignetting(12, c, 420.0))                # the domain reaches ρ ≈ 413 px from c
-    @test_throws ArgumentError fit_vignetting(VgtkCore.log_spline(v0), q.model, q.frames, q.R; free_directions = pole_regular_basis(v0),
+    @test_throws ArgumentError fit_vignetting(VgtkCore.log_spline(v0), q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0),
                                               saturated = q.saturated, solver = cgs, kw...)      # a V-form spline is only held fixed
     Z = pole_regular_basis(v0)
-    cg = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, saturated = q.saturated, solver = cgs, kw...)
-    ch = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, saturated = q.saturated, solver = SparseCholesky(), kw...)
+    cg = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, saturated = q.saturated, solver = cgs, kw...)
+    ch = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, saturated = q.saturated, solver = SparseCholesky(), kw...)
     e_cg = error_vs(VgtkCore.estimate(cg), radial, q); e_ch = error_vs(VgtkCore.estimate(ch), radial, q)
     @info "fit_vignetting radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.iterations) CG iterations, rms $(cg.rms)"
     @test VgtkCore.retcode(cg) === :converged && VgtkCore.retcode(ch) === :solved
@@ -85,7 +86,7 @@ end
                 0.05 * (u[1] - 400) / 400 - 0.04 * (u[2] - 400) / 400
     q2 = vignetting_sequence(tilted)
     t0 = logv(TensorProductVignetting((16, 16), VgtkCore.Rect(10.0, 10.0, 780.0, 780.0); degree = 3))
-    t = fit_vignetting(t0, q2.model, q2.frames, q2.R; free_directions = Matrix(1.0I, n_control_points(t0), n_control_points(t0)),
+    t = fit_vignetting(t0, q2.camera, q2.frames, q2.R; free_directions = Matrix(1.0I, n_control_points(t0), n_control_points(t0)),
                        saturated = q2.saturated, solver = SparseCholesky(), kw...)
     e2 = error_vs(VgtkCore.estimate(t), tilted, q2)
     @info "fit_vignetting tensor: max/rms error $(e2)"
@@ -93,10 +94,10 @@ end
 
     # the seam score: the true V leaves (almost) nothing, no correction leaves the vignetting's steps
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, circle = kw.circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+    sk = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           plane_offsets = nothing, chunk = 20_000)
-    fitted = score_seams(q.model, q.frames, q.R, view; vignetting = VgtkCore.estimate(cg), sk...)
-    none = score_seams(q.model, q.frames, q.R, view; vignetting = (u, f) -> 1.0, sk...)
+    fitted = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(cg), sk...)
+    none = score_seams(q.camera, q.frames, q.R, view; vignetting = (u, f) -> 1.0, sk...)
     @info "score_seams: fitted V rms $(fitted.rms) mad $(fitted.mad), none rms $(none.rms) mad $(none.mad), $(fitted.n) pixels"
     @test fitted.n > 10_000 && fitted.n == none.n
     @test fitted.mad < 0.1 * none.mad && fitted.rms < 0.1 * none.rms
@@ -125,13 +126,13 @@ end
         radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
         q = vignetting_sequence(radial)
         v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-        kw = (; circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
+        kw = (; raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
               plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
               vignetting_penalty_weight = 1.0e-6, gain_correction = ChannelGains(), free_directions = pole_regular_basis(v0),
               solver = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000))
-        h = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, kw...)
+        h = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, kw...)
         df, ds = CuArray.(q.frames), CuArray.(q.saturated)
-        d = fit_vignetting(v0, q.model, df, q.R; saturated = ds, kw...)
+        d = fit_vignetting(v0, q.camera, df, q.R; saturated = ds, kw...)
         @test VgtkCore.retcode(d) === :converged
         # the atomic sums run in another order on each backend (and from run to run): V agrees to the solve's precision
         @test maximum(abs.(control_points(VgtkCore.estimate(d)) .- control_points(VgtkCore.estimate(h)))) < 1.0e-6
@@ -139,28 +140,28 @@ end
         # the value-and-position noise's weights on the device (the observation's constraint, ForwardDiff and Core's whitening
         # in the kernels)
         sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 2)
-        hs = fit_vignetting(v0, q.model, q.frames, q.R; saturated = q.saturated, measurement_noise = sw, kw...)
-        dsf = fit_vignetting(v0, q.model, df, q.R; saturated = ds, measurement_noise = sw, kw...)
+        hs = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, measurement_noise = sw, kw...)
+        dsf = fit_vignetting(v0, q.camera, df, q.R; saturated = ds, measurement_noise = sw, kw...)
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-        sk = (; circle = kw.circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+        sk = (; raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
               chunk = 20_000, vignetting = VgtkCore.estimate(h))
-        sh = score_seams(q.model, q.frames, q.R, view; saturated = q.saturated, sk...)
-        sd = score_seams(q.model, df, q.R, view; saturated = ds, sk...)
+        sh = score_seams(q.camera, q.frames, q.R, view; saturated = q.saturated, sk...)
+        sd = score_seams(q.camera, df, q.R, view; saturated = ds, sk...)
         @test sh.n == sd.n && abs(sh.rms - sd.rms) < 1.0e-9 && abs(sh.mad - sd.mad) < 1.0e-9
         @test maximum(abs.(d.metadata.gains .- h.metadata.gains)) < 1.0e-8 && all(==(1.0), d.metadata.gains[1, :])
         # a V held fixed that holds HOST arrays (a calibration's table, with its Adapt rule) reaches the device in the fit, the
         # render and the seams (the functors are moved by OnBackend)
         tv = TableV(collect(range(1.0, 0.6; length = 64)), c, 420.0)
-        hf = fit_vignetting(tv, q.model, q.frames, q.R; saturated = q.saturated, kw..., free_directions = zeros(0, 0))
-        dfit = fit_vignetting(tv, q.model, df, q.R; saturated = ds, kw..., free_directions = zeros(0, 0))
+        hf = fit_vignetting(tv, q.camera, q.frames, q.R; saturated = q.saturated, kw..., free_directions = zeros(0, 0))
+        dfit = fit_vignetting(tv, q.camera, df, q.R; saturated = ds, kw..., free_directions = zeros(0, 0))
         @test maximum(abs.(dfit.metadata.gains .- hf.metadata.gains)) < 1.0e-8
-        rk = (; vignetting = tv, circle = kw.circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
-        a = render_panorama(q.model, q.frames, q.R, view; rk...); b = render_panorama(q.model, df, q.R, view; rk...)
+        rk = (; vignetting = tv, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+        a = render_panorama(q.camera, q.frames, q.R, view; rk...); b = render_panorama(q.camera, df, q.R, view; rk...)
         @test isequal(Array(b.owner), a.owner) && maximum(abs, filter(!isnan, vec(Array(b.image) .- a.image))) < 1.0e-5
-        sdt = score_seams(q.model, df, q.R, view; saturated = ds, sk..., vignetting = tv)
-        @test sdt.n == score_seams(q.model, q.frames, q.R, view; saturated = q.saturated, sk..., vignetting = tv).n
+        sdt = score_seams(q.camera, df, q.R, view; saturated = ds, sk..., vignetting = tv)
+        @test sdt.n == score_seams(q.camera, q.frames, q.R, view; saturated = q.saturated, sk..., vignetting = tv).n
     end
 end
 
@@ -178,9 +179,8 @@ end
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     g = [1.0, 1.12, 0.9, 1.2, 0.95, 1.07]
     q = vignetting_sequence(radial; gains = g)
-    circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-    kw = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+    kw = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
     function v_error(v)
@@ -189,9 +189,9 @@ end
         return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
     end
     Z = pole_regular_basis(v0)
-    with = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = cgs, kw...)
-    chol = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(), kw...)
-    without = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = nothing, solver = cgs, kw...)
+    with = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = cgs, kw...)
+    chol = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(), kw...)
+    without = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = nothing, solver = cgs, kw...)
     G = with.metadata.gains; gw = G[:, 2]
     @test size(G) == (6, 3) && G[:, 1] == G[:, 2] == G[:, 3]          # IntensityGains: one per frame, every plane
     @info "frame gains: recovered $(round.(gw; digits = 5)) (true $g); V error with $(v_error(VgtkCore.estimate(with))), without $(v_error(VgtkCore.estimate(without)))"
@@ -205,7 +205,7 @@ end
     @test with.rms < 0.5 * without.rms
 
     # gain compensation: V held fixed at the fitted one (no free direction), the gains alone, one linear solve
-    fixed = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
+    fixed = fit_vignetting(VgtkCore.estimate(with), q.camera, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                            gain_correction = IntensityGains(), solver = SparseCholesky(), kw...)
     @test VgtkCore.estimate(fixed) === VgtkCore.estimate(with) && fixed.metadata.log_change == 0
     @test maximum(abs.(fixed.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
@@ -214,11 +214,11 @@ end
     # the value-and-position noise (the observation's constraint whitened with the sensor point's noise too): frames that follow
     # the model exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
     sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5), iterations = 2)
-    sam = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
+    sam = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
                          measurement_noise = sw, kw...)
     @test sam.metadata.measurement_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
-    sf = fit_vignetting(VgtkCore.estimate(with), q.model, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
+    sf = fit_vignetting(VgtkCore.estimate(with), q.camera, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                         gain_correction = IntensityGains(), solver = SparseCholesky(),
                         measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)), kw...)
     @test sf.metadata.measurement_noise.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
@@ -232,11 +232,11 @@ end
     cL = replace(m.scene, NaN => 0.0)
     obs = PanoramaStitching._LogIntensityModel(VgtkCore.estimate(with), m.chart, cL, q.R[3], log(m.gains[3, 2]))
     for u in (SVector(300.0, 420.0), SVector(520.0, 260.0), SVector(410.0, 395.0))
-        f, M = VgtkCore.backproject_with_jacobian(q.model, u)
+        f, M = VgtkCore.backproject_with_jacobian(VgtkCore.model(q.camera), u)
         x = SVector(u[1], u[2], -2.0)
         gx, G_x, G_θ = VgtkCore.constraint_with_jacobians(obs, x; ray = f, ray_jacobian = M)
-        gat(w) = VgtkCore.constraint(obs, SVector(w[1], w[2], -2.0); ray = VgtkCore.backproject(q.model, w),
-                                     ray_jacobian = VgtkCore.backproject_with_jacobian(q.model, w)[2])
+        gat(w) = VgtkCore.constraint(obs, SVector(w[1], w[2], -2.0); ray = VgtkCore.backproject(q.camera, w),
+                                     ray_jacobian = VgtkCore.backproject_with_jacobian(VgtkCore.model(q.camera), w)[2])
         h = 1.0e-4
         fd = SVector((gat(u + SVector(h, 0)) - gat(u - SVector(h, 0))) / 2h, (gat(u + SVector(0, h)) - gat(u - SVector(0, h))) / 2h)
         @test isapprox(SVector(G_x[1], G_x[2]), fd; rtol = 1.0e-5, atol = 1.0e-9) && G_x[3] == 1.0
@@ -247,19 +247,19 @@ end
 
     # the seams: the fitted V with its gains leaves (almost) nothing; the same V with the frames taken at one exposure does not
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+    sk = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
           chunk = 20_000, vignetting = VgtkCore.estimate(with))
-    sg = score_seams(q.model, q.frames, q.R, view; gains = G, sk...)
-    s1 = score_seams(q.model, q.frames, q.R, view; sk...)
+    sg = score_seams(q.camera, q.frames, q.R, view; gains = G, sk...)
+    s1 = score_seams(q.camera, q.frames, q.R, view; sk...)
     @info "score_seams with the gains: rms $(sg.rms) mad $(sg.mad); without: rms $(s1.rms) mad $(s1.mad)"
     @test sg.rms < 0.1 * s1.rms                                       # (the MAD can stay small: a gain step is constant per frame region)
-    @test_throws DimensionMismatch score_seams(q.model, q.frames, q.R, view; gains = G[1:3, :], sk...)
-    @test_throws DimensionMismatch score_seams(q.model, q.frames, q.R, view; gains = gw, sk...)      # K × 3, not a vector
+    @test_throws DimensionMismatch score_seams(q.camera, q.frames, q.R, view; gains = G[1:3, :], sk...)
+    @test_throws DimensionMismatch score_seams(q.camera, q.frames, q.R, view; gains = gw, sk...)      # K × 3, not a vector
 
     # the render: dividing by g_k·V makes every frame show the same scene value
-    rk = (; vignetting = VgtkCore.estimate(with), circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
-    a = render_panorama(q.model, q.frames, q.R, view; gains = G, rk...)
-    b = render_panorama(q.model, q.frames, q.R, view; rk...)
+    rk = (; vignetting = VgtkCore.estimate(with), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+    a = render_panorama(q.camera, q.frames, q.R, view; gains = G, rk...)
+    b = render_panorama(q.camera, q.frames, q.R, view; rk...)
     o = a.owner; m = o .> 0
     @test all(i -> a.image[i, 2] * gw[o[i]] ≈ b.image[i, 2], findall(m)[1:97:end])
 end
@@ -279,10 +279,9 @@ end
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     G = [1.0 1.0 1.0; 1.10 1.12 1.15; 0.93 0.90 0.86; 1.25 1.20 1.12; 0.97 0.95 0.99; 1.02 1.07 1.11]   # g_1c = 1: the gauge
     q = vignetting_sequence(radial; gains = G)
-    circle = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     truth(u, f) = exp(radial(u))                                     # a V given as any callable
-    kw = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+    kw = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
     function v_error(v)
         us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([SVector((j - 0.5) * 2, (i - 0.5) * 2) for j in 1:400, i in 1:400]))
@@ -291,7 +290,7 @@ end
     end
     modes = (("fitted", v0, pole_regular_basis(v0)), ("held", truth, zeros(0, 0)))
     for (vm, v, Z) in modes, gc in (nothing, IntensityGains(), ChannelGains())
-        r = fit_vignetting(v, q.model, q.frames, q.R; free_directions = Z, gain_correction = gc, kw...)
+        r = fit_vignetting(v, q.camera, q.frames, q.R; free_directions = Z, gain_correction = gc, kw...)
         g = r.metadata.gains
         @info "gain_correction $(gc === nothing ? "none" : nameof(typeof(gc))), V $vm: gains error per plane " *
               "$(round.(vec(maximum(abs.(g ./ G .- 1); dims = 1)); sigdigits = 2))"
@@ -312,28 +311,28 @@ end
 
     # the seams and the render read each plane's gains: with ChannelGains every plane's seams vanish, with IntensityGains only the
     # fitted plane's
-    ch = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), kw...)
-    fr = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = IntensityGains(), kw...)
+    ch = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), kw...)
+    fr = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = IntensityGains(), kw...)
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane_offsets = nothing, chunk = 20_000)
+    sk = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane_offsets = nothing, chunk = 20_000)
     for p in (1, 3)
-        sc = score_seams(q.model, q.frames, q.R, view; vignetting = VgtkCore.estimate(ch), gains = ch.metadata.gains, plane = p, sk...)
-        sf = score_seams(q.model, q.frames, q.R, view; vignetting = VgtkCore.estimate(fr), gains = fr.metadata.gains, plane = p, sk...)
+        sc = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(ch), gains = ch.metadata.gains, plane = p, sk...)
+        sf = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(fr), gains = fr.metadata.gains, plane = p, sk...)
         @test sc.rms < 0.1 * sf.rms
     end
-    rk = (; vignetting = VgtkCore.estimate(ch), circle, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
-    a = render_panorama(q.model, q.frames, q.R, view; gains = ch.metadata.gains, rk...)
-    b = render_panorama(q.model, q.frames, q.R, view; rk...)
+    rk = (; vignetting = VgtkCore.estimate(ch), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+    a = render_panorama(q.camera, q.frames, q.R, view; gains = ch.metadata.gains, rk...)
+    b = render_panorama(q.camera, q.frames, q.R, view; rk...)
     o = a.owner; m = findall(o .> 0)[1:97:end]
     @test all(i -> all(cc -> a.image[i, cc] * ch.metadata.gains[o[i], cc] ≈ b.image[i, cc], 1:3), m)
 
     # an other plane's unconverged solve is not hidden: its CG budget's end is the result's retcode, its iterations summed
     short = (; kw..., solver = ConjugateGradient(; tolerance = 1.0e-14, max_iter = 3))
-    rc = fit_vignetting(v0, q.model, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), short...)
+    rc = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), short...)
     @test VgtkCore.retcode(rc) === :max_iterations && rc.iterations == 3 * 3
     # a V held fixed that is not positive somewhere in the domain is refused by name (not Base's DomainError of the log)
     dark(u, f) = u[1] < 100 ? -0.5 : truth(u, f)
-    @test_throws ArgumentError fit_vignetting(dark, q.model, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = IntensityGains(), kw...)
+    @test_throws ArgumentError fit_vignetting(dark, q.camera, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = IntensityGains(), kw...)
 end
 
 # The TOML tags of the gain correction and the measurement noise: the current tags select their types (the tag rule: snake_case
@@ -359,9 +358,10 @@ end
 end
 
 # The example's TOML keys of earlier releases are refused by name (run.jl's `refuse_renamed_keys`, which `load_config` and
-# compare_arms.jl call): the example's own environment is not the tests', so its two definitions are read from run.jl alone; the
-# configs of record and arms.toml hold the current keys and tags.
-@testitem "panorama_vignetting example: the renamed TOML keys refused by name; the configs of record are current" begin
+# compare_arms.jl call, and `refuse_circle`, which `load_config` calls: the image circle is the camera's lens coverage): the
+# example's own environment is not the tests', so their definitions are read from run.jl alone; the configs of record and
+# arms.toml hold the current keys and tags.
+@testitem "panorama_vignetting example: the renamed and retired TOML keys refused by name; the configs of record are current" begin
     using Test, TOML
     using PanoramaStitching: PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
@@ -370,7 +370,7 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
-    for name in (:RENAMED_KEYS, :refuse_renamed_keys)
+    for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -382,8 +382,17 @@ end
         end
         @test err isa ArgumentError && occursin("the key $old was renamed to $new", err.msg)
     end
+    # `[inputs] circle` is refused, naming the camera's lens coverage
+    err = try
+        Base.invokelatest(m.refuse_circle, Dict{String, Any}("circle" => [1.0, 2.0, 3.0]), "config [inputs]"); nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("lens_coverage", err.msg) && occursin("circle", err.msg)
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.MEASUREMENT_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
+        inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
+        @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
         @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)

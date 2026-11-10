@@ -45,7 +45,7 @@ struct Registration{A, B, F}
 end
 
 """
-    register_rotations(frames, camera; projection = camera, raw_scale, circle, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+    register_rotations(frames, camera::BoundedCamera; projection = camera, raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
@@ -53,15 +53,14 @@ end
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
-`camera` (fixed; any camera with `backproject_with_jacobian` and `backproject`),
+`camera` (fixed; a VisualGeometryToolkitCore `BoundedCamera`, whose `imaged_region` bounds the features),
 projected in the bundle through `projection`, its closed-form forward map (the
-camera itself when it is a `CameraModel`; for a grid model its `SplineProjection`,
-see [`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's
+camera itself, through its model's `imaging_transform` — a grid lens's `SplineLens`
+through its forward spline; see [`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's
 statistics. Every setting is the caller's configuration, none defaulted but the
 RANSAC's:
 
-- features: `circle` (a Core `Circle` or `Ellipse` in camera pixels, `WholePlane()`
-  for a lens with none), `tone_percentile`,
+- features: inside the camera's `imaged_region`; `tone_percentile`,
   `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections` — see
   [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
@@ -93,13 +92,13 @@ stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a `bundle_whitening`
 other than `:none` or `:keypoint_covariance`, an `execution_provider` other
 than `:cpu` or `:cuda` and a `projection` that
-is no closed-form forward map (a grid model without its `SplineProjection`) are
+is no closed-form forward map (not a camera model) are
 an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame, [`ViewGraph`](@ref)) is an `ArgumentError` too.
 """
-function register_rotations(frames::AbstractVector, camera; projection = camera, raw_scale::Integer, circle, tone_percentile::Real, detector_margin_px::Real,
-                            asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,
+function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; projection = camera, raw_scale::Integer,
+                            tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
@@ -117,7 +116,7 @@ function register_rotations(frames::AbstractVector, camera; projection = camera,
     desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider)
     match = VgtkFeatures.LoMaMatcher(matcher; execution_provider)
     feats = map(1:K) do k
-        f = detect_features(frames[k], desc; raw_scale, circle, tone_percentile, detector_margin_px, asift_tilts, max_detections)
+        f = detect_features(camera, frames[k], desc; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections)
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")
         f
     end

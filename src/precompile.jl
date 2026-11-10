@@ -3,8 +3,9 @@
 # data files, no output: two 40 × 40 frames of a smooth synthetic scene through a Kannala–Brandt fisheye, rotated in yaw.
 
 @setup_workload begin
-    camera = VgtkCore.CameraModel(40.0 * VgtkCore.px, SVector(40.0 * VgtkCore.px, 40.0 * VgtkCore.px); lens = VgtkCore.KannalaBrandt(-0.02))
-    circle = VgtkCore.Circle(VgtkCore.Point2(40.0, 40.0), 38.0)
+    camera = VgtkCore.BoundedCamera(VgtkCore.CameraModel(40.0 * VgtkCore.px, SVector(40.0 * VgtkCore.px, 40.0 * VgtkCore.px);
+                                                         lens = VgtkCore.KannalaBrandt(-0.02)),
+                                    VgtkCore.Size2(80, 80); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(40.0, 40.0), 38.0))
     rotations = [SMatrix{3, 3}(VgtkCore.exp_so3(SVector(0.0, deg2rad(y), 0.0))) for y in (0.0, 30.0)]
     scene(d) = 0.05 * exp(0.6 * sin(3d[1] + 2d[2]) * cos(2d[3]))
     frames = map(rotations) do R
@@ -18,7 +19,7 @@
     end
     saturated = [falses(40, 40) for _ in rotations]
     @compile_workload begin
-        kw = (; circle, raw_scale = 2, rim_margin_px = 2.0, fov_deg = 100.0)
+        kw = (; raw_scale = 2, rim_margin_px = 2.0, fov_deg = 100.0)
         fit = (; saturated, kw..., plane = 2, plane_offsets = nothing, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,
                vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
         # the radial and the tensor log-vignetting, each from log V ≡ 0
