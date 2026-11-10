@@ -1,0 +1,83 @@
+# =============================================================================
+# detect_features' variants: the selection (:spread, VisualGeometryToolkitFeatures' spread_strongest through the descriptor;
+# :strongest, the global top N) and the detection image (:tone; :vst, the variance-stabilized green cells of the frame's
+# LinearRaw), the kept pixels the described set's, and the refusals.
+# =============================================================================
+
+@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept pixels are the described set" setup = [SyntheticSequence] begin
+    using Test, StaticArrays, Statistics
+    using PanoramaStitching: PanoramaStitching, detect_features
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitFeatures as VgtkFeatures
+    q = sequence(; K = 1)
+    frame = copy(q.frames[1]); Hf, Wf = size(frame, 1), size(frame, 2)
+    frame[:, 1:(Wf ÷ 2), :] .*= 0.05f0                                  # a dim left half
+    N = 300
+    desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
+    kw = (; raw_scale = q.raw_scale, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
+    sp = detect_features(q.cam, frame, desc; kw..., selection = :spread)
+    st = detect_features(q.cam, frame, desc; kw..., selection = :strongest)
+    @test detect_features(q.cam, frame, desc; kw...).pixels == sp.pixels           # :spread and :tone the defaults
+    for f in (sp, st)
+        @test length(f.pixels) == length(f.features) == length(f.pixel_covariances)
+        @test all(i -> f.pixels[i] == q.raw_scale .* SVector{2, Float64}(f.features[i].detection.center...), eachindex(f.pixels))
+        @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, f.pixels)
+    end
+    @test length(st.pixels) == N && round(Int, 0.9N) <= length(sp.pixels) <= round(Int, 1.1N)
+    dim(f) = count(p -> p[1] < q.raw_scale * Wf / 2, f.pixels) / length(f.pixels)
+    @info "detect_features: the dim half holds $(round(dim(sp); digits = 3)) of :spread's keypoints, $(round(dim(st); digits = 3)) of :strongest's"
+    @test dim(sp) > 0.15
+    @test dim(st) < dim(sp) / 3
+    # :strongest is the global top N by |response| of the region's detections (the oracle: ASIFT on the documented tone)
+    p = quantile(vec(view(frame, :, :, 2))[vec(VgtkCore.pixel_mask(PanoramaStitching._binned(VgtkCore.imaged_region(q.cam), q.raw_scale), Wf, Hf))], 0.995)
+    dets = VgtkFeatures.asift_detect(Float32.(sqrt.(clamp.(Float64.(view(frame, :, :, 2)) ./ p, 0, 1))); tilts = [(1.0, 0.0)])
+    kept = PanoramaStitching._imaged_less_rim(q.cam, 20.0)
+    inside = filter(d -> VgtkCore.Point2(q.raw_scale * d.center[1], q.raw_scale * d.center[2]) ∈ kept, dets)
+    r = sort(abs.(getproperty.(inside, :response)); rev = true)
+    @test minimum(abs(f.detection.response) for f in st.features) >= r[N]
+end
+
+@testitem "detect_features: :vst on the frame's LinearRaw; the refusals" setup = [SyntheticSequence] begin
+    using Test, StaticArrays
+    using PanoramaStitching: PanoramaStitching, detect_features, verify_pairs, register_rotations
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitFeatures as VgtkFeatures
+    q = sequence(; K = 1)
+    frame = 0.5f0 .* q.frames[1]; Hf, Wf = size(frame, 1), size(frame, 2)
+    # the frame as an RGGB mosaic (black 512, white 16383): each photosite its plane's value, so its :bin2 LinearRaw is the frame
+    black = 512.0; white = 16383.0
+    code(v) = UInt16(round(black + clamp(v, 0, 1) * (white - black)))
+    raw = Matrix{UInt16}(undef, 2Hf, 2Wf)
+    for j in 1:Wf, i in 1:Hf
+        raw[2i - 1, 2j - 1] = code(frame[i, j, 1]); raw[2i - 1, 2j] = code(frame[i, j, 2])
+        raw[2i, 2j - 1] = code(frame[i, j, 2]); raw[2i, 2j] = code(frame[i, j, 3])
+    end
+    L = VgtkFeatures.LinearRaw(VgtkFeatures.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf),
+                                                      (; model = "synthetic")); mode = :bin2)
+    N = 300
+    desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
+    kw = (; raw_scale = q.raw_scale, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
+    noise = (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
+    # :tone reads a LinearRaw's image as it reads the array
+    @test detect_features(q.cam, L, desc; kw...).pixels == detect_features(q.cam, L.image, desc; kw...).pixels
+    v = detect_features(q.cam, L, desc; kw..., detection_image = :vst, detection_noise = noise)
+    s = VgtkFeatures.variance_stabilize(L; electrons_per_dn = 5.63, read_noise = 0.82)
+    @test v.n_detected == length(VgtkFeatures.asift_detect(s; noise_sigmas = 3.0, tilts = [(1.0, 0.0)]))
+    @test round(Int, 0.9N) <= length(v.pixels) <= round(Int, 1.1N)
+    @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, v.pixels)
+    @test v.pixels != detect_features(q.cam, L, desc; kw...).pixels
+    # the refusals
+    @test_throws ArgumentError detect_features(q.cam, L.image, desc; kw..., detection_image = :vst, detection_noise = noise)   # no LinearRaw
+    @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., detection_image = :vst)                                  # no noise
+    @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., detection_noise = noise)                                 # inert with :tone
+    @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., detection_image = :log)
+    @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., selection = :ssc)
+    # verify_pairs and register_rotations refuse before any feature is detected
+    vkw = (; kw..., descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 90.0, min_inliers = 10,
+           seed = 1, max_trials = 10, min_trials = 1, averaging_loss = VgtkCore.HuberShape(), execution_provider = :cpu)
+    @test_throws ArgumentError verify_pairs([L.image, L.image], q.cam; vkw..., detection_image = :vst, detection_noise = noise)
+    @test_throws ArgumentError verify_pairs([L, L], q.cam; vkw..., selection = :ssc)
+    @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_loss = VgtkCore.CauchyShape(),
+                                                  bundle_scale_multiple = 3.0, bundle_iterations = 1, bundle_max_iter = 1,
+                                                  bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
+end

@@ -393,6 +393,9 @@ end
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
+        # the view-graph filters' tolerances and the detector's variant are stated
+        reg = TOML.parsefile(joinpath(dir, f))["registration"]
+        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg", "selection", "detection_image"))
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
         @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
@@ -420,7 +423,8 @@ end
     m = Module()
     Core.eval(m, :(using PanoramaStitching, StaticArrays; import JSON; import VisualGeometryToolkitCore as VgtkCore))
     for name in (:data_root, :input_path, :say, :stage_key, :cached_record, :REGISTRATION_FORMAT, :registration_key, :PAIRS_FORMAT,
-                 :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :loma_record, :pairs_record, :pairs_from_record)
+                 :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :loma_record, :pairs_record, :pairs_from_record,
+                 :DETECTION_NOISE_KEYS, :detector_settings)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     call(f, args...; kw...) = Base.invokelatest(getfield(m, f), args...; kw...)
@@ -457,7 +461,8 @@ end
         key(f, c; provider = :cuda) = call(f, (; cfg = c, out), inp, provider)
         # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
         @test key(:pairs_key, cfg(); provider = :cpu) != key(:pairs_key, cfg()) && key(:registration_key, cfg(); provider = :cpu) != key(:registration_key, cfg())
-        for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_scale_multiple = 2.5), cfg(; bundle_loss = "huber"))
+        for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_scale_multiple = 2.5), cfg(; bundle_loss = "huber"),
+                  cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0))
             @test key(:registration_key, c) != key(:registration_key, cfg()) && key(:pairs_key, c) == key(:pairs_key, cfg())
             stage(c)
         end
@@ -465,7 +470,18 @@ end
         # a changed matching setting, or a changed RAW file: matched again
         stage(cfg(; min_inliers = 30)); @test matched[] == 2
         write(joinpath(root, "raw", "b.ARW"), "b, rewritten"); stage(cfg(; min_inliers = 30)); @test matched[] == 3
+        # the detector's keys key the pairs
+        for c in (cfg(; selection = "spread"), cfg(; detection_image = "vst"), cfg(; max_detections = 4096))
+            @test key(:pairs_key, c) != key(:pairs_key, cfg())
+        end
         # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its loss keys the pairs there
         @test key(:pairs_key, cfg(; pairs = "lag_overlap", averaging_loss = "cauchy")) != key(:pairs_key, cfg(; pairs = "lag_overlap"))
     end
+    # the detector's settings: "vst" reads the noise keys, "tone" refuses them (never read)
+    det(r) = call(:detector_settings, Dict{String, Any}(r))
+    @test det(Dict("selection" => "spread", "detection_image" => "tone")) == (; selection = :spread, detection_image = :tone, detection_noise = nothing)
+    v = det(Dict("selection" => "strongest", "detection_image" => "vst", "electrons_per_dn" => 5.63, "read_noise_dn" => 0.82, "noise_sigmas" => 3))
+    @test v.selection === :strongest && v.detection_noise == (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
+    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3))
+    @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst"))
 end

@@ -3,8 +3,8 @@
 # =============================================================================
 #
 # VisualGeometryToolkitFeatures' ASIFT keypoints (affine frames with their covariances) on
-# the tone-mapped green channel inside the camera's imaged region, the strongest by |response|,
-# described by DeDoDe at them (`LoMaDescriptor`, which resamples the frame to its network's
+# the tone-mapped or the variance-stabilized green inside the camera's imaged region, about N of the strongest spread over the
+# frame (or the global top N), described by DeDoDe at them (`LoMaDescriptor`, which resamples the frame to its network's
 # fixed input), and matched by the LoMa matcher (`LoMaMatcher`, LightGlue architecture).
 # =============================================================================
 
@@ -14,10 +14,10 @@
 One frame's features: `pixels` (the kept detections' centres in the camera's
 pixel frame, full resolution), `pixel_covariances` (each centre's 2 × 2
 position covariance in camera pixels², VisualGeometryToolkitFeatures'
-`FeatureCovariance` for unit iid noise of the tone-mapped detection image,
+`FeatureCovariance` for unit iid noise of the detection image,
 scaled as the centres are; all `NaN` for a detection the detector did not
 refine), `features` (their DeDoDe descriptions), `n_detected` (ASIFT's count
-before the imaged region and the strength selection).
+before the imaged region and the selection).
 """
 struct FrameFeatures{F}
     pixels::Vector{SVector{2, Float64}}
@@ -26,43 +26,97 @@ struct FrameFeatures{F}
     n_detected::Int
 end
 
+# The detector's variants (`detect_features`' `selection` and `detection_image`).
+const SELECTIONS = (:spread, :strongest)
+const DETECTION_IMAGES = (:tone, :vst)
+
+# The detector's settings, checked before any feature is detected: `detection_noise` is
+# `(; electrons_per_dn, read_noise, noise_sigmas)` with `detection_image = :vst` and `nothing` (read by nothing) with `:tone`.
+function _check_detector_settings(what, selection, detection_image, detection_noise)
+    selection in SELECTIONS || throw(ArgumentError("$what: selection = :$selection is not :spread or :strongest"))
+    detection_image in DETECTION_IMAGES || throw(ArgumentError("$what: detection_image = :$detection_image is not :tone or :vst"))
+    if detection_image === :vst
+        detection_noise isa NamedTuple && all(k -> haskey(detection_noise, k), (:electrons_per_dn, :read_noise, :noise_sigmas)) ||
+            throw(ArgumentError("$what: detection_image = :vst needs detection_noise = (; electrons_per_dn, read_noise, noise_sigmas), got $detection_noise"))
+    else
+        detection_noise === nothing ||
+            throw(ArgumentError("$what: detection_noise is read only by detection_image = :vst, not :$detection_image; leave it nothing"))
+    end
+    return nothing
+end
+
+# A frame's linear `H × W × 3` image: the frame itself, or a VisualGeometryToolkitFeatures `LinearRaw`'s (`:bin2`) image.
+_frame_image(frame::AbstractArray{<:Real, 3}) = frame
+_frame_image(frame::VgtkFeatures.LinearRaw) = frame.image
+
+# ASIFT on the detection image: the tone-mapped green (`toned`'s plane 2) at Features' default contrast threshold, or the
+# variance-stabilized green cells of a `LinearRaw` (Features' `variance_stabilize`) at `noise_sigmas` noise σ.
+_asift(frame, toned, ::Val{:tone}, noise, tilts) =
+    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, uncertainty = VgtkFeatures.FeatureCovariance())
+_asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts) =
+    VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame; noise.electrons_per_dn, noise.read_noise);
+                              noise.noise_sigmas, tilts, uncertainty = VgtkFeatures.FeatureCovariance())
+_asift(frame, toned, ::Val{:vst}, noise, tilts) =
+    throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
+
+# selection = :strongest: the global top `n` by |response| (ties: the earlier detection first), in detector order. The
+# ablation's baseline (VisualGeometryToolkitFeatures' former `strongest`); :spread leaves the selection to the descriptor.
+_global_strongest(dets, n) = length(dets) <= n ? dets : dets[sort!(sortperm(abs.(getproperty.(dets, :response)); rev = true)[1:n])]
+
 """
     detect_features(camera::BoundedCamera, frame, descriptor; raw_scale, tone_percentile, detector_margin_px, asift_tilts,
-                    max_detections) -> FrameFeatures
+                    max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing) -> FrameFeatures
 
-The features of one frame (`H × W × 3` linear, `raw_scale` camera pixels per frame
-pixel) of `camera`: ASIFT on `sqrt(G / p)` clamped to `[0, 1]` (`p` the `tone_percentile`-th
-percentile of the green channel inside the camera's `imaged_region` — its sensor ∩
-its lens coverage ∩ its model's valid domain), the detections
-inside the imaged region less `detector_margin_px` at the lens coverage's edge
-(a camera whose coverage is its whole sensor: no margin), the
-`max_detections` strongest by |response| (VisualGeometryToolkitFeatures'
-`strongest`), described by `descriptor` (a `LoMaDescriptor`) on the frame's
-tone-mapped RGB, the detections in the frame's pixels (the descriptor resamples
-the image to its network's input).
-`asift_tilts` is VisualGeometryToolkitFeatures' tilt schedule (`nothing`: IMAS-25).
+The features of one frame (`H × W × 3` linear, or a VisualGeometryToolkitFeatures
+`LinearRaw` of mode `:bin2`; `raw_scale` camera pixels per frame pixel) of
+`camera`, described by `descriptor` (a `LoMaDescriptor`) on the frame's tone
+`sqrt(G / p)` clamped to `[0, 1]` (`p` the `tone_percentile`-th percentile of the
+green channel inside the camera's `imaged_region` — its sensor ∩ its lens
+coverage ∩ its model's valid domain), the detections in the frame's pixels (the
+descriptor resamples the image to its network's input).
+
+- ASIFT (`asift_tilts`: VisualGeometryToolkitFeatures' tilt schedule, `nothing`:
+  IMAS-25) on the `detection_image`: `:tone`, that tone's green at Features'
+  default contrast threshold; `:vst`, the frame's variance-stabilized green cells
+  (Features' `variance_stabilize`, noise σ = 1 at every level; the frame must be
+  its `LinearRaw`) at `detection_noise.noise_sigmas` noise σ, `detection_noise =
+  (; electrons_per_dn, read_noise, noise_sigmas)` the sensor's conversion gain and
+  read noise (raw codes) at the frame's ISO.
+- The detections inside the imaged region less `detector_margin_px` at the lens
+  coverage's edge (a camera whose coverage is its whole sensor: no margin).
+- `selection`: `:spread`, about `max_detections` of the strongest spread over the
+  frame (Features' `spread_strongest`, which the descriptor applies); `:strongest`,
+  the global top `max_detections` by |response|.
+
+The kept pixels are the described set's.
 """
-function detect_features(camera::VgtkCore.BoundedCamera, frame::AbstractArray{<:Real, 3}, descriptor; raw_scale::Integer,
-                         tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer)
-    Hf, Wf = size(frame, 1), size(frame, 2); s = raw_scale
+function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; raw_scale::Integer,
+                         tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
+                         selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing)
+    _check_detector_settings("detect_features", selection, detection_image, detection_noise)
+    img = _frame_image(frame)
+    Hf, Wf = size(img, 1), size(img, 2); s = raw_scale
     region = VgtkCore.imaged_region(camera)
     inside = VgtkCore.pixel_mask(_binned(region, s), Wf, Hf)                  # the imaged region in the binned frame's pixels
-    p = quantile(vec(view(frame, :, :, 2))[vec(inside)], tone_percentile / 100)
-    toned = sqrt.(clamp.(Float64.(frame) ./ p, 0, 1))
-    dets = VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts = asift_tilts, uncertainty = VgtkFeatures.FeatureCovariance())
+    p = quantile(vec(view(img, :, :, 2))[vec(inside)], tone_percentile / 100)
+    toned = sqrt.(clamp.(Float64.(img) ./ p, 0, 1))
+    dets = _asift(frame, toned, Val(detection_image), detection_noise, asift_tilts)
     n = length(dets)
     # ASIFT's detections arrive in its threads' order: sorted by position (then response) the kept set, its order and so every
     # index-sampled RANSAC downstream are the same run to run
     sort!(dets; by = d -> (d.center[1], d.center[2], d.response))
     kept = _imaged_less_rim(camera, detector_margin_px)
-    dets = VgtkFeatures.strongest(filter(d -> VgtkCore.Point2(s * d.center[1], s * d.center[2]) ∈ kept, dets), max_detections)
-    pixels = [SVector(s * d.center[1], s * d.center[2]) for d in dets]
+    dets = filter(d -> VgtkCore.Point2(s * d.center[1], s * d.center[2]) ∈ kept, dets)
+    selection === :strongest && (dets = _global_strongest(dets, max_detections))
+    # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
+    # the image to its network's input, and keeps about max_detections of them spread over it: the kept set is the described one)
+    F = descriptor(permutedims(toned, (3, 1, 2)), dets)
+    described = [f.detection for f in F]
+    pixels = [SVector(s * d.center[1], s * d.center[2]) for d in described]
     # the centres' position covariance (the top-left 2 × 2 of the (x, y, log σ) covariance, detection-image pixels²), in camera
     # pixels² as the centres are scaled: s²·Σ
-    covs = [(Σ = Statistics.cov(d); s^2 * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2])) for d in dets]
-    # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
-    # the image to its network's input)
-    return FrameFeatures(pixels, covs, descriptor(permutedims(toned, (3, 1, 2)), dets), n)
+    covs = [(Σ = Statistics.cov(d); s^2 * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2])) for d in described]
+    return FrameFeatures(pixels, covs, F, n)
 end
 
 """

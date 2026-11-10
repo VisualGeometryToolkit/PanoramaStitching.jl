@@ -216,15 +216,18 @@ end
 # by stable_seed(seed, i, j), so a v2 record's rotations are not this code's; they are recomputed. v5: PanoramaStitching 0.6's
 # bundle drops the observations not imaged at its start and counts them (`n_dropped_start`, replacing v3's start finiteness
 # count), and holds the frames left with none (`frames_unconstrained`). v6: the key holds the provider LoMa runs on, and the
-# record LoMa's provenance (`loma`).
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v6 (LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+# record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's filtered_rotation_averaging at `cycle_tol_deg` and
+# `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed.
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v7 (the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
 # rotation averaging's and the bundle's, so changing those reuses the pairs. With pairs = "lag_overlap" the averaging loss aims
 # the pairs past the lag, so it keys the pairs too.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v2 (LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
-const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "bundle_loss", "bundle_scale_multiple", "bundle_iterations", "bundle_max_iter",
+# v3: the detector's selection and detection image (`selection`, `detection_image` and its noise keys), every ASIFT detection
+# refined (VisualGeometryToolkitFeatures 0.9), the kept keypoints the described set.
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v3 (the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "cycle_tol_deg", "orientation_tol_deg", "bundle_loss", "bundle_scale_multiple", "bundle_iterations", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol", "bundle_whitening")
 function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_loss"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
@@ -261,15 +264,37 @@ function pairs_from_record(rec)
     return VerifiedPairs(feats, verified, matches, stats, loma)
 end
 
+# The detector's settings of [registration]: `selection` ("spread" or "strongest"), `detection_image` ("tone" or "vst") and, with
+# "vst" only, the sensor's noise at the frames' ISO (`electrons_per_dn`, `read_noise_dn`) and the threshold `noise_sigmas`: a noise
+# key with "tone" is refused, never read.
+const DETECTION_NOISE_KEYS = ("electrons_per_dn", "read_noise_dn", "noise_sigmas")
+function detector_settings(r)
+    if r["detection_image"] == "vst"
+        noise = (; electrons_per_dn = Float64(r["electrons_per_dn"]), read_noise = Float64(r["read_noise_dn"]), noise_sigmas = Float64(r["noise_sigmas"]))
+    else
+        inert = filter(k -> haskey(r, k), DETECTION_NOISE_KEYS)
+        isempty(inert) || throw(ArgumentError("[registration] $(join(inert, ", ")): read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
+        noise = nothing
+    end
+    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), detection_noise = noise)
+end
+
+# The frames as VisualGeometryToolkitFeatures' LinearRaw (load_raw at the decode settings, the one RAW path): detection_image = "vst"
+# reads their green cells' code spans, which the decode cache does not keep.
+linear_raws(C, inp) = [VgtkFeatures.load_raw(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n); mode = Symbol(C.cfg["decode"]["mode"]),
+                                             gain = Float64(C.cfg["decode"]["gain"])) for n in inp.names]
+
 # The verified pairs, cached (verified_pairs.json): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
 # setting, and written before the view graph is built, so a failure past it (the averaging, the bundle) loses none of it.
 function verified_pairs(C, inp, lens, provider::Symbol; log)
     r = C.cfg["registration"]
     rec = cached_record(joinpath(C.out, "verified_pairs.json"), pairs_key(C, inp, provider); log, what = "verified pairs") do
         t0 = time()
-        vp = verify_pairs(inp.frames, lens; raw_scale = 2, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
+        det = detector_settings(r)
+        frames = det.detection_image === :vst ? linear_raws(C, inp) : inp.frames
+        vp = verify_pairs(frames, lens; raw_scale = 2, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = r["asift_tilts"] == "imas25" ? nothing : [Tuple(t) for t in r["asift_tilts"]],
-                          max_detections = r["max_detections"], descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
+                          max_detections = r["max_detections"], det..., descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = Float64(r["scoring_threshold_px"])),
@@ -287,7 +312,8 @@ function registration(C, inp, lens; log)
     rec = cached_record(joinpath(C.out, "rotations.json"), registration_key(C, inp, provider); log, what = "registration") do
         vp = verified_pairs(C, inp, lens, provider; log)
         t0 = time()
-        reg = register_rotations(vp.pairs, lens; averaging_loss = LOSSES[r["averaging_loss"]], bundle_loss = LOSSES[r["bundle_loss"]],
+        reg = register_rotations(vp.pairs, lens; averaging_loss = LOSSES[r["averaging_loss"]], cycle_tol = deg2rad(r["cycle_tol_deg"]),
+                                 orientation_tol = deg2rad(r["orientation_tol_deg"]), bundle_loss = LOSSES[r["bundle_loss"]],
                                  bundle_scale_multiple = r["bundle_scale_multiple"], bundle_iterations = r["bundle_iterations"],
                                  bundle_max_iter = r["bundle_max_iter"], bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"],
                                  say = m -> say(log, m))
@@ -295,7 +321,10 @@ function registration(C, inp, lens; log)
         Dict{String, Any}("convention" => "d = R_k·f_k, the first frame's camera frame the common frame; R row by row",
                           "frames" => inp.names, "rotations" => [[collect(R[i, :]) for i in 1:3] for R in Rs],
                           # the seconds of the whole registration: the verified pairs' (as computed, also when reused) and the rest
-                          "pairs" => length(reg.pairs), "bundle_rms_px" => reg.bundle.rms, "seconds" => vp.seconds + time() - t0,
+                          # the verified pairs, and those the view-graph filters removed (0-based frame indices) at their tolerances
+                          "pairs" => length(reg.pairs), "pairs_removed" => [[i - 1, j - 1] for (i, j) in reg.removed],
+                          "cycle_tol_deg" => Float64(r["cycle_tol_deg"]), "orientation_tol_deg" => Float64(r["orientation_tol_deg"]),
+                          "bundle_rms_px" => reg.bundle.rms, "seconds" => vp.seconds + time() - t0,
                           # the bundle's outcome (RotationBundleMetadata): converged, not_run, or another retcode; the observations it
                           # dropped at its start (a start prediction off the camera model's valid domain); the frames it held at their
                           # start rotation (left with no kept observation: their 0-based indices)
@@ -312,7 +341,7 @@ function registration(C, inp, lens; log)
     # a record written before 2026-11-04 holds no bundle loss width: no point scale (IntensityAndPositionNoise then refuses to run;
     # delete the record to recompute it)
     return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
-            pairs = rec["pairs"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
+            pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
             loma = rec["loma"], point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
@@ -618,7 +647,8 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = reg.bundle_rms_px === nothing ? "not recorded" : "$(f(reg.bundle_rms_px; d = 3)) px"
-        println(io, "- Registration: $(reg.pairs) verified pairs, bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
+        println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_removed)) removed by the view-graph filters" *
+                    "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
                     "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
                     "rotation: no observation kept).")

@@ -7,9 +7,9 @@
 #              Jacobians, VisualGeometryToolkitEstimation's `find_rotation` (the RANSAC of the
 #              pure rotation on bearings, its scorer and local optimization the caller's)
 #   graph      VisualGeometryToolkitEstimation's `ViewGraph` of the verified pairs, each edge its rotation
-#              weighted by its inlier count (Core's `Attributed`), and Estimation's `fit_rotation_averaging`
-#              of it (a disconnected sequence refused)
-#   tracks     `chain_tracks`: the components of the pairs' inlier matches
+#              weighted by its inlier count (Core's `Attributed`), and Estimation's `filtered_rotation_averaging`
+#              of it: the cycle filter, the averaging, the orientation filter (a disconnected sequence refused)
+#   tracks     `chain_tracks`: the components of the kept pairs' inlier matches
 #   bundle     `refine_rotations`: the rotations and the track directions by NLLSsolver
 #              (the pixel reprojection error through the fixed camera)
 #
@@ -29,12 +29,13 @@
 
 The result of [`register_rotations`](@ref): `rotations` (one `RotMatrix{3}` per
 frame, `d = R_k·f_k`, the first frame's camera frame the common frame), `graph`
-(VisualGeometryToolkitEstimation's `ViewGraph` of the verified pairs: per pair
-`(i, j)` VisualGeometryToolkitCore's `Attributed(R_ij, (; weight))`, `f_j =
-R_ij·f_i`, its weight the inlier count), `pairs` (per verified pair
-`(i, j)`: matches, inliers, the rms Sampson distance of its inliers in pixels and
-its rotation angle in degrees), `averaging` (the `fit_rotation_averaging`
-result), `tracks` (the tracks as `(frame, keypoint)` observations), `dropped`
+(VisualGeometryToolkitEstimation's `ViewGraph` of the verified pairs the view-graph
+filters kept: per pair `(i, j)` VisualGeometryToolkitCore's `Attributed(R_ij, (;
+weight))`, `f_j = R_ij·f_i`, its weight the inlier count), `removed` (the verified
+pairs the filters removed, sorted), `pairs` (per verified pair
+`(i, j)`, kept or removed: matches, inliers, the rms Sampson distance of its inliers in pixels and
+its rotation angle in degrees), `averaging` (the averaging fitted on `graph`,
+VisualGeometryToolkitEstimation's `filtered_rotation_averaging`), `tracks` (of the kept pairs) (the tracks as `(frame, keypoint)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 metadata's `outcome` and `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `features` (the
@@ -45,6 +46,7 @@ provider used and its threads).
 struct Registration{G, A, B, F}
     rotations::Vector{RotMatrix{3, Float64, 9}}
     graph::G
+    removed::Vector{Tuple{Int, Int}}
     pairs::Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}
     averaging::A
     tracks::Vector{Vector{Tuple{Int, Int}}}
@@ -82,7 +84,7 @@ end
 
 """
     verify_pairs(frames, camera::BoundedCamera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                 descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
+                 selection = :spread, detection_image = :tone, detection_noise = nothing, descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                  scoring = nothing, local_optimization = nothing, max_trials, min_trials, averaging_loss,
                  execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
@@ -91,16 +93,19 @@ the matching and the pairwise rotations of [`register_rotations`](@ref) (its
 keywords of the same names), stopping before the view graph. `averaging_loss` is
 read only by `pairs = :lag_overlap`, whose rotation averaging of the verified
 pairs aims the pairs past the lag. A `pairs` other than `:all` or
-`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap` and an
-`execution_provider` other than `:auto`, `:cpu` or `:cuda` are an `ArgumentError`
-before any feature is detected.
+`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a detector setting
+[`detect_features`](@ref) refuses (`detection_image = :vst` needs every frame a
+`LinearRaw`) and an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
+are an `ArgumentError` before any feature is detected.
 """
 function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; raw_scale::Integer,
-                      tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol,
+                      tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
+                      selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing, descriptor::Symbol, matcher::Symbol,
                       min_score::Real, pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                       scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                       averaging_loss::VgtkCore.AbstractLossShape, execution_provider::Symbol = :auto, say = _ -> nothing)
     _check_pair_settings("verify_pairs", pairs, max_lag)
+    _check_frames("verify_pairs", frames, selection, detection_image, detection_noise)
     # resolved once (one warning on a fallback to the CPU), refusing an unknown provider, before any feature is detected
     provider = VgtkFeatures.resolve_execution_provider(execution_provider)
     K = length(frames)
@@ -108,11 +113,12 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; ra
     desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider = provider)
     match = VgtkFeatures.LoMaMatcher(matcher; execution_provider = provider)
     feats = map(1:K) do k
-        f = detect_features(camera, frames[k], desc; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections)
+        f = detect_features(camera, frames[k], desc; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+                            selection, detection_image, detection_noise)
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")
         f
     end
-    sz(k) = (size(frames[k], 1), size(frames[k], 2))                         # the image a frame's features are in: the frame
+    sz(k) = (size(_frame_image(frames[k]), 1), size(_frame_image(frames[k]), 2))                         # the image a frame's features are in: the frame
     verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}()
     inlier_matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
     stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
@@ -154,17 +160,26 @@ function _check_pair_settings(what, pairs, max_lag)
     pairs === :all || max_lag >= 1 || throw(ArgumentError("$what: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
     return nothing
 end
+# The detector's settings and, with detection_image = :vst, every frame a LinearRaw: before any feature is detected.
+function _check_frames(what, frames, selection, detection_image, detection_noise)
+    _check_detector_settings(what, selection, detection_image, detection_noise)
+    detection_image === :vst && !all(f -> f isa VgtkFeatures.LinearRaw, frames) &&
+        throw(ArgumentError("$what: detection_image = :vst needs every frame a LinearRaw (its green cells' code spans)"))
+    return nothing
+end
 _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint_covariance) ||
     throw(ArgumentError("$what: bundle_whitening = :$bundle_whitening is not :none or :keypoint_covariance"))
 
 """
     register_rotations(frames, camera::BoundedCamera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+                       selection = :spread, detection_image = :tone, detection_noise = nothing,
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
-                       averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
+                       averaging_loss, cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
                        bundle_xtol, bundle_whitening = :none, bundle_camera_free = (), execution_provider = :auto,
                        say = _ -> nothing) -> Registration
-    register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; averaging_loss, bundle_loss, bundle_scale_multiple,
+    register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; averaging_loss, cycle_tol = deg2rad(2),
+                       orientation_tol = deg2rad(5), bundle_loss, bundle_scale_multiple,
                        bundle_iterations, bundle_max_iter, bundle_ftol, bundle_xtol, bundle_whitening = :none,
                        bundle_camera_free = (), say = _ -> nothing) -> Registration
 
@@ -177,8 +192,9 @@ statistics. Every setting is the caller's configuration, none defaulted but the
 RANSAC's:
 
 - features: inside the camera's `imaged_region`; `tone_percentile`,
-  `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections` — see
-  [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
+  `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections`,
+  `selection`, `detection_image`, `detection_noise` — see
+  [`detect_features`](@ref) (`detection_image = :vst`: the frames are `LinearRaw`s); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
   each for the whole registration on ONNX Runtime's `execution_provider`
   (`:auto`, the default: CUDA where VisualGeometryToolkitFeatures finds a device and
@@ -194,7 +210,15 @@ RANSAC's:
   `local_optimization` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
   with at least `min_inliers` inliers.
-- graph and bundle: `averaging_loss`, `bundle_loss` (stack loss shapes),
+- graph: VisualGeometryToolkitEstimation's `filtered_rotation_averaging` of the
+  verified pairs' view graph, its loss `averaging_loss`: the pairs off a cycle
+  by more than `cycle_tol` removed (`filter_cycles`), the averaging, then the
+  pairs off the averaged rotations by more than `orientation_tol` removed
+  (`filter_by_orientation`) and the averaging again (radians; `nothing` skips
+  that filter). A periodic scene verifies a pair one period off as well as the
+  true one, and only the view graph tells them apart. The removed pairs are the
+  result's `removed`; their matches make no track.
+- bundle: `bundle_loss` (stack loss shapes),
   `bundle_scale_multiple`, `bundle_iterations`, `bundle_max_iter`, `bundle_ftol`,
   `bundle_xtol` — see [`refine_rotations`](@ref). `bundle_whitening = :none`
   (the default) weighs every observation alike, in pixels;
@@ -225,32 +249,40 @@ pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `ArgumentError` too.
 """
 function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; raw_scale::Integer,
-                            tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,
+                            tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
+                            selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
+                            descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
-                            averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
+                            averaging_loss::VgtkCore.AbstractLossShape, cycle_tol::Union{Nothing, Real} = deg2rad(2),
+                            orientation_tol::Union{Nothing, Real} = deg2rad(5), bundle_loss::VgtkCore.AbstractLossShape,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
                             bundle_xtol::Real, bundle_whitening::Symbol = :none, bundle_camera_free::Tuple{Vararg{Symbol}} = (),
                             execution_provider::Symbol = :auto, say = _ -> nothing)
     _check_pair_settings("register_rotations", pairs, max_lag)
     _check_whitening("register_rotations", bundle_whitening)
-    vp = verify_pairs(frames, camera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections, descriptor, matcher,
+    _check_tolerances("register_rotations", cycle_tol, orientation_tol)
+    vp = verify_pairs(frames, camera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
+                      detection_image, detection_noise, descriptor, matcher,
                       min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization, max_trials, min_trials,
                       averaging_loss, execution_provider, say)
-    return register_rotations(vp, camera; averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter,
+    return register_rotations(vp, camera; averaging_loss, cycle_tol, orientation_tol, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter,
                               bundle_ftol, bundle_xtol, bundle_whitening, bundle_camera_free, say)
 end
 
 function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; averaging_loss::VgtkCore.AbstractLossShape,
+                            cycle_tol::Union{Nothing, Real} = deg2rad(2), orientation_tol::Union{Nothing, Real} = deg2rad(5),
                             bundle_loss::VgtkCore.AbstractLossShape, bundle_scale_multiple::Real, bundle_iterations::Integer,
                             bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real, bundle_whitening::Symbol = :none,
                             bundle_camera_free::Tuple{Vararg{Symbol}} = (), say = _ -> nothing)
     _check_whitening("register_rotations", bundle_whitening)
     feats = vp.features; K = length(feats)
-    graph = _view_graph(K, vp.verified)
-    avg = VgtkEstimation.fit_rotation_averaging(graph; loss = averaging_loss)
-    say("  rotation averaging: $(VgtkEstimation.nedges(graph)) edges, σ̂ $(round(rad2deg(avg.sigma); digits = 4))°, $(avg.retcode)")
-    ts, dropped = chain_tracks(vp.inlier_matches)
+    (; fit, graph) = VgtkEstimation.filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol, loss = averaging_loss)
+    avg = fit
+    removed = sort!([p for p in keys(vp.verified) if !haskey(graph, p...)])
+    say("  rotation averaging: $(VgtkEstimation.nedges(graph)) edges ($(length(removed)) removed by the view-graph filters" *
+        "$(isempty(removed) ? "" : ": " * join(["$(i - 1)-$(j - 1)" for (i, j) in removed], ", "))), σ̂ $(round(rad2deg(avg.sigma); digits = 4))°, $(avg.retcode)")
+    ts, dropped = chain_tracks(Dict(p => m for (p, m) in vp.inlier_matches if haskey(graph, p...)))
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
     obs = bundle_whitening === :none ? [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts] : _uncertain_observations(feats, ts; say)
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; loss = bundle_loss, scale_multiple = bundle_scale_multiple,
@@ -259,7 +291,16 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.n_dropped_start) observations dropped at the start: not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
-    return Registration(Rs, graph, vp.stats, avg, ts, dropped, bundle, feats, vp.loma)
+    return Registration(Rs, graph, removed, vp.stats, avg, ts, dropped, bundle, feats, vp.loma)
+end
+
+# The view-graph filters' tolerances (radians): positive, or nothing (that filter skipped). Checked before any feature is detected;
+# from the verified pairs, VisualGeometryToolkitEstimation's `filtered_rotation_averaging` refuses them itself.
+function _check_tolerances(what, cycle_tol, orientation_tol)
+    for (name, t) in (("cycle_tol", cycle_tol), ("orientation_tol", orientation_tol))
+        t === nothing || (isfinite(t) && t > 0) || throw(ArgumentError("$what: $name = $t is not positive (radians; nothing skips the filter)"))
+    end
+    return nothing
 end
 
 # The view graph of the frames 1:K and the verified pairs: VisualGeometryToolkitEstimation's `ViewGraph`, each edge the pair's

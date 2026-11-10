@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### New: the view-graph filters, and the detector's variants
+
+- `register_rotations` averages the rotations with VisualGeometryToolkitEstimation's `filtered_rotation_averaging`: the
+  cycle filter at `cycle_tol` (default 2°) before the averaging, the orientation filter at `orientation_tol` (default 5°)
+  after it, the averaging again when it removed a pair (radians; `nothing` skips that filter). A periodic scene (the hall's
+  bays) verifies a pair one period off, which pairwise verification cannot reject. The removed pairs are
+  `Registration.removed` (a new field); their matches make no track. A tolerance that is not positive is an
+  `ArgumentError` before any feature is detected.
+- `detect_features`, `verify_pairs` and `register_rotations` take `selection` (`:spread`, the default: about
+  `max_detections` of the strongest spread over the frame, VisualGeometryToolkitFeatures' `spread_strongest`, which the
+  LoMa descriptor applies; `:strongest`, the global top `max_detections` by |response|) and `detection_image` (`:tone`, the
+  default; `:vst`, the frame's variance-stabilized green cells, Features' `variance_stabilize`, at `noise_sigmas` noise σ,
+  `detection_noise = (; electrons_per_dn, read_noise, noise_sigmas)`, the frame a Features `LinearRaw`). The kept
+  keypoints are the described set's. A frame may be a `LinearRaw`.
+- The example: `[registration]` keys `cycle_tol_deg`, `orientation_tol_deg`, `selection`, `detection_image` and, with
+  `"vst"`, `electrons_per_dn`, `read_noise_dn`, `noise_sigmas` (refused with `"tone"`); `"vst"` reads the frames as
+  `load_raw`'s `LinearRaw`. The records: verified pairs v3, rotations v7 (the tolerances and the removed pairs).
+
 ### New: the rotation bundle with the camera free — a rotating camera's self-calibration
 
 - `refine_rotations(…; camera_free = (:f, :cx, :cy, :k1, …))` refines the named parameters of a parametric camera with the
