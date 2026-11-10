@@ -78,6 +78,6 @@ end
     @test_throws ArgumentError verify_pairs([L.image, L.image], q.cam; vkw..., detection_image = :vst, detection_noise = noise)
     @test_throws ArgumentError verify_pairs([L, L], q.cam; vkw..., selection = :ssc)
     @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_loss = VgtkCore.CauchyShape(),
-                                                  bundle_scale_multiple = 3.0, bundle_iterations = 1, bundle_max_iter = 1,
+                                                  bundle_scale_multiple = 3.0, bundle_max_iter = 1,
                                                   bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
 end

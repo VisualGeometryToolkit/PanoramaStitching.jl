@@ -52,12 +52,11 @@ min_trials = 100
 averaging_loss = "huber"
 cycle_tol_deg = 2.0                                # the view-graph filters (Estimation's filtered_rotation_averaging): a pair off a 3-cycle by more
 orientation_tol_deg = 5.0                          # than this removed, then a pair off the averaged rotations by more than this
-bundle_loss = "cauchy"
-bundle_scale_multiple = 3.0
-bundle_iterations = 3
-bundle_max_iter = 100
-bundle_ftol = 1.0e-10
-bundle_xtol = 1.0e-10
+bundle_loss = "welsch"                             # the bundle: ONE LM run under the Welsch loss at the width
+bundle_scale_multiple = 2.5                        #   2.5 × σ̂, the verified pairs' pooled SIMFIT++ noise scale (as Triggs' 2.5 × ŝ)
+bundle_max_iter = 1000                             # never the reason it stops here: rotations.json records the iterations it took
+bundle_ftol = 1.0e-10                              # the relative cost decrease that stops it
+bundle_xtol = 1.0e-6                               # the largest step that stops it: radians of a rotation or a direction
 execution_provider = "cuda"                        # LoMa's ONNX Runtime provider: "auto" (CUDA where it runs, else the CPU), "cpu" or "cuda"
 
 [domain]                                           # the pixels a measurement may use (fit and seam score)

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Breaking: the bundle's scale from the verified pairs — SIMFIT++ per pair, one LM run
+
+- After its RANSAC each verified pair gets its noise scale by SIMFIT++ (Edstedt, "Less Biased Noise Scale Estimation for
+  Threshold-Robust RANSAC", CVPRW 2025; RANSACScoringDoneRight's `simfitpp_loss_width`, a new dependency): the rotation
+  refitted on random train splits (`refine_rotation`, MSAC at the current width, the pair's local optimization), the
+  held-out Sampson residuals' truncation-debiased median, χ²₂ (the residual's codimension) at coverage 0.99, seeded with
+  the RANSAC's own σ̂, the sampler the pair's `(seed, i, j)` stream. `VerifiedPairs` gains `scales` (per pair `sigma`,
+  `success`).
+- `register_rotations` pools the kept pairs' scales into one σ̂ (`σ̂² = Σ nₚσₚ²/Σ nₚ`, `nₚ` the inliers, the pairs whose
+  SIMFIT++ succeeded; none is an `ArgumentError`), `Registration.bundle_sigma`, and runs the bundle ONCE at the width
+  `bundle_scale_multiple`·σ̂. `refine_rotations` takes `loss_width` (fixed) in place of `scale_multiple` and `iterations`:
+  the outer loop that re-estimated the width from the Rayleigh median of all residuals is deleted, and `bundle_iterations`
+  is gone (the example refuses the key by name). `max_iter = 0` is `:not_run`; the result's `iterations` are the LM's.
+- `bundle_whitening = :keypoint_covariance` divides the keypoint covariances by their median `tr Σ / 2`, so the whitened
+  residual is in pixels of the median keypoint and the width applies; an unrefined keypoint takes the identity.
+- The example: `"welsch"` among the losses; the configs of record run the Welsch bundle at 2.5·σ̂, `bundle_max_iter = 1000`,
+  `bundle_xtol = 1e-6` (radians); the records hold each pair's scale (verified pairs v4), σ̂ and the bundle's iterations
+  (rotations v8). The self-calibration test's pinned numbers of 69471ff (a 3-run bundle) are retired.
+
 ### New: the view-graph filters, and the detector's variants
 
 - `register_rotations` averages the rotations with VisualGeometryToolkitEstimation's `filtered_rotation_averaging`: the

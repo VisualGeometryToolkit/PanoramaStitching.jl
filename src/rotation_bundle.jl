@@ -177,7 +177,7 @@ end
 `FitResult` metadata of [`refine_rotations`](@ref): `directions` (one unit
 direction per track, the common frame), `residuals` (per track, the pixel
 reprojection error norm of each of its observations at the result, unwhitened),
-`loss_width` (of the last NLLSsolver run: px, or in whitened units when the
+`loss_width` (the given width: px, or in whitened units when the
 observations carry covariances), `n_observations` (given), `n_dropped_start`
 (the observations left out of the solve: those whose residual or Jacobian is
 not finite at the start — a start prediction off the camera model's valid
@@ -190,7 +190,7 @@ direction), `frames_unconstrained` (the frames other than the gauge left with
 no kept observation: each is held at its start rotation), `outcome`, the
 bundle's outcome:
 
-- `:not_run` — `iterations = 0` (the start's rotations are the result);
+- `:not_run` — `max_iter = 0` (the start's rotations are the result);
 - `:converged` — the retcode is `:converged`;
 - otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …);
 
@@ -231,7 +231,7 @@ struct RotationBundleMetadata{K, C, I}
 end
 
 """
-    refine_rotations(camera, rotations, tracks; loss, scale_multiple, iterations, max_iter, ftol, xtol,
+    refine_rotations(camera, rotations, tracks; loss, loss_width, max_iter, ftol, xtol,
                      eliminate = true, camera_free = ()) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
@@ -269,12 +269,14 @@ result's `n` is the number of observations kept; its metadata's
   scale): the residual is then whitened, `L⁻¹(π(R_kᵀ d_j) − x_jk)`, and the
   loss acts on the whitened residual. Every observation carries a covariance
   or none does.
-- `loss`, `scale_multiple` — the stack loss shape (NLLSsolver's robustifier,
-  `loss_robustifier`) and its width as a multiple of the Rayleigh scale of the
-  residual norms (pixels, or whitened: the one global scale that absorbs the
-  noise level and the model error the covariances leave out) at the start of
-  each of the `iterations` NLLSsolver runs (`max_iter`, `ftol`, `xtol` each:
-  `nlls_options`).
+- `loss`, `loss_width` — the stack loss shape (NLLSsolver's robustifier,
+  `loss_robustifier`) and its width (pixels, or whitened units; positive and
+  finite), fixed for the bundle's ONE NLLSsolver run: the caller's, from the
+  data's noise scale (`register_rotations`: the verified pairs' pooled
+  SIMFIT++ scale). `max_iter`, `ftol` (the relative cost decrease) and `xtol`
+  (the largest step in chart units: radians for a rotation or a direction)
+  are its stops (`nlls_options`); the result's `iterations` the LM iterations
+  it took.
 - `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
@@ -302,9 +304,11 @@ that keeps no observation (every track left in fewer than two imaged frames)
 are an `ArgumentError`.
 """
 function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector;
-                          loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
+                          loss::VgtkCore.AbstractLossShape, loss_width::Real,
                           max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
                           camera_free::Tuple{Vararg{Symbol}} = ()) where {K}
+    isfinite(loss_width) && loss_width > 0 ||
+        throw(ArgumentError("refine_rotations: the loss width must be positive and finite, got $loss_width"))
     chc = _camera_chart(camera, camera_free)                     # nothing: the camera held
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
@@ -336,7 +340,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
              [start_direction(t, trues(length(t))) for t in tracks]]
     chc === nothing || push!(vars, chc)                                     # the camera, the last variable
     ic = nf + length(tracks) + 1
-    width = NaN
+    width = Float64(loss_width)
     observation(kernel, j, i, o) = chc === nothing ?
         _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j), kernel, whitenings[j][i]) :
         _CameraObservation{E, typeof(kernel), Wt}(pixel(o), SVector(fid[first(o)], nf + j, ic), kernel, whitenings[j][i])
@@ -377,12 +381,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     residual_norms(f) = [[active[j][i] ? (ob = observation(nothing, j, i, o); norm(f(ob, NLLSsolver.getvars(ob, vars)...))) : NaN
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
     result = nothing
-    for _ in 1:iterations
-        # the loss width: a multiple of the Rayleigh scale of the residual norms the loss acts on (pixels, or whitened: the
-        # one global scale that absorbs the noise level and the model error the unit-noise covariances leave out)
-        rn = reduce(vcat, residual_norms(NLLSsolver.computeresidual))
-        σ = VgtkCore.noise_sigma(filter(isfinite, rn), 2)
-        width = scale_multiple * σ
+    if max_iter > 0                                                          # ONE LM run at the given width
         kernel = VgtkCore.loss_robustifier(loss, width)
         problem = NLLSsolver.NLLSProblem(V, residual_type(kernel))
         for v in vars
@@ -398,13 +397,14 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]
     rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
-    outcome = iterations == 0 ? :not_run : code
+    outcome = max_iter == 0 ? :not_run : code
+    niter = result === nothing ? 0 : result.niterations
     cam_out = chc === nothing ? camera : _with_camera_model(camera, VgtkCore.model(vars[ic]))
     calib = chc === nothing ? nothing :
         _self_calibration(vars[ic], camera_free, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
-                          (j, i, o) -> observation(iterations == 0 ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width), j, i, o),
+                          (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width), j, i, o),
                           vars, fid, nf, unconstrained)
-    return VgtkCore.FitResult(out, code, iterations, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
+    return VgtkCore.FitResult(out, code, niter, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
                               RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
 end
 

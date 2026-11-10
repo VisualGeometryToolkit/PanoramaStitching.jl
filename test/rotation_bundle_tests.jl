@@ -64,7 +64,7 @@ end
     start[1] = R[1]
     err(Rs) = maximum(k -> rad2deg(Rotations.rotation_angle(Rotations.RotMatrix{3}(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
     @test err(start) > 0.5
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 2, max_iter = 50, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test err(VgtkCore.estimate(res)) < 0.05                       # the noise floor: 0.5 px at f = 300 px (0.19°/px), ~400 tracks
     @test VgtkCore.estimate(res)[1] ≈ R[1]
@@ -129,7 +129,7 @@ end
     tracks = [gaining; others]
     with_extra = [j <= 5 ? [tracks[j]; extra[j]] : tracks[j] for j in eachindex(tracks)]   # the first 5 tracks gain one each
     start = Dict(k => (k == 1 ? R[1] : rot(0.003 .* randn(rng, 3)) * R[k]) for k in 1:K)
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 3, max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     res = refine_rotations(grid, start, with_extra; kw...)
     ref = refine_rotations(grid, start, tracks; kw...)
     @test res.metadata.outcome === :converged && res.metadata.n_dropped_start == 5
@@ -227,7 +227,7 @@ end
         length(t) >= 2 && push!(tracks, t)
     end
     start = Dict(k => (k == 1 ? R[1] : rot(0.01 .* randn(rng, 3)) * R[k]) for k in 1:K)
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 3, max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     err(Rs) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
 
     res = refine_rotations(grid, start, tracks; kw...)
@@ -249,5 +249,5 @@ end
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
     @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
     @test all(isnan, sp(SVector(0.9, 0.0, 0.3)))                      # (the forward spline is NaN off its fitted chart too)
-    @test refine_rotations(pinhole, start, tracks; kw..., iterations = 0).metadata.outcome === :not_run
+    @test refine_rotations(pinhole, start, tracks; kw..., max_iter = 0).metadata.outcome === :not_run
 end

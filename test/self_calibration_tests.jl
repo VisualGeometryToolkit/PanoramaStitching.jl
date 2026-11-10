@@ -46,7 +46,7 @@ end
                                                        lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
     start = Dict(k => (k == 1 ? R[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * R[k]) for k in 1:10)
     free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 1, max_iter = 200, ftol = 1.0e-12, xtol = 1.0e-12)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-12)
     res = refine_rotations(cam0, start, tracks; kw..., camera_free = free)
     @test res.retcode === :converged
     cam = res.metadata.camera
@@ -92,7 +92,7 @@ end
     for (flags, cols) in ((1, 1:3), (2, 4:5), (3, 1:5), (4, 6:12), (5, [1:3; 6:12]), (6, 4:12))
         @test NLLSsolver.computeresjac(flags, obs, ch, dv, cc)[2] ≈ J[:, cols]
     end
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 1, max_iter = 5, ftol = 1.0e-10, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     tr = [[1 => SVector(600.0, 600.0), 2 => SVector(500.0, 600.0)]]
     @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw..., camera_free = (:focal,))       # no such parameter
     @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw..., camera_free = (:f, :f))        # named twice
@@ -100,25 +100,21 @@ end
 
 # The camera held (`camera_free = ()`, the default): the numbers of the bundle before the camera could be freed — the fisheye
 # sweep of rotation_bundle_tests.jl with outliers, its rms and its rotations as PanoramaStitching 69471ff computed them.
-@testitem "refine_rotations, camera held: the bundle's numbers unchanged" setup = [SweepScene] begin
+@testitem "refine_rotations, camera held: no calibration, the given width, the rotations recovered" setup = [SweepScene] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
     using PanoramaStitching: refine_rotations
     import VisualGeometryToolkitCore as VgtkCore
-    # PanoramaStitching 69471ff's numbers for this fixture (computed 2026-11-10 by that commit's refine_rotations)
-    HELD_RMS = 109.2491612661541; HELD_WIDTH = 1.3148504584151979; HELD_N = 1489
-    HELD_R5 = [-0.4238527315185357, -0.02376495183206749, -0.905419289085833, 0.04614674304814996, 0.9977907571533119,
-               -0.04779208140966702, 0.9045547745108218, -0.06203895553472616, -0.4218196627776331]
+    # (69471ff's pinned numbers of this fixture were those of the 3-run bundle that re-estimated its width; the bundle is one
+    # run at a given width since the SIMFIT++ scale, so the held camera is checked on the result instead)
     rng = Xoshiro(31)
     R = sweep_rotations(rng, 5)
     ts, _, _ = sweep_tracks(rng, R, 400; outl = 0.05)
     start = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.02 .* randn(rng, 3))...))) * R[k] for k in 1:5)
     start[1] = R[1]
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 2, max_iter = 50, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test res.metadata.camera === CAM && res.metadata.calibration === nothing
-    @test res.rms ≈ HELD_RMS rtol = 1.0e-12
-    @test res.metadata.loss_width ≈ HELD_WIDTH rtol = 1.0e-12
-    @test vec(SMatrix{3, 3}(VgtkCore.estimate(res)[5])) ≈ HELD_R5 rtol = 1.0e-12
-    @test res.n == HELD_N && res.iterations == 2
+    @test res.metadata.loss_width == 1.5 && res.retcode === :converged && 0 < res.iterations < 1000
+    @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:5) < 0.05
 end

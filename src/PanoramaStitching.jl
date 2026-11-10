@@ -43,6 +43,7 @@ import ForwardDiff
 import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
 import VisualGeometryToolkitFeatures as VgtkFeatures
+import RANSACScoringDoneRight as RSDR                          # SIMFIT++: each verified pair's noise scale (registration.jl)
 using PrecompileTools: @setup_workload, @compile_workload       # src/precompile.jl
 
 export register_rotations, Registration, verify_pairs, VerifiedPairs

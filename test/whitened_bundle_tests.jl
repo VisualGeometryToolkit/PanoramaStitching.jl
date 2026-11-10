@@ -2,7 +2,7 @@
 # The whitened rotation bundle (src/rotation_bundle.jl, register_rotations' bundle_whitening): observations that carry their
 # keypoints' pixel covariances (`frame => Uncertain(pixel, CovMat(Σ))`) are whitened by L⁻¹ (Σ = LLᵀ). On a synthetic fisheye
 # sweep with known anisotropic, heteroscedastic keypoint noise the whitened bundle recovers the rotations better than the
-# unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; the isotropic fallback of an unrefined keypoint.
+# unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; the covariances over their median, an unrefined keypoint's identity.
 # =============================================================================
 
 @testitem "refine_rotations whitened by known anisotropic keypoint covariances beats the unweighted bundle" setup = [SweepScene] begin
@@ -24,7 +24,7 @@
         end
         return tracks, dirs
     end
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 2, max_iter = 50, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     K = 5
     eu = Float64[]; ew = Float64[]
     for seed in 1:4
@@ -70,7 +70,7 @@ end
     f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 
-    kw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 1, max_iter = 5, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     u1 = VgtkCore.project(CAM, SMatrix{3, 3}(R[1])' * d); u2 = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * d)
     unc(u, S) = VgtkCore.Uncertain(u, VgtkCore.CovMat(S))
     @test_throws ArgumentError refine_rotations(CAM, R, [[1 => u1, 2 => unc(u2, Σ)]]; kw...)                     # some, not all
@@ -78,7 +78,7 @@ end
     @test_throws ArgumentError refine_rotations(CAM, R, [[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]]; kw...)
 end
 
-@testitem "bundle_whitening = :keypoint_covariance: the observations, an unrefined keypoint's isotropic fallback" begin
+@testitem "bundle_whitening = :keypoint_covariance: the observations over their median scale, an unrefined keypoint's identity" begin
     using Test, StaticArrays, Statistics
     import PanoramaStitching
     using PanoramaStitching: FrameFeatures
@@ -90,8 +90,10 @@ end
     f2 = FrameFeatures([SVector(5.0, 6.0), SVector(7.0, 8.0)], [S(2.0, 2.0, 0.0), S(9.0, 1.0, 0.0)], nothing, 2)
     obs = PanoramaStitching._uncertain_observations([f1, f2], [[(1, 1), (2, 1)], [(1, 2), (2, 2)]])
     @test VgtkCore.geom(last(obs[1][1])) == SVector(1.0, 2.0)
-    @test SMatrix{2, 2}(Statistics.cov(last(obs[1][1]))) == S(4.0, 1.0, 0.5)
-    # frame 1's keypoint 2 is unrefined: σ²·I, σ² the median of tr Σ / 2 over the refined ones (2.5, 2, 5) = 2.5
-    @test SMatrix{2, 2}(Statistics.cov(last(obs[2][1]))) == S(2.5, 2.5, 0.0)
+    # every covariance over m, the median of tr Σ / 2 over the refined ones (2.5, 2, 5) = 2.5: the whitened residual in pixels
+    # of the median keypoint
+    @test SMatrix{2, 2}(Statistics.cov(last(obs[1][1]))) ≈ S(4.0, 1.0, 0.5) / 2.5
+    # frame 1's keypoint 2 is unrefined: the identity (the median keypoint's)
+    @test SMatrix{2, 2}(Statistics.cov(last(obs[2][1]))) == S(1.0, 1.0, 0.0)
     @test_throws ArgumentError PanoramaStitching._uncertain_observations([f1], [[(1, 2), (1, 2)]])
 end

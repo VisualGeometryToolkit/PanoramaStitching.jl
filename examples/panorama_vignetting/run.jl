@@ -53,10 +53,21 @@ function refuse_circle(inputs, where)
     return inputs
 end
 
+# The [registration] keys retired (PanoramaStitching 0.6): refused by name, never read.
+const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM run at the width bundle_scale_multiple × the verified pairs' " *
+                                   "pooled SIMFIT++ noise scale (register_rotations); remove the key",)
+function refuse_retired_registration(table, where)
+    for (old, why) in RETIRED_REGISTRATION_KEYS
+        haskey(table, old) && throw(ArgumentError("$where: the key $old is retired: $why"))
+    end
+    return table
+end
+
 function load_config(path)
     cfg = TOML.parsefile(path)
     refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
     refuse_circle(cfg["inputs"], "$path [inputs]")
+    refuse_retired_registration(cfg["registration"], "$path [registration]")
     out = joinpath(dirname(abspath(path)), cfg["output"])
     mkpath(out)
     return (; cfg, out, path = abspath(path))
@@ -186,7 +197,7 @@ end
 
 # ----------------------------------------------------------------------------- registration (cached by its settings)
 
-const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.CauchyShape())
+const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.CauchyShape(), "welsch" => VgtkCore.WelschShape())
 
 # The stages' records (the verified pairs, the registration): one JSON record each in the output folder, reused while its key —
 # a SHA-256 of the record's format, the stage's settings, the ONNX Runtime provider LoMa runs on (`execution_provider = "auto"`
@@ -217,8 +228,9 @@ end
 # bundle drops the observations not imaged at its start and counts them (`n_dropped_start`, replacing v3's start finiteness
 # count), and holds the frames left with none (`frames_unconstrained`). v6: the key holds the provider LoMa runs on, and the
 # record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's filtered_rotation_averaging at `cycle_tol_deg` and
-# `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v7 (the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+# `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed. v8: the bundle is one LM
+# run at bundle_scale_multiple × the pairs' pooled SIMFIT++ scale (bundle_iterations retired); the record holds σ̂ and its iterations.
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v8 (one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -226,8 +238,9 @@ registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORM
 # the pairs past the lag, so it keys the pairs too.
 # v3: the detector's selection and detection image (`selection`, `detection_image` and its noise keys), every ASIFT detection
 # refined (VisualGeometryToolkitFeatures 0.9), the kept keypoints the described set.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v3 (the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
-const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "cycle_tol_deg", "orientation_tol_deg", "bundle_loss", "bundle_scale_multiple", "bundle_iterations", "bundle_max_iter",
+# v4: per pair its SIMFIT++ noise scale (sigma, success).
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v4 (per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "cycle_tol_deg", "orientation_tol_deg", "bundle_loss", "bundle_scale_multiple", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol", "bundle_whitening")
 function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_loss"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
@@ -245,7 +258,8 @@ function pairs_record(vp::VerifiedPairs)
                   "n_detected" => f.n_detected) for f in vp.features]
     pairs = [Dict("i" => i, "j" => j, "rotation" => [collect(e.rotation[r, :]) for r in 1:3], "inliers" => e.inliers,
                   "inlier_matches" => [collect(m) for m in vp.inlier_matches[(i, j)]],
-                  "matches" => vp.stats[(i, j)].matches, "rms_px" => vp.stats[(i, j)].rms_px, "rotation_deg" => vp.stats[(i, j)].rotation_deg)
+                  "matches" => vp.stats[(i, j)].matches, "rms_px" => vp.stats[(i, j)].rms_px, "rotation_deg" => vp.stats[(i, j)].rotation_deg,
+                  "sigma_px" => nan_null(vp.scales[(i, j)].sigma), "sigma_success" => vp.scales[(i, j)].success)
              for ((i, j), e) in sort!(collect(vp.verified); by = first)]
     return Dict{String, Any}("features" => feats, "pairs" => pairs, "loma" => loma_record(vp.loma))
 end
@@ -261,7 +275,8 @@ function pairs_from_record(rec)
     stats = Dict(key(p) => (matches = Int(p["matches"]), inliers = Int(p["inliers"]), rms_px = Float64(p["rms_px"]),
                             rotation_deg = Float64(p["rotation_deg"])) for p in rec["pairs"])
     loma = (; descriptor = rec["loma"]["descriptor"], matcher = rec["loma"]["matcher"])
-    return VerifiedPairs(feats, verified, matches, stats, loma)
+    scales = Dict(key(p) => (sigma = num(p["sigma_px"]), success = Bool(p["sigma_success"])) for p in rec["pairs"])
+    return VerifiedPairs(feats, verified, matches, stats, scales, loma)
 end
 
 # The detector's settings of [registration]: `selection` ("spread" or "strongest"), `detection_image` ("tone" or "vst") and, with
@@ -321,7 +336,7 @@ function registration(C, inp, lens; log)
         t0 = time()
         reg = register_rotations(vp.pairs, lens; averaging_loss = LOSSES[r["averaging_loss"]], cycle_tol = deg2rad(r["cycle_tol_deg"]),
                                  orientation_tol = deg2rad(r["orientation_tol_deg"]), bundle_loss = LOSSES[r["bundle_loss"]],
-                                 bundle_scale_multiple = r["bundle_scale_multiple"], bundle_iterations = r["bundle_iterations"],
+                                 bundle_scale_multiple = r["bundle_scale_multiple"],
                                  bundle_max_iter = r["bundle_max_iter"], bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"],
                                  say = m -> say(log, m))
         Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
@@ -341,6 +356,8 @@ function registration(C, inp, lens; log)
                           # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor
                           # point's σ of IntensityAndPositionNoise
                           "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]),
+                          # the bundle's noise scale (the kept pairs' pooled SIMFIT++ σ̂, px) and the LM iterations its one run took
+                          "bundle_sigma_px" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.iterations,
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
                           # the ONNX Runtime provider used, its threads and, on CUDA, the driver, runtime and cuDNN versions
                           "loma" => loma_record(reg.loma))
@@ -348,7 +365,8 @@ function registration(C, inp, lens; log)
     # a record written before 2026-11-04 holds no bundle loss width: no point scale (IntensityAndPositionNoise then refuses to run;
     # delete the record to recompute it)
     return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
-            pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
+            pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], bundle_rms_px = rec["bundle_rms_px"],
+            bundle_sigma_px = rec["bundle_sigma_px"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
             loma = rec["loma"], point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
@@ -653,7 +671,8 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "# $(C.cfg["name"]): panorama vignetting\n")
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
-        bund = reg.bundle_rms_px === nothing ? "not recorded" : "$(f(reg.bundle_rms_px; d = 3)) px"
+        bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations at the width " *
+               "$(C.cfg["registration"]["bundle_scale_multiple"]) × σ̂ $(f(reg.bundle_sigma_px; d = 3)) px, the pairs' pooled SIMFIT++ scale)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_removed)) removed by the view-graph filters" *
                     "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
                     "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *

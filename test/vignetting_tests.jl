@@ -371,7 +371,7 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
-    for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle)
+    for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -390,6 +390,13 @@ end
         e
     end
     @test err isa ArgumentError && occursin("lens_coverage", err.msg) && occursin("circle", err.msg)
+    # `[registration] bundle_iterations` is retired: refused by name
+    err = try
+        Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}("bundle_iterations" => 3), "config [registration]"); nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("bundle_iterations", err.msg)
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.MEASUREMENT_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
@@ -437,6 +444,7 @@ end
     vp = VerifiedPairs([F([SA[10.25, 20.5], SA[30.0, 40.125]]), F([SA[1.0 / 3, 2.0], SA[5.0, 6.0]])],
                        Dict((1, 2) => (rotation = R, inliers = 2)), Dict((1, 2) => [(1, 2), (2, 1)]),
                        Dict((1, 2) => (matches = 3, inliers = 2, rms_px = 0.4, rotation_deg = 10.0)),
+                       Dict((1, 2) => (sigma = 0.35, success = true)),
                        (; descriptor = (; model = "loma_b", execution_provider = :cuda, threads = 8),
                           matcher = (; model = "loma_b128", execution_provider = :cuda, threads = 8)))
     root = mktempdir(); mkpath(joinpath(root, "raw"))
@@ -456,7 +464,7 @@ end
         @test matched[] == 1 && isfile(path) && haskey(rec, "key")
         @test stage(cfg()) == rec && matched[] == 1                      # a second run with the same matching settings skips it
         back = call(:pairs_from_record, rec)                              # the record reads back exactly
-        @test back isa VerifiedPairs && back.verified == vp.verified && back.inlier_matches == vp.inlier_matches && back.stats == vp.stats
+        @test back isa VerifiedPairs && back.verified == vp.verified && back.inlier_matches == vp.inlier_matches && back.stats == vp.stats && back.scales == vp.scales
         @test back.loma.descriptor["execution_provider"] == "cuda" && back.loma.matcher["model"] == "loma_b128"   # LoMa's provenance
         @test all(k -> back.features[k].pixels == vp.features[k].pixels && isequal(back.features[k].pixel_covariances, vp.features[k].pixel_covariances) &&
                        back.features[k].n_detected == 40, 1:2)
