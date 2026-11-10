@@ -15,7 +15,8 @@ export sequence
 # the scene: random Gaussian blobs on an equirectangular texture; the camera: a KB fisheye (f = 300 px) imaging to 100° off axis;
 # K frames rotating 35° about the vertical (`yaw_deg[k]` for k ≥ 2; frame 1 is the common frame, at the identity), 2×2 binned; a vignetting V(θ) = exp(−θ²/2·1.4²) and per-frame gains.
 # `cam` the grid camera, `model` the parametric one: both bounded by the sensor, their lens coverage the image circle.
-function sequence(; K = 4, yaw_deg = 35.0 .* (0:(K - 1)))
+# `lit = :sensor` renders the whole sensor through the parametric lens instead (frames lit to the sensor's edge).
+function sequence(; K = 4, yaw_deg = 35.0 .* (0:(K - 1)), lit = :circle)
     rng = StableRNG(7)
     TW, TH = 2048, 1024
     tex = fill(0.15f0, TH, TW, 3)
@@ -47,8 +48,8 @@ function sequence(; K = 4, yaw_deg = 35.0 .* (0:(K - 1)))
         img = zeros(Float32, Hf, Wf, 3)
         for j in 1:Wf, i in 1:Hf
             u = SVector((j - 0.5) * s, (i - 0.5) * s)
-            hypot(u[1] - 500.0, u[2] - 500.0) < 480.0 || continue
-            f = backproject(cam, u)
+            lit === :sensor || hypot(u[1] - 500.0, u[2] - 500.0) < 480.0 || continue
+            f = backproject(lit === :sensor ? model : cam, u)
             all(isfinite, f) || continue                    # a grid model's backproject is NaN where it images nothing
             img[i, j, :] .= gains[k] * V(angle_between(f, axis)) .* texture(R[k] * f)
         end
@@ -261,27 +262,58 @@ end
     @test f.owner[i, j] > 0 && abs(f.image[i, j, 2] - q.texture(d)[2]) / q.texture(d)[2] < 0.05
 end
 
-@testitem "a camera with no stored lens coverage: no margin at the sensor's edge, the registration as with none (0.5.1)" setup = [SyntheticSequence] begin
-    # Review focus 4: the margins erode only a lens coverage's edge. A parametric camera bounded by its sensor alone (coverage
-    # the whole sensor, as 0.5.1's `circle = WholePlane()`) keeps every feature the sensor holds and samples 2 px inside the
-    # frame, whatever the margins: its registration does not depend on `detector_margin_px` (rotations to 1e-9).
+@testitem "a camera with no stored lens coverage registers as in 0.5.1, its frames lit to the sensor's edge" setup = [SyntheticSequence] begin
+    # Review focus 4. A parametric camera bounded by its sensor alone (coverage the whole sensor, 0.5.1's `circle =
+    # WholePlane()`), its frames lit to the sensor's edge: the margins erode only a lens coverage's edge, so the features reach
+    # the sensor's edge whatever `detector_margin_px` (the same keypoints, in the same order: detect_features' order is
+    # deterministic); the bundle converges, and its rotations are those of the bundle through the bare CameraModel — 0.5.1's
+    # bundle, whose residual nothing masks — to 1e-9 (the lens coverage does not enter the bundle).
     using Test, LinearAlgebra, StaticArrays
-    using PanoramaStitching: PanoramaStitching, register_rotations
+    using PanoramaStitching: PanoramaStitching, register_rotations, refine_rotations
     import VisualGeometryToolkitCore as VgtkCore
-    q = sequence(; K = 2)
+    q = sequence(; K = 3, lit = :sensor)
     bare = VgtkCore.BoundedCamera(VgtkCore.model(q.model), VgtkCore.Size2(1000, 1000))
     @test PanoramaStitching._imaged_less_rim(bare, 30.0) == VgtkCore.imaged_region(bare)
-    region = PanoramaStitching._frame_region(bare, 1000, 1000, 12.0)
+    region = PanoramaStitching.frame_region(bare, 1000, 1000, 12.0)
     @test SVector(2.5, 2.5) ∈ region && SVector(997.5, 500.0) ∈ region && SVector(1.5, 500.0) ∉ region
+    bkw = (; loss = VgtkCore.CauchyShape(), scale_multiple = 3.0, iterations = 3, max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
     reg(margin) = register_rotations(q.frames, bare; raw_scale = q.raw_scale, tone_percentile = 99.5, detector_margin_px = margin,
                                      asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
                                      pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
-                                     min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                                     bundle_scale_multiple = 3.0, bundle_iterations = 3, bundle_max_iter = 100, bundle_ftol = 1.0e-10,
-                                     bundle_xtol = 1.0e-10)
+                                     min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = bkw.loss,
+                                     bundle_scale_multiple = bkw.scale_multiple, bundle_iterations = bkw.iterations,
+                                     bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
     a, b = reg(0.0), reg(30.0)
-    @test [Set(f.pixels) for f in a.features] == [Set(f.pixels) for f in b.features]   # the same keypoints (ASIFT's order is its threads')
-    @test maximum(k -> norm(SMatrix{3, 3}(a.rotations[k]) - SMatrix{3, 3}(b.rotations[k])), 1:2) <= 1.0e-9
+    @test [f.pixels for f in a.features] == [f.pixels for f in b.features]
+    edge(p) = min(p[1], p[2], 1000 - p[1], 1000 - p[2])
+    @test any(f -> any(p -> edge(p) < 30.0, f.pixels), b.features)                 # kept within the margin of the sensor's edge
+    @test b.bundle.metadata.outcome === :converged && b.bundle.metadata.start_nonfinite == 0
+    @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(b.rotations[k])' * q.R[k]))), 1:3) < 0.05
+    # 0.5.1's bundle: the same tracks and start through the bare model (this lens's projection is defined everywhere, so
+    # nothing masks its residual, as in 0.5.1)
+    @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
+    obs = [[k => b.features[k].pixels[kp] for (k, kp) in t] for t in b.tracks]
+    ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; bkw...)
+    @test ref.metadata.outcome === :converged
+    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
+end
+
+@testitem "frame_region: the margin erodes the lens coverage's edge only" begin
+    # a crop coverage loses the margin on its sides inside the sensor, not on the side the sensor's edge cuts; a margin that
+    # erodes a coverage away leaves an empty region (nothing imaged), not an error
+    using Test, StaticArrays
+    using PanoramaStitching: PanoramaStitching
+    import VisualGeometryToolkitCore as VgtkCore
+    m = VgtkCore.CameraModel(300.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02))
+    crop = VgtkCore.BoundedCamera(m, VgtkCore.Size2(1000, 800); lens_coverage = VgtkCore.Rect2{Float64}(0, 100, 900, 700))
+    r = PanoramaStitching.frame_region(crop, 1000, 800, 20.0)
+    @test SVector(3.0, 400.0) ∈ r                                   # the left side is the sensor's edge: 2 px inset only
+    @test SVector(500.0, 115.0) ∉ r && SVector(500.0, 125.0) ∈ r     # the top side lies inside the sensor: eroded by 20 px
+    @test SVector(885.0, 400.0) ∉ r && SVector(875.0, 400.0) ∈ r     # the right side too
+    @test SVector(500.0, 797.0) ∈ r                                 # the bottom is the sensor's edge
+    small = VgtkCore.BoundedCamera(m, VgtkCore.Size2(1000, 800); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(500.0, 400.0), 15.0))
+    e = PanoramaStitching.frame_region(small, 1000, 800, 20.0)
+    @test SVector(500.0, 400.0) ∉ e && !any(VgtkCore.pixel_mask(e, 100, 80))
 end
 
 @testitem "render_panorama, sample_frames: nothing outside the camera's imaged region" setup = [SyntheticSequence] begin

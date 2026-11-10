@@ -51,6 +51,9 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame::AbstractArray{<:
     toned = sqrt.(clamp.(Float64.(frame) ./ p, 0, 1))
     dets = VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts = asift_tilts, uncertainty = VgtkFeatures.FeatureCovariance())
     n = length(dets)
+    # ASIFT's detections arrive in its threads' order: sorted by position (then response) the kept set, its order and so every
+    # index-sampled RANSAC downstream are the same run to run
+    sort!(dets; by = d -> (d.center[1], d.center[2], d.response))
     kept = _imaged_less_rim(camera, detector_margin_px)
     dets = VgtkFeatures.strongest(filter(d -> VgtkCore.Point2(s * d.center[1], s * d.center[2]) ∈ kept, dets), max_detections)
     pixels = [SVector(s * d.center[1], s * d.center[2]) for d in dets]

@@ -14,8 +14,9 @@ raw_extension = ".ARW"
 lens = "panorama_good/derived/fx3-14mm-kb_fit.cameras-v4.json"
 lens_kind = "cameras"                              # "cameras": a camera store; "grid": a vgio grid file (a SplineLens camera)
 lens_camera = "cam"                                # the camera's name in the store
-# The image circle is the camera's lens coverage, stored with the camera in the store (PanoramaStitching 0.6 refuses a
-# `circle` key here). For this lens it is Circle((2131.1, 1407.9), 1680.1), camera pixels: on this sensor the frames go dark
+# The image circle is the camera's lens coverage, stored with the camera (PanoramaStitching 0.6 refuses a `circle` key
+# here). This v4 store holds none, so this config runs on the WHOLE SENSOR until a derived vgio/cameras/v5 store carries the
+# measured circle (plan 2, Task 4). For this lens it is Circle((2131.1, 1407.9), 1680.1), camera pixels: on this sensor the frames go dark
 # past ρ ≈ 1700 px (the sensor's corners lie outside the lens's image circle). Measured from the 11 frames (2026-11-04): per
 # 22.5° azimuth the radius where log G falls through the midpoint between its 1300–1500 px plateau and its corner floor
 # (1670–1710 px), then a circle fitted to those points. A whole-sensor fit put V at 0.07–0.2 of its plateau in the corners and

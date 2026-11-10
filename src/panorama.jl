@@ -154,7 +154,7 @@ function render_panorama(camera::VgtkCore.BoundedCamera, frames::AbstractVector,
     _check_gains("render_panorama", gains, K, C)
     T = float(eltype(frames[1])); s = raw_scale
     fwd = _forward_map(camera, frames[1])
-    sees = _Sees(_frame_region(camera, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
+    sees = _Sees(frame_region(camera, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
     nv, nλ = view.size
     rect = VgtkCore.Rect(0, 0, nλ, nv)
     proto = frames[1]

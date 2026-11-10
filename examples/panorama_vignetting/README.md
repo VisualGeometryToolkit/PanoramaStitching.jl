@@ -97,7 +97,8 @@ Under `$VGTK_DATA_ROOT`:
    *The 14 mm image circle:* the sensor's corners lie outside this lens's image circle, so the frames go dark past
    ρ ≈ 1700 px. The circle was measured from the frames (where log G falls through the midpoint between its plateau and the
    corner floor) and is the camera's lens coverage, stored with the camera (a config's `[inputs] circle` is refused); a
-   whole-sensor fit put V at 0.07–0.2 in the corners and amplified their noise.
+   whole-sensor fit put V at 0.07–0.2 in the corners and amplified their noise. The 14 mm config's v4 store holds no coverage
+   yet, so that config runs on the whole sensor until a derived v5 store with the measured circle replaces it.
 4. **Score the seams** (`score_seams`, PanoramaStitching). At every pixel of an equirectangular raster seen by two or more
    frames: the median over the other frames of `log(I_k/V_k) − log(I_last/V_last)`, the frame shown last being the one the
    unblended render keeps. With the right V only noise, misregistration and parallax remain. Its rms and robust spread

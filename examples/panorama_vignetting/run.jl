@@ -177,7 +177,7 @@ function load_lens(C; raw_width, raw_height)
         grid = VgtkIO.load(VgtkCore.BoundedCamera, path)
         fwd = VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, grid, VgtkCore.imaged_region(grid);
                                                            tolerance = Float64(inp["spline_tolerance_px"])))
-        VgtkCore.BoundedCamera(fwd, grid.bound; lens_coverage = VgtkCore.lens_coverage(grid))
+        VgtkCore.BoundedCamera(fwd, something(VgtkCore.sensor(grid), VgtkCore.extent(grid)); lens_coverage = VgtkCore.lens_coverage(grid))
     else
         error("inputs.lens_kind = $(inp["lens_kind"]) is not \"cameras\" or \"grid\"")
     end
@@ -274,11 +274,9 @@ end
 principal_point(lens) = (u = VgtkCore.pointwise!(VgtkCore.imaging_transform(VgtkCore.model(lens)), [SVector(0.0, 0.0)],
                                                  [SVector(0.0, 0.0, 1.0)]); u[1])
 
-# The fit's domain (camera pixels): the package's own, 2 px inside the frame and inside the camera's imaged region less the rim
-# margin — PanoramaStitching's one definition, which the fit, the sampling and the renders read.
-fit_domain(lens, W, H, rim) = PanoramaStitching._frame_region(lens, W, H, rim)
-# The domain's extreme points: its bounding box.
-domain_box(lens, W, H, rim) = (b = VgtkCore.Rect2(fit_domain(lens, W, H, rim)); (SVector{2, Float64}(b.origin), SVector{2, Float64}(b.widths)))
+# The fit's domain (camera pixels) is the package's own `PanoramaStitching.frame_region`, which the fit, the sampling and the
+# renders read. Its extreme points: its bounding box.
+domain_box(lens, W, H, rim) = (b = VgtkCore.Rect2(PanoramaStitching.frame_region(lens, W, H, rim)); (SVector{2, Float64}(b.origin), SVector{2, Float64}(b.widths)))
 # The centre of the camera's lens coverage, an image circle (or ellipse): `radial_center = "circle_center"`.
 function coverage_center(lens)
     c = VgtkCore.lens_coverage(lens)
@@ -289,7 +287,7 @@ end
 # The domain's farthest radius from `center`: an image circle's less the rim margin, else the farthest corner of its box.
 function domain_radius(lens, center, W, H, rim)
     c = VgtkCore.lens_coverage(lens)
-    c isa VgtkCore.Circle && (r = PanoramaStitching._rim(c, rim); return norm(SVector(r.center[1], r.center[2]) - center) + r.r)
+    c isa VgtkCore.Circle && return norm(SVector(c.center[1], c.center[2]) - center) + c.r - rim
     o, e = domain_box(lens, W, H, rim)
     return maximum(norm(SVector(x, y) - center) for x in (o[1], o[1] + e[1]), y in (o[2], o[2] + e[2]))
 end
@@ -530,7 +528,7 @@ function run_example(config_path)
 
     # the comparison fits (not used for the renders)
     rim = Float64(d["rim_margin_px"])
-    domain = fit_domain(lens, W, H, rim)
+    domain = PanoramaStitching.frame_region(lens, W, H, rim)
     in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
     pp = SVector{2, Float64}(principal_point(lens))
     rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, W, H, rim, in_domain))]

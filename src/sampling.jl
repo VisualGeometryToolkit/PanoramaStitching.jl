@@ -32,17 +32,25 @@ _forward_map(c) = throw(ArgumentError("PanoramaStitching: a $(typeof(c).name.nam
 _forward_map(camera, proto) = _forward_map(Adapt.adapt(KA.get_backend(proto), VgtkCore.model(camera)))
 
 # What the camera images less a margin `m` (camera pixels) at the edge of its lens coverage — the image circle's soft rim —
-# and nowhere else: Core's `imaged_region` of the camera with its coverage eroded by `m` (a `Circle` or `Ellipse` shrunk by `m`
-# along its axes, a `Rect` crop inset by `m`). The sensor and the model's valid domain are not eroded, and a camera whose
-# coverage is its whole sensor (none stored: Core's default, the sensor's own `Rect`) is unchanged.
+# and nowhere else: Core's `imaged_region` of the camera with its coverage eroded by `m`. The sensor and the model's valid
+# domain are not eroded, so a camera whose coverage is its whole sensor (none stored: Core's default, the sensor's own `Rect`)
+# is unchanged. A margin that erodes the coverage away leaves nothing imaged (an empty `Rect`), not an error.
 function _imaged_less_rim(camera::VgtkCore.BoundedCamera, m)
-    c = VgtkCore.lens_coverage(camera); e = VgtkCore.extent(camera)
-    c == VgtkCore.Rect2{Float64}(0, 0, e.width, e.height) && return VgtkCore.imaged_region(camera)
-    return VgtkCore.imaged_region(VgtkCore.with_lens_coverage(camera, _rim(c, m)))
+    e = VgtkCore.extent(camera)
+    c = _rim(VgtkCore.lens_coverage(camera), m, VgtkCore.Rect2{Float64}(0, 0, e.width, e.height))
+    return c === nothing ? VgtkCore.Rect2{Float64}() : VgtkCore.imaged_region(VgtkCore.with_lens_coverage(camera, c))
 end
-_rim(c::VgtkCore.Circle, m) = VgtkCore.Circle(c.center, c.r - m)
-_rim(e::VgtkCore.Ellipse, m) = VgtkCore.Ellipse(e.center, e.a - m, e.b - m, e.θ)
-_rim(r::VgtkCore.Rect, m) = VgtkCore.Rect(r.origin[1] + m, r.origin[2] + m, r.widths[1] - 2m, r.widths[2] - 2m)
+# A coverage less `m` at its edge inside the `sensor`, or `nothing` when nothing is left: a `Circle` or `Ellipse` shrunk by `m`
+# along its axes; a `Rect` inset by `m` on each side that lies inside the sensor (a side on or past the sensor's edge is the
+# sensor's edge, not the lens's, and stays).
+_rim(c::VgtkCore.Circle, m, _) = c.r > m ? VgtkCore.Circle(c.center, c.r - m) : nothing
+_rim(e::VgtkCore.Ellipse, m, _) = min(e.a, e.b) > m ? VgtkCore.Ellipse(e.center, e.a - m, e.b - m, e.θ) : nothing
+function _rim(r::VgtkCore.Rect, m, sensor::VgtkCore.Rect)
+    lo, hi = r.origin, r.origin .+ r.widths; slo, shi = sensor.origin, sensor.origin .+ sensor.widths
+    x0, y0 = ntuple(i -> lo[i] > slo[i] ? lo[i] + m : lo[i], 2)
+    x1, y1 = ntuple(i -> hi[i] < shi[i] ? hi[i] - m : hi[i], 2)
+    return x1 > x0 && y1 > y0 ? VgtkCore.Rect2{Float64}(x0, y0, x1 - x0, y1 - y0) : nothing
+end
 
 # A region in the pixels of a frame binned by `s` (a COLMAP coordinate scales by exactly 1/s), by its parts: a `Rect` scaled,
 # an `Ellipse` by Core's similarity image.
@@ -57,10 +65,17 @@ function _plane_offsets(o)
     return ntuple(c -> SVector{2, Float64}(o[c][1], o[c][2]), 3)
 end
 
-# Where a frame's sensor point counts (camera pixels): at least 2 px inside its W × H frame (the bilinear taps) and inside what
-# the camera images less the rim margin at its lens coverage's edge.
-_frame_region(camera::VgtkCore.BoundedCamera, W, H, rim_margin_px) =
-    VgtkCore.Rect(2.0, 2.0, W - 4.0, H - 4.0) ∩ _imaged_less_rim(camera, rim_margin_px)
+"""
+    frame_region(camera::BoundedCamera, width, height, rim_margin_px) -> region
+
+Where a frame's sensor point counts, in camera pixels (a region answering `p ∈ region`): at least 2 px inside the
+`width × height` frame (camera pixels; the bilinear taps) and inside what `camera` images — its `imaged_region`, the sensor ∩
+its lens coverage ∩ its model's valid domain — less `rim_margin_px` at its lens coverage's edge (the image circle's soft
+rim; the sensor's edge is not eroded, so a camera whose coverage is its whole sensor loses nothing to the margin). The
+domain of [`sample_frames`](@ref), [`render_panorama`](@ref), [`score_seams`](@ref) and [`fit_vignetting`](@ref).
+"""
+frame_region(camera::VgtkCore.BoundedCamera, width, height, rim_margin_px) =
+    VgtkCore.Rect(2.0, 2.0, width - 4.0, height - 4.0) ∩ _imaged_less_rim(camera, rim_margin_px)
 
 # Whether a frame sees a direction: its sensor point `u` is finite and in the region and its ray `f` within the field angle of
 # the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. A measurement (the sampling, the seam score) also
@@ -147,7 +162,7 @@ function sample_frames(camera::VgtkCore.BoundedCamera, frames::AbstractVector, r
     C == 3 || throw(DimensionMismatch("sample_frames: frames are H × W × 3, got $(size(frames[1]))"))
     T = eltype(eltype(directions)); s = raw_scale
     fwd = _forward_map(camera, frames[1])
-    sees = _Sees(_frame_region(camera, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
+    sees = _Sees(frame_region(camera, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
     N = length(directions); D = reshape(directions, N)
     proto = frames[1]
     pixels = similar(proto, SVector{2, T}, N, K); rays = similar(proto, SVector{3, T}, N, K)

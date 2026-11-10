@@ -10,17 +10,18 @@
   `fit_vignetting` take the camera as a VisualGeometryToolkitCore `BoundedCamera` and read where it images from the camera
   itself: its `imaged_region` (the sensor ∩ its lens coverage ∩ its model's valid domain), its coverage's edge less
   `detector_margin_px` for the features and `rim_margin_px` (and 2 px inside the frame) for the samples, the renders and the
-  fit. The sensor's edge is not eroded, so a camera with no stored coverage (its whole sensor) masks as 0.5.1 did with no
-  circle. The `circle` keyword is
+  fit. The sensor's edge is not eroded, so the feature and sample masks of a camera with no stored coverage (its whole
+  sensor) whose model's valid domain covers the sensor are 0.5.1's with no circle. The `circle` keyword is
   deleted everywhere (no alias): the image circle is the camera's lens coverage,
   `BoundedCamera(model, extent; lens_coverage = Circle(…))`; a camera without one images its whole sensor.
   `detect_features(camera, frame, descriptor; …)` takes the camera first.
-- A grid lens is a `SplineLens` camera (Core 0.9 retired `CentralGenericModel` and `SplineProjection`); a bounded camera's
-  rotation-bundle residual is NaN off its `imaged_region`.
+- A grid lens is a `SplineLens` camera (Core 0.9 retired `CentralGenericModel` and `SplineProjection`). The rotation
+  bundle's residual is NaN only off the camera model's `valid_domain` (where its projection and back-projection Jacobian
+  are defined: a grid lens's lattice), never off its lens coverage: a parametric camera's bundle is 0.5.1's.
 - The example: `[inputs] circle` is refused with an `ArgumentError` naming the camera's `lens_coverage`; `load_lens` returns
   the `BoundedCamera` (a camera store's, or an old grid file read as a `SplineLens` camera whose coverage is the file's
-  domain, its forward spline fitted over its imaged region). The configs of record no longer hold their circles: the
-  cameras they load must carry them as their lens coverage.
+  domain, its forward spline fitted over its imaged region). The configs of record no longer hold their circles; the
+  14 mm config runs on the whole sensor until its camera store carries the measured circle as its lens coverage.
 
 ## 0.5.1 (2026-11-09)
 

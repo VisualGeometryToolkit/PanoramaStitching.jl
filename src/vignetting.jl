@@ -740,7 +740,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     Uall = vec(U2)
     Fall = VgtkCore.backproject(VgtkCore.model(camera), Uall)
     inside = similar(frames[1], Bool, Hf * Wf)
-    VgtkCore.pointwise!(_Sees(_frame_region(camera, Wf * raw_scale, Hf * raw_scale, rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
+    VgtkCore.pointwise!(_Sees(frame_region(camera, Wf * raw_scale, Hf * raw_scale, rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
     lin = findall(inside)                                                 # the domain: linear indices into one H × W plane
     P = length(lin)
     P > 0 || throw(ArgumentError("fit_vignetting: the fit domain is empty"))

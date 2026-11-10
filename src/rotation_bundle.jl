@@ -24,8 +24,18 @@ const _SphereChart = typeof(VgtkCore.SphereManifold(SVector(0.0, 0.0, 1.0)))
 # (only where the installed NLLSsolver has the Schur system).
 const _SCHUR = VgtkCore.nlls_features().schur
 
+# The camera the bundle reads (`_BundleCamera`): its model (the back-projection and its Jacobian) and where that model's
+# projection is defined, its `valid_domain` (a grid lens's lattice; the whole plane for a lens without a limit), computed once.
+# Not the lens coverage: the coverage says where features and samples are taken, not where a residual exists — so a parametric
+# camera's residual is never masked (as in 0.5.1) and a grid lens's is NaN off its lattice.
+struct _BundleCamera{M, D}
+    model::M
+    domain::D
+end
+_BundleCamera(camera) = (m = VgtkCore.model(camera); _BundleCamera(m, VgtkCore.valid_domain(m)))
+
 # One observation: √w (π(R_kᵀ d_j) − x_jk), pixels, through the fixed camera: `projection` its forward map π (`_forward_map`),
-# `camera` its back-projection (the Jacobian's). `whitening` is `nothing` (the pixel residual) or L⁻¹ of the observation's
+# `camera` its `_BundleCamera` (the Jacobian's back-projection and the domain). `whitening` is `nothing` (the pixel residual) or L⁻¹ of the observation's
 # pixel covariance Σ = LLᵀ (the residual L⁻¹(π − x) and its Jacobian L⁻¹J, in units of the covariance's unit noise).
 struct _Observation{E, C, P, L, W} <: NLLSsolver.AbstractResidual
     camera::C
@@ -44,20 +54,16 @@ Base.eltype(::_Observation) = Float64
 
 @inline _camera_direction(ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable) = SMatrix{3, 3}(ch.R)' * VgtkCore.model(d.value)
 
-# π(f): the forward map in closed form, NaN where it does not image AND where the camera does not image the point — off a
-# bounded camera's imaged region (a grid lens's calibrated area ∩ its lens coverage), where its back-projection Jacobian may be
-# NaN. A forward map can image past that region (a finite pixel), so without the second test the residual would be finite where its Jacobian
+# π(f): the forward map in closed form, NaN where it does not image AND off the model's valid domain (a grid lens's lattice),
+# where its back-projection Jacobian is NaN. A forward map can image past that domain (a finite pixel), so without the second
+# test the residual would be finite where its Jacobian
 # is not: NLLSsolver would accept such an iterate, linearize there and loop on its NaN system for ever (measured 2026-11-04,
 # the synthetic Tamron sequence from its true rotations). With it the residual and its Jacobian are defined on the same set,
 # an iterate past it is a NaN cost (a rejected step) and a start past it is a non-finite start (`:nonfinite_start`).
 @inline function _project(r::_Observation, f)
     u = r.projection(f); p = SVector(u[1], u[2])
-    return _images(r.camera, p) ? p : SVector(NaN, NaN)
+    return VgtkCore.Point2(p[1], p[2]) ∈ r.camera.domain ? p : SVector(NaN, NaN)
 end
-# Whether the camera images the sensor point `u` (its back-projection and Jacobian defined there): a bounded camera's
-# `imaged_region`; an unbounded camera model's back-projection is taken as defined on the whole plane.
-@inline _images(camera::VgtkCore.BoundedCamera, u) = VgtkCore.Point2(u[1], u[2]) ∈ VgtkCore.imaged_region(camera)
-@inline _images(camera, u) = true
 
 # An observation's pixel and whitening: a bare pixel has none; an `Uncertain` pixel's is Core's `whitening_factor` of the
 # residual π − x (its measurement Jacobian −I, so L⁻¹ of the covariance Σ = LLᵀ), refused unless Σ is finite and positive
@@ -89,7 +95,7 @@ NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::VgtkC
 function NLLSsolver.computeresjac(varflags, r::_Observation, ch::_FrameChart, d::VgtkCore.Eliminable)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
     u = _project(r, f)
-    _, M = VgtkCore.backproject_with_jacobian(VgtkCore.model(r.camera), u)
+    _, M = VgtkCore.backproject_with_jacobian(r.camera.model, u)
     Mp = _whiten(r.whitening, (M' * M) \ M')
     Jω = Mp * (R' * VgtkCore.skew(dir))
     Jv = Mp * (R' * VgtkCore.retract_jacobian(d.value))
@@ -139,8 +145,10 @@ the Jacobian), projected through `projection`, the camera's closed-form forward
 map π: the `camera` itself (its model's `imaging_transform`; a grid lens's
 `SplineLens` through its forward spline, VisualGeometryToolkitEstimation's
 `fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`); a
-`projection` that is no camera is an `ArgumentError`. A `BoundedCamera`'s
-residual is NaN off its `imaged_region`. The
+`projection` that is no camera is an `ArgumentError`. A residual is NaN off
+the camera model's `valid_domain` (a grid lens's lattice), where its
+back-projection Jacobian is undefined; the lens coverage does not enter the
+bundle. The
 rotations `R_k` (`d = R_k·f_k`) of every frame but the first of
 the sorted keys of `rotations` (the gauge, held fixed) and one direction `d_j`
 per track minimizing the robust sum of the pixel reprojection errors
@@ -176,7 +184,7 @@ without, and a covariance that is not finite and positive definite are an
 function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector; projection = camera,
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
                           max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true) where {K}
-    fwd = _forward_map(projection); C = typeof(camera); P = typeof(fwd)
+    fwd = _forward_map(projection); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
     E = eliminate && _SCHUR
@@ -201,7 +209,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     end
     unfixed = trues(length(vars)); unfixed[1] = false                       # the gauge frame
     width = NaN
-    observation(kernel, j, i, o) = _Observation{E, C, P, typeof(kernel), Wt}(camera, fwd, pixel(o), SVector(fid[first(o)], length(frames) + j),
+    observation(kernel, j, i, o) = _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], length(frames) + j),
                                                                               kernel, whitenings[j][i])
     residual_norms(f) = [[norm(f(observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart, vars[length(frames) + j]::VgtkCore.Eliminable{E}))
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]

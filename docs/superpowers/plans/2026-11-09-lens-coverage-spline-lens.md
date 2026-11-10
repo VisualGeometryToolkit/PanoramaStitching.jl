@@ -63,7 +63,7 @@ There is no `circle` keyword. Every mask reads `imaged_region(camera)`.
 
 **Files:**
 - `src/sampling.jl:25-32`: delete `_forward_map(::SplineProjection)`. The device form is the camera's `imaging_transform`, adapted.
-- `src/registration.jl`, `src/rotation_bundle.jl:48-61, 141-142, 176`: delete the `projection` keyword and `_images(::CentralGenericModel)`. Keep one `_images(camera::BoundedCamera, u) = Point2(u) ∈ imaged_region(camera)`.
+- `src/registration.jl`, `src/rotation_bundle.jl:48-61, 141-142, 176`: delete the `projection` keyword and `_images(::CentralGenericModel)`. Keep one `_images(camera::BoundedCamera, u) = Point2(u) ∈ imaged_region(camera)`. Superseded by ruling (Task 1, fix round 1): the bundle masks with `valid_domain(model(camera))`, not `imaged_region` (done in Task 1).
 - `examples/panorama_vignetting/run.jl:156-172`:
   - `lens_kind = "grid"` loads with `VgtkIO.load(BoundedCamera, path)`. A v2/v3 grid migrates; its domain becomes the coverage.
   - The forward spline is fitted once with `fit_camera(SplineLens, camera, imaged_region(camera); tolerance = spline_tolerance_px)` and kept in the camera.
@@ -102,6 +102,9 @@ Supersedes the WIP branch `spline-lens-guards` (86e1707). Read its diff for inte
   - Expected: the 14 mm and fisheye bundles converge.
   - Expected: the Tamron cylindrical panorama is about 1056 px tall, not 2481.
   - Record the bundle rms, the drop counts and the panorama sizes in the CHANGELOG entry and in a short note for Ties.
+- [ ] The 14 mm config of record: a small example driver derives a vgio/cameras/v5 store from the v4 store (migrated, then
+  `with_lens_coverage` of the measured circle, Circle((2131.1, 1407.9), 1680.1)) into the example's results directory, and
+  `config_fx3_14mm.toml` points `lens` at it. Until then that config runs on the whole sensor.
 - [ ] Commit the CHANGELOG. Do not open a PR to Ties: the owner holds it until RC works.
 
 After Task 4: `/simplify`, then `/code-review` on `origin/main...HEAD`.

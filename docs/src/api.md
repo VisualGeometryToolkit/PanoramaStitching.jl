@@ -26,6 +26,7 @@ world_direction
 fibonacci_directions
 FrameSamples
 sample_frames
+PanoramaStitching.frame_region
 ```
 
 ## The panorama

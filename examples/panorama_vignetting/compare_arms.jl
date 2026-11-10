@@ -61,11 +61,11 @@ function compare_arms(arms_path)
         skw = (; saturated = dev.saturated, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
                plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
         rim = Float64(d["rim_margin_px"])
-        domain = fit_domain(lens, W, H, rim)
+        domain = PanoramaStitching.frame_region(lens, W, H, rim)
         in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
         pp = SVector{2, Float64}(principal_point(lens))
         # the profile about the image circle's centre, or about the principal point when the camera has none; out to the domain's edge
-        cc = VgtkCore.lens_coverage(lens) isa VgtkCore.Circle ? coverage_center(lens) : pp
+        cc = VgtkCore.lens_coverage(lens) isa Union{VgtkCore.Circle, VgtkCore.Ellipse} ? coverage_center(lens) : pp
         rr = domain_radius(lens, cc, W, H, rim)
         Vref = nothing
         rows = Dict{String, Any}[]

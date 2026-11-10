@@ -79,7 +79,8 @@ end
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(dirs[1]))
     x = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * dirs[1]) + SVector(0.3, -0.2)
     fwd = PanoramaStitching._forward_map(CAM)
-    obs = PanoramaStitching._Observation{false, typeof(CAM), typeof(fwd), Nothing, Nothing}(CAM, fwd, x, SVector(1, 2), nothing, nothing)
+    bc = PanoramaStitching._BundleCamera(CAM)
+    obs = PanoramaStitching._Observation{false, typeof(bc), typeof(fwd), Nothing, Nothing}(bc, fwd, x, SVector(1, 2), nothing, nothing)
     _, J = NLLSsolver.computeresjac(NLLSsolver.static(3), obs, ch, dv)
     f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
@@ -134,7 +135,8 @@ end
     @test rest.metadata.outcome === :converged && rest.metadata.start_nonfinite == 0 && err(VgtkCore.estimate(rest)) < 0.05
     # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
     fwd = sp
-    o = PanoramaStitching._Observation{false, typeof(grid), typeof(fwd), Nothing, Nothing}(grid, fwd, SVector(500.0, 400.0), SVector(1, 2), nothing, nothing)
+    bc = PanoramaStitching._BundleCamera(grid)
+    o = PanoramaStitching._Observation{false, typeof(bc), typeof(fwd), Nothing, Nothing}(bc, fwd, SVector(500.0, 400.0), SVector(1, 2), nothing, nothing)
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(I)); far = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(SVector(0.9, 0.0, 0.3)))
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
     @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
