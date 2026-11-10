@@ -1,7 +1,3 @@
-# The example's environment (not a workspace member: it pulls CUDA and LibRaw_jll, which the package does not need).
-# Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
-# Needs the VisualGeometryToolkit 0.7 stack; until it registers, TEMPORARY [sources] below take it from the monorepo checkout
-# beside this repository (its version fields are not bumped yet, so the compat entries keep the 0.6 series). Remove before release.
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
@@ -19,8 +15,8 @@ VisualGeometryToolkitEstimation = "9a478df9-9a37-4dc7-9070-58617efe7573"
 VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
 VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
-[sources]
-PanoramaStitching = {path = "../.."}
+[sources.PanoramaStitching]
+path = "../.."
 
 [compat]
 CUDA = "5"
@@ -28,6 +24,7 @@ GLMakie = "0.13"
 JSON = "1"
 LibRaw_jll = "0.22"
 PNGFiles = "0.4"
+TOML = "1"
 VisualGeometryToolkitCore = "0.8"
 VisualGeometryToolkitEstimation = "0.8"
 VisualGeometryToolkitFeatures = "0.6.1"
