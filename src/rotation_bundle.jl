@@ -15,6 +15,15 @@
 # closed-form Jacobian, the stack's loss shape as NLLSsolver's robustifier
 # (VisualGeometryToolkitCore `loss_robustifier`) — the pattern of Estimation's
 # relative-pose bundle.
+#
+# The camera optionally free (`camera_free`, the self-calibration of a rotating
+# camera, Hartley 1994; Agapito, Hayman and Reid 2001): one more variable,
+# VisualGeometryToolkitCore's `ParameterManifold` of the camera's model
+# restricted to the named parameters (the camera block of Estimation's
+# `refine_camera_and_poses`), on which every observation then also depends. With
+# the first frame's rotation the gauge, a rotating sequence leaves nothing else
+# free; the bundle's metadata carries the reduced (Schur) information of the
+# rotations and the camera with which to check it.
 # =============================================================================
 
 const _FrameChart = VgtkCore.SO3Manifold{Float64}
@@ -88,6 +97,63 @@ end
 
 NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable) = _whiten(r.whitening, _pixel_residual(r, ch, d))
 
+# One observation of the self-calibrating bundle: as `_Observation`, its camera the third variable (`varind` = frame,
+# direction, camera), the model's `ParameterManifold` restricted to the free parameters, its projection and its valid domain
+# read from that variable's model.
+struct _CameraObservation{E, L, W} <: NLLSsolver.AbstractResidual
+    x::SVector{2, Float64}
+    varind::SVector{3, Int}
+    kernel::L
+    whitening::W
+end
+NLLSsolver.ndeps(::_CameraObservation) = static(3)
+NLLSsolver.nres(::_CameraObservation) = static(2)
+NLLSsolver.varindices(r::_CameraObservation) = r.varind
+NLLSsolver.getvars(r::_CameraObservation{E}, vars::Vector) where {E} =
+    (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[3]])
+NLLSsolver.robustkernel(r::_CameraObservation) = r.kernel
+Base.eltype(::_CameraObservation) = Float64
+
+# π(f) of the camera model `m`, NaN off its valid domain (as `_project`); `_image` without the test (the camera block's
+# derivative, taken where the test holds).
+@inline _image(m, f) = (u = VgtkCore.imaging_transform(m)(f); SVector(u[1], u[2]))
+@inline function _project_model(m, f)
+    p = _image(m, f)
+    return VgtkCore.Point2(p[1], p[2]) ∈ VgtkCore.valid_domain(m) ? p : SVector(NaN, NaN)
+end
+@inline _pixel_residual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
+    _project_model(VgtkCore.model(c), _camera_direction(ch, d)) - r.x
+NLLSsolver.computeresidual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
+    _whiten(r.whitening, _pixel_residual(r, ch, d, c))
+
+# The block's cost as the LM reads it: non-finite (an iterate past the model's valid domain) is +Inf (Core's `finite_cost`, the
+# stack's rule for every residual block): a rejected step, also where the step is below `xtol` (NLLSsolver accepts any step
+# below it, and a NaN cost accepted there fails its callback's cost check).
+NLLSsolver.computecost(vars::AbstractVector, r::Union{_Observation, _CameraObservation}) =
+    VgtkCore.finite_cost(NLLSsolver.computecost(r, NLLSsolver.getvars(r, vars)...))
+
+# Its closed-form frame and direction blocks (those of `_Observation`, through the variable's model) and its camera block,
+# ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
+# the camera; only the free variables' columns are returned, in that order.
+function NLLSsolver.computeresjac(varflags, r::_CameraObservation, ch::_FrameChart, d::VgtkCore.Eliminable, c)
+    m = VgtkCore.model(c)
+    R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
+    u = _project_model(m, f)
+    _, M = VgtkCore.backproject_with_jacobian(m, u)
+    Mp = _whiten(r.whitening, (M' * M) \ M')
+    Jω = Mp * (R' * VgtkCore.skew(dir))
+    Jv = Mp * (R' * VgtkCore.retract_jacobian(d.value))
+    z0 = zero(SVector{VgtkCore.tangent_size(c), Float64})
+    Jc = _whiten(r.whitening, ForwardDiff.jacobian(z -> _image(VgtkCore.model(VgtkCore.retract(c, z)), f), z0))
+    e = _whiten(r.whitening, u - r.x)
+    varflags == 7 && return e, hcat(Jω, Jv, Jc)
+    varflags == 6 && return e, hcat(Jv, Jc)
+    varflags == 5 && return e, hcat(Jω, Jc)
+    varflags == 4 && return e, Jc
+    varflags == 3 && return e, hcat(Jω, Jv)
+    return varflags == 2 ? (e, Jv) : (e, Jω)
+end
+
 # The closed-form 2 × 5 Jacobian at the variables' anchors: ∂π/∂f on the tangent plane is the pseudo-inverse of the
 # camera's back-projection Jacobian M at π(f) (`backproject_with_jacobian`), f = R_kᵀ·exp(−ω)·d moves by R_kᵀ[d]×·dω
 # and by R_kᵀ·∂d/∂v along the direction's chart.
@@ -121,14 +187,38 @@ corners from a start a fraction of a degree off, the Tamron 20 mm of
 2026-10-29 — and the rest of a track left in fewer than two frames; a
 dropped observation's residual is NaN, and a track left out keeps its start
 direction), `frames_unconstrained` (the frames other than the gauge left with
-no kept observation: each is held at its start rotation) and `outcome`, the
+no kept observation: each is held at its start rotation), `outcome`, the
 bundle's outcome:
 
 - `:not_run` — `iterations = 0` (the start's rotations are the result);
 - `:converged` — the retcode is `:converged`;
-- otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …).
+- otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …);
+
+`camera` (the camera at the result: the one given when it is held, else the
+refined one, of the given camera's type and, for a `BoundedCamera`, its sensor
+and lens coverage) and `calibration`, `nothing` when the camera is held, else
+the self-calibration's information at the result (`camera_free`):
+
+- `free` — the names of the camera parameters refined;
+- `parameters`, `sigma`, `covariance` — their values, standard deviations and
+  covariance (parameter units: pixels for `f`, `cx`, `cy`; the lens's own for its
+  coefficients) — `s²·H⁻¹`, `H` the Gauss–Newton information of the robust
+  bundle (each observation weighted by its loss's IRLS weight at the result)
+  reduced to the rotations and the camera by the Schur complement of the track
+  directions, the gauge frame removed, mapped from the camera chart to the
+  parameters; `s² = Σ wᵢ‖rᵢ‖² / ν`, `ν = 2n − p` (`n` observations kept, `p`
+  unknowns: `3(K − 1)` rotations, 2 per kept track, the free parameters);
+- `s2`, `nu` — `s²` and `ν`;
+- `reduced_eigenvalues` — the eigenvalues (ascending) of that reduced
+  information with the gauge frame INCLUDED, its rows and columns scaled to a
+  unit diagonal: three are zero to rounding (a common rotation of every frame
+  and every direction is the problem's one symmetry) and the next is the
+  smallest of `reduced_eigenvalues_gauge_fixed`, the same with the gauge frame
+  removed — positive when nothing else is free;
+- `direction_min_eigenvalue` — the least eigenvalue over the kept tracks of
+  their 2 × 2 direction blocks (each positive: every kept direction observed).
 """
-struct RotationBundleMetadata{K}
+struct RotationBundleMetadata{K, C, I}
     directions::Vector{SVector{3, Float64}}
     residuals::Vector{Vector{Float64}}
     loss_width::Float64
@@ -136,11 +226,13 @@ struct RotationBundleMetadata{K}
     n_dropped_start::Int
     frames_unconstrained::Vector{K}
     outcome::Symbol
+    camera::C
+    calibration::I
 end
 
 """
     refine_rotations(camera, rotations, tracks; loss, scale_multiple, iterations, max_iter, ftol, xtol,
-                     eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+                     eliminate = true, camera_free = ()) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
 (fixed; its `backproject` and `backproject_with_jacobian` give the start and
@@ -186,6 +278,20 @@ result's `n` is the number of observations kept; its metadata's
 - `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
+- `camera_free` — the camera parameters refined with the rotations and the
+  directions, by name (VisualGeometryToolkitCore's `parameter_names` of the
+  camera's model: `:f, :aspect, :skew, :cx, :cy`, then the lens's
+  coefficients); `()` (the default) holds the camera fixed, the bundle above.
+  Free, the camera is one more variable, Core's `ParameterManifold` of its model
+  restricted to those parameters (the camera block of Estimation's
+  `refine_camera_and_poses`), its Jacobian ForwardDiff through the chart; the
+  rotating camera's self-calibration. The first frame's rotation stays the one
+  gauge (the metadata's `calibration` carries the reduced information that
+  shows nothing else is free, and the parameters' covariance). A parametric
+  camera only: a SplineLens camera, or a name its model does not have, is an
+  `ArgumentError`. The observations kept at the start are those the GIVEN
+  camera images; the residuals, the loss width and the result are the
+  refined camera's.
 
 A refine ends in the local minimum its start leads to; the result's `retcode`
 and its metadata's `outcome` ([`RotationBundleMetadata`](@ref)) say how the
@@ -197,12 +303,15 @@ are an `ArgumentError`.
 """
 function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector;
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
-                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true) where {K}
+                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
+                          camera_free::Tuple{Vararg{Symbol}} = ()) where {K}
+    chc = _camera_chart(camera, camera_free)                     # nothing: the camera held
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
     E = eliminate && _SCHUR
-    V = Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}}
+    V = chc === nothing ? Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}} :
+        Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}, typeof(chc)}
     nobs = 0; nuncertain = 0
     for t in tracks
         length(unique(first.(t))) >= 2 || throw(ArgumentError("refine_rotations: a track needs observations in two frames"))
@@ -225,17 +334,22 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     end
     vars = V[[VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(rotations[k])) for k in frames];
              [start_direction(t, trues(length(t))) for t in tracks]]
+    chc === nothing || push!(vars, chc)                                     # the camera, the last variable
+    ic = nf + length(tracks) + 1
     width = NaN
-    observation(kernel, j, i, o) = _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j),
-                                                                              kernel, whitenings[j][i])
+    observation(kernel, j, i, o) = chc === nothing ?
+        _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j), kernel, whitenings[j][i]) :
+        _CameraObservation{E, typeof(kernel), Wt}(pixel(o), SVector(fid[first(o)], nf + j, ic), kernel, whitenings[j][i])
+    residual_type(kernel) = chc === nothing ? _Observation{E, C, P, typeof(kernel), Wt} : _CameraObservation{E, typeof(kernel), Wt}
+    all_free = chc === nothing ? 3 : 7
     # the observations kept, a fixed point: an observation whose residual or Jacobian is not finite at its track's start (a
     # start prediction off the model's valid domain has neither) is dropped, a track left in fewer than two frames is dropped
     # whole, and a partly kept track restarts from the mean bearing of the observations it keeps — which moves its other
     # predictions, so its kept observations are tested again, until no track loses one (each round only drops, so at most one
     # round per observation). The solve is then the solve of the kept observations alone. A track left out keeps its start
     # direction, held.
-    finite_at_start(j, i, o) = (r = NLLSsolver.computeresjac(3, observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart,
-                                                             vars[nf + j]::VgtkCore.Eliminable{E}); all(isfinite, r[1]) && all(isfinite, r[2]))
+    finite_at_start(j, i, o) = (ob = observation(nothing, j, i, o); r = NLLSsolver.computeresjac(all_free, ob, NLLSsolver.getvars(ob, vars)...);
+                                all(isfinite, r[1]) && all(isfinite, r[2]))
     active = [trues(length(t)) for t in tracks]
     for (j, t) in enumerate(tracks)
         while any(active[j])
@@ -260,8 +374,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     end
     unconstrained = K[frames[i] for i in 2:nf if !observed[i]]
     foreach(k -> (unfixed[fid[k]] = false), unconstrained)
-    residual_norms(f) = [[active[j][i] ? norm(f(observation(nothing, j, i, o), vars[fid[first(o)]]::_FrameChart,
-                                                 vars[nf + j]::VgtkCore.Eliminable{E})) : NaN
+    residual_norms(f) = [[active[j][i] ? (ob = observation(nothing, j, i, o); norm(f(ob, NLLSsolver.getvars(ob, vars)...))) : NaN
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
     result = nothing
     for _ in 1:iterations
@@ -271,7 +384,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         σ = VgtkCore.noise_sigma(filter(isfinite, rn), 2)
         width = scale_multiple * σ
         kernel = VgtkCore.loss_robustifier(loss, width)
-        problem = NLLSsolver.NLLSProblem(V, _Observation{E, C, P, typeof(kernel), Wt})
+        problem = NLLSsolver.NLLSProblem(V, residual_type(kernel))
         for v in vars
             NLLSsolver.addvariable!(problem, v)
         end
@@ -286,6 +399,78 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]
     rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
     outcome = iterations == 0 ? :not_run : code
+    cam_out = chc === nothing ? camera : _with_camera_model(camera, VgtkCore.model(vars[ic]))
+    calib = chc === nothing ? nothing :
+        _self_calibration(vars[ic], camera_free, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
+                          (j, i, o) -> observation(iterations == 0 ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width), j, i, o),
+                          vars, fid, nf, unconstrained)
     return VgtkCore.FitResult(out, code, iterations, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
-                              RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, unconstrained, outcome))
+                              RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
+end
+
+# The camera's variable: nothing when held (`camera_free = ()`), else Core's ParameterManifold of its model restricted to the
+# named parameters. A SplineLens camera (a gauge K: its parameters are its lattice's controls, Estimation's own spline route)
+# is refused.
+_camera_chart(camera, free::Tuple{}) = nothing
+function _camera_chart(camera, free::Tuple{Vararg{Symbol}})
+    m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
+    (m isa VgtkCore.CameraModel && VgtkCore.Cameras.IntrinsicsRole(m.lens) isa VgtkCore.Cameras.FreeIntrinsics) ||
+        throw(ArgumentError("refine_rotations: camera_free needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
+    names = VgtkCore.parameter_names(m)
+    for p in free
+        p in names || throw(ArgumentError("refine_rotations: the camera has no parameter $(repr(p)); its parameters are $(join(String.(names), ", "))"))
+    end
+    allunique(free) || throw(ArgumentError("refine_rotations: camera_free names a parameter twice: $free"))
+    return VgtkCore.restrict(VgtkCore.ParameterManifold(m), free)
+end
+_with_camera_model(camera::VgtkCore.BoundedCamera, m) = VgtkCore.with_model(camera, m)
+_with_camera_model(::VgtkCore.CameraModel, m) = m
+
+# The self-calibration's information at the result (`RotationBundleMetadata`'s `calibration`): every kept observation's
+# Jacobian (its loss's IRLS weight at the result folded in) over the frames (the gauge frame included), its track's direction
+# and the camera chart; the directions eliminated track by track (the Schur complement of their 2 × 2 blocks); the reduced
+# information's scaled spectrum with and without the gauge frame; the covariance s²·H⁻¹ of the gauge-fixed reduced system,
+# its camera block mapped from the chart to the parameters.
+function _self_calibration(cc, free, kept, observation, vars, fid, nf, unconstrained)
+    nd = VgtkCore.tangent_size(cc); P = 3nf + nd
+    A = zeros(P, P); S2 = 0.0; n = length(kept)
+    Dmin = Inf
+    bytrack = Dict{Int, Vector{Tuple{Int, Any}}}()
+    for (j, i, o) in kept
+        push!(get!(bytrack, j, Tuple{Int, Any}[]), (i, o))
+    end
+    for (j, obs) in bytrack
+        Dj = zeros(2, 2); Bj = zeros(2, P)
+        for (i, o) in obs
+            ob = observation(j, i, o)
+            e, J = NLLSsolver.computeresjac(7, ob, NLLSsolver.getvars(ob, vars)...)
+            _, w, _ = NLLSsolver.robustifydcost(NLLSsolver.robustkernel(ob), sum(abs2, e))
+            S2 += w * sum(abs2, e)
+            k = fid[first(o)]
+            Jc = zeros(2, P); Jc[:, (3k - 2):(3k)] = J[:, 1:3]; Jc[:, (3nf + 1):P] = J[:, 6:end]
+            Jv = Matrix(J[:, 4:5])
+            A .+= w .* (Jc' * Jc); Bj .+= w .* (Jv' * Jc); Dj .+= w .* (Jv' * Jv)
+        end
+        Dmin = min(Dmin, LinearAlgebra.eigmin(LinearAlgebra.Symmetric(Dj)))
+        A .-= Bj' * (Dj \ Bj)
+    end
+    H = LinearAlgebra.Symmetric((A + A') / 2)
+    scaled(M) = (d = 1 ./ sqrt.(LinearAlgebra.diag(M)); LinearAlgebra.Symmetric(d .* M .* d'))
+    held = vcat([(3k - 2):(3k) for k in [1; [fid[u] for u in unconstrained]]]...)      # the gauge frame and the frames held
+    keep = setdiff(1:P, held)
+    keep_gauge = setdiff(1:P, held[4:end])
+    Hf = H[keep, keep]
+    p = length(keep) + 2 * length(bytrack); ν = 2n - p
+    s2 = S2 / ν
+    Σz = s2 .* inv(LinearAlgebra.Symmetric(Matrix(Hf)))
+    Σc = Σz[(end - nd + 1):end, (end - nd + 1):end]
+    names = VgtkCore.parameter_names(VgtkCore.model(cc)); idx = [findfirst(==(q), names) for q in free]
+    θ(z) = VgtkCore.parameter_vector(VgtkCore.model(VgtkCore.retract(cc, z)))[idx]
+    z0 = zeros(nd); T = ForwardDiff.jacobian(θ, z0)
+    Σθ = T * Σc * T'
+    return (; free, parameters = NamedTuple{free}(Tuple(θ(z0))), sigma = NamedTuple{free}(Tuple(sqrt.(LinearAlgebra.diag(Σθ)))),
+            covariance = Σθ, s2, nu = ν,
+            reduced_eigenvalues = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(H[keep_gauge, keep_gauge])))),
+            reduced_eigenvalues_gauge_fixed = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(Hf)))),
+            direction_min_eigenvalue = Dmin)
 end

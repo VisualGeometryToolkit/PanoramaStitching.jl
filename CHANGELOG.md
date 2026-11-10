@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### New: the rotation bundle with the camera free — a rotating camera's self-calibration
+
+- `refine_rotations(…; camera_free = (:f, :cx, :cy, :k1, …))` refines the named parameters of a parametric camera with the
+  rotations and the track directions, in the same bundle (one more NLLSsolver variable: VisualGeometryToolkitCore's
+  `ParameterManifold` of the camera's model restricted to those parameters, the camera block of Estimation's
+  `refine_camera_and_poses`; its Jacobian ForwardDiff through the chart, the frame and direction blocks the closed form).
+  The first frame's rotation stays the one gauge. `register_rotations` passes it as `bundle_camera_free`. A SplineLens
+  camera is refused (its parameters are its lattice's controls, Estimation's own spline route).
+- `RotationBundleMetadata` gains `camera` (the camera at the result: the given one when held) and `calibration`
+  (`nothing` when held; else the free parameters' values, standard deviations and covariance — `s²·H⁻¹` of the robust
+  Gauss–Newton information reduced to the rotations and the camera by the Schur complement of the directions — and that
+  reduced information's scaled spectrum with and without the gauge frame: three zeros with it, none without).
+- Every residual block of the bundle returns its cost through Core's `finite_cost` (non-finite is `+Inf`): an iterate past
+  the model's valid domain is a rejected step also below `xtol`, where NLLSsolver accepted a NaN cost and failed its
+  callback's check. The camera held, the bundle's numbers are unchanged (pinned by a test on 69471ff's numbers).
+
 ### Breaking: one view graph across the stack — VisualGeometryToolkitEstimation's `ViewGraph`
 
 - **`PanoramaStitching.ViewGraph` is deleted** (no alias): the view graph of the verified pairs is

@@ -162,10 +162,11 @@ _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
-                       bundle_xtol, bundle_whitening = :none, execution_provider = :auto, say = _ -> nothing) -> Registration
+                       bundle_xtol, bundle_whitening = :none, bundle_camera_free = (), execution_provider = :auto,
+                       say = _ -> nothing) -> Registration
     register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; averaging_loss, bundle_loss, bundle_scale_multiple,
                        bundle_iterations, bundle_max_iter, bundle_ftol, bundle_xtol, bundle_whitening = :none,
-                       say = _ -> nothing) -> Registration
+                       bundle_camera_free = (), say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
@@ -200,7 +201,12 @@ RANSAC's:
   `:keypoint_covariance` whitens each by its keypoint's position covariance
   ([`FrameFeatures`](@ref)'s `pixel_covariances`; a keypoint the detector did
   not refine takes the isotropic median), the loss acting on the whitened
-  residuals.
+  residuals. `bundle_camera_free` (by name, the camera parameters the bundle
+  refines with the rotations, `refine_rotations`' `camera_free`; `()`, the
+  default, holds the camera): the rotating camera's self-calibration, its camera
+  the bundle metadata's `camera` (`result.bundle.metadata.camera`) and its
+  information `result.bundle.metadata.calibration`. The pairs, the averaging and
+  the tracks are those of the given camera.
 
 `say` receives one line per frame, pair and step.
 
@@ -224,20 +230,21 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
-                            bundle_xtol::Real, bundle_whitening::Symbol = :none, execution_provider::Symbol = :auto, say = _ -> nothing)
+                            bundle_xtol::Real, bundle_whitening::Symbol = :none, bundle_camera_free::Tuple{Vararg{Symbol}} = (),
+                            execution_provider::Symbol = :auto, say = _ -> nothing)
     _check_pair_settings("register_rotations", pairs, max_lag)
     _check_whitening("register_rotations", bundle_whitening)
     vp = verify_pairs(frames, camera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections, descriptor, matcher,
                       min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization, max_trials, min_trials,
                       averaging_loss, execution_provider, say)
     return register_rotations(vp, camera; averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter,
-                              bundle_ftol, bundle_xtol, bundle_whitening, say)
+                              bundle_ftol, bundle_xtol, bundle_whitening, bundle_camera_free, say)
 end
 
 function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; averaging_loss::VgtkCore.AbstractLossShape,
                             bundle_loss::VgtkCore.AbstractLossShape, bundle_scale_multiple::Real, bundle_iterations::Integer,
                             bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real, bundle_whitening::Symbol = :none,
-                            say = _ -> nothing)
+                            bundle_camera_free::Tuple{Vararg{Symbol}} = (), say = _ -> nothing)
     _check_whitening("register_rotations", bundle_whitening)
     feats = vp.features; K = length(feats)
     graph = _view_graph(K, vp.verified)
@@ -247,7 +254,8 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
     obs = bundle_whitening === :none ? [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts] : _uncertain_observations(feats, ts; say)
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; loss = bundle_loss, scale_multiple = bundle_scale_multiple,
-                              iterations = bundle_iterations, max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
+                              iterations = bundle_iterations, max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol,
+                              camera_free = bundle_camera_free)
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.n_dropped_start) observations dropped at the start: not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
