@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### LoMa on the GPU wherever it runs: `execution_provider = :auto`
+
+- `register_rotations`' `execution_provider` defaults to `:auto` (was `:cpu`): LoMa's descriptor and matcher run on ONNX
+  Runtime's CUDA provider where VisualGeometryToolkitFeatures finds a CUDA device and the environment holds
+  `CUDA_Runtime_jll` and `CUDNN_jll` (their CUDA 12 builds, loaded for ONNX Runtime alone, beside CUDA.jl's runtime), and on
+  the CPU otherwise, warning once why. `:cpu` and `:cuda` stay; `:cuda` that cannot run is an error naming why. The provider
+  is resolved once per registration by Features' `resolve_execution_provider`, and the `Registration` records what ran LoMa
+  in its new `loma` field (Features' `loma_provenance` of the descriptor and of the matcher: the models, the provider used,
+  ONNX Runtime's threads and, on CUDA, the driver, runtime and cuDNN versions). cuDNN.jl is no longer needed (cuDNN 1.4, the
+  last for CUDA.jl 5, never resolved beside CUDA_Runtime_Discovery 2, so the configs had stated `"cpu"`).
+- ONNX Runtime's threads are Julia's (`Threads.nthreads()`), not the machine's: a Slurm job's registration stays in its
+  allotment (on dgx01 six 28-CPU jobs had driven a load of 673 at ~70 min of CPU registration each, the GPUs idle).
+- The example: both configs state `execution_provider = "auto"`; its environment holds `CUDA_Runtime_jll` and `CUDNN_jll`
+  (lazy artifacts: downloaded on the first LoMa session where a device is visible), and `run.jl` no longer loads cuDNN. The
+  registration's cache key holds the provider `"auto"` resolved to (a CPU record is not reused by a CUDA run: their matches
+  differ at the network's threshold); `rotations.json` (format v6: older records are recomputed) records LoMa's provenance
+  and `summary.md` states the provider, its library versions and the threads.
+- TEMPORARY `[sources]` now take the stack from `~/src/vgtk-bounded-camera-region` (the 0.9 release branch).
+
 ### Rotation averaging on the stack's Attributed edges
 
 - `register_rotations` (and its `:lag_overlap` overlap step) passes VisualGeometryToolkitEstimation's

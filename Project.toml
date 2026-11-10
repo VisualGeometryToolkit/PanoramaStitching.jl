@@ -47,12 +47,13 @@ VisualGeometryToolkitFeatures = "0.6.1"
 julia = "1.12"
 
 # TEMPORARY (never pushed or registered while it is here): the VisualGeometryToolkit 0.9 stack is not registered yet, so every
-# stack package resolves from the monorepo snapshot beside this repository (~/src/vgtk-board-deform, branch downstream-base).
+# stack package resolves from the monorepo snapshot beside this repository (~/src/vgtk-bounded-camera-region, branch
+# bounded-camera-region: the 0.9 release branch, whose Features has LoMa's :auto ONNX Runtime provider).
 # Remove before release, with the compat above at the registered versions.
 [sources]
-VisualGeometryToolkitCore = {path = "../vgtk-board-deform/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../vgtk-board-deform/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../vgtk-board-deform/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitCore = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitFeatures"}
 
 [workspace]
 projects = ["test", "docs"]

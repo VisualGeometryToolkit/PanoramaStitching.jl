@@ -1,10 +1,14 @@
-# The example's environment (not a workspace member: it pulls CUDA and LibRaw_jll, which the package does not need).
+# The example's environment (not a workspace member: it pulls CUDA and LibRaw_jll, which the package does not need, and
+# CUDA_Runtime_jll and CUDNN_jll, whose CUDA 12 builds ONNX Runtime's CUDA provider takes for LoMa: lazy artifacts, downloaded
+# on the first LoMa session where a CUDA device is visible).
 # Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
 # Needs the VisualGeometryToolkit 0.9 stack; until it registers, TEMPORARY [sources] below take it from the monorepo snapshot
-# beside this repository (~/src/vgtk-board-deform; Estimation's version field is not bumped yet, so its compat keeps 0.8).
+# beside this repository (~/src/vgtk-bounded-camera-region; Estimation's version field is not bumped yet, so its compat keeps 0.8).
 # Never pushed or registered while they are here; remove before release.
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
+CUDNN_jll = "62b44479-cb7b-5706-934f-f13b2eb2e645"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LibRaw_jll = "d66ac3f3-933a-5ab8-8aa2-9e591b3c5af3"
@@ -22,13 +26,15 @@ VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
 [sources]
 PanoramaStitching = {path = "../.."}
-VisualGeometryToolkitCore = {path = "../../../vgtk-board-deform/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../../../vgtk-board-deform/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../../../vgtk-board-deform/VisualGeometryToolkitFeatures"}
-VisualGeometryToolkitIO = {path = "../../../vgtk-board-deform/VisualGeometryToolkitIO"}
+VisualGeometryToolkitCore = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitIO = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitIO"}
 
 [compat]
 CUDA = "5"
+CUDA_Runtime_jll = "0.21 - 0.26"
+CUDNN_jll = "9.20 - 9"
 GLMakie = "0.13"
 JSON = "1"
 LibRaw_jll = "0.22"

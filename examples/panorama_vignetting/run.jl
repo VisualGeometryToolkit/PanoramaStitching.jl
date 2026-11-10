@@ -8,12 +8,10 @@
 # `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
-using CUDA
-# ONNX Runtime's CUDA provider (registration.execution_provider = "cuda") needs cuDNN loaded beside CUDA, and CUDA's runtime
-# 12.x (CUDA.set_runtime_version!(v"12.9")); cuDNN is loaded only where the environment holds it, so one without it runs "cpu"
-if Base.find_package("cuDNN") !== nothing
-    import cuDNN
-end
+using CUDA                                         # the [compute] device's kernels
+# LoMa's ONNX Runtime CUDA provider (registration.execution_provider = "auto" or "cuda") takes its CUDA 12 runtime and cuDNN
+# from this environment's CUDA_Runtime_jll and CUDNN_jll (VisualGeometryToolkitFeatures loads them for ONNX Runtime alone,
+# whatever runtime CUDA.jl uses); "auto" runs on the CPU, warning why, where they or a device are missing.
 using PanoramaStitching
 import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -194,16 +192,21 @@ const LOSSES = Dict("huber" => VgtkCore.HuberShape(), "cauchy" => VgtkCore.Cauch
 # v3: PanoramaStitching 0.2.2 seeds each pair's sampler by stable_seed(seed, i, j), so a v2 record's rotations are not this
 # code's; they are recomputed. v5: PanoramaStitching 0.6's bundle drops the observations not imaged at its start and counts them
 # (`n_dropped_start`, replacing v3's start finiteness count), and holds the frames left with none (`frames_unconstrained`).
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v5 (the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
-function registration_key(C, inp)
+# v6: the key holds the ONNX Runtime provider LoMa runs on (`execution_provider = "auto"` resolved: a CPU record is not a CUDA
+# run's, whose matches differ in the pairs at the network's threshold), and the record LoMa's provenance (`loma`).
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v6 (LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+function registration_key(C, inp, provider::Symbol)
     canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
-    return VgtkCore.sha256_hex(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
+    return VgtkCore.sha256_hex(join([REGISTRATION_FORMAT, canon(C.cfg["registration"]), "provider=$provider", canon(C.cfg["inputs"]),
+                                     canon(C.cfg["decode"]),
                                      (open(VgtkCore.sha256_hex, joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names)...], "|"))
 end
 
 function registration(C, inp, lens; log)
     r = C.cfg["registration"]
-    key = registration_key(C, inp)
+    # "auto" → "cuda" or "cpu" (warning why) here, before the key; "cuda" that cannot run is an error naming why
+    provider = VgtkFeatures.resolve_execution_provider(Symbol(r["execution_provider"]))
+    key = registration_key(C, inp, provider)
     path = joinpath(C.out, "rotations.json")
     if isfile(path)
         rec = JSON.parsefile(path)
@@ -215,13 +218,9 @@ function registration(C, inp, lens; log)
                     pairs = rec["pairs"], bundle_rms_px = rec["bundle_rms_px"], seconds = something(rec["seconds"], 0.0),
                     bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
                     bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
-                    point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
+                    loma = rec["loma"], point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
         end
     end
-    ep = r["execution_provider"]
-    ep in ("cpu", "cuda") || error("registration.execution_provider = $ep is not \"cpu\" or \"cuda\"")
-    ep == "cuda" && !isdefined(@__MODULE__, :cuDNN) &&
-        error("registration.execution_provider = \"cuda\" needs cuDNN in the environment (ONNX Runtime's CUDA provider)")
     t0 = time()
     reg = register_rotations(inp.frames, lens; raw_scale = 2, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                              asift_tilts = r["asift_tilts"] == "imas25" ? nothing : [Tuple(t) for t in r["asift_tilts"]],
@@ -232,7 +231,7 @@ function registration(C, inp, lens; log)
                              max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_loss = LOSSES[r["averaging_loss"]],
                              bundle_loss = LOSSES[r["bundle_loss"]], bundle_scale_multiple = r["bundle_scale_multiple"],
                              bundle_iterations = r["bundle_iterations"], bundle_max_iter = r["bundle_max_iter"],
-                             bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"], execution_provider = Symbol(ep),
+                             bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"], execution_provider = provider,
                              say = m -> say(log, m))
     secs = time() - t0
     Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
@@ -247,11 +246,14 @@ function registration(C, inp, lens; log)
                "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor point's σ of
                # IntensityAndPositionNoise
-               "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]))
+               "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]),
+               # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance): the models, the ONNX Runtime provider used, its
+               # threads and, on CUDA, the driver, runtime and cuDNN versions
+               "loma" => Dict(string(k) => Dict(string(f) => string(v) for (f, v) in pairs(p)) for (k, p) in pairs(reg.loma)))
     open(io -> JSON.print(io, rec, 2), path, "w")
     return (; rotations = Rs, pairs = length(reg.pairs), bundle_rms_px = reg.bundle.rms, seconds = secs, bundle_retcode = rec["bundle_retcode"],
             bundle_outcome = rec["bundle_outcome"], bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = nothing,
-            point_scale_px = reg.bundle.metadata.loss_width / r["bundle_scale_multiple"])
+            loma = rec["loma"], point_scale_px = reg.bundle.metadata.loss_width / r["bundle_scale_multiple"])
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -558,6 +560,10 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                     "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
                     "rotation: no observation kept).")
+        lm = reg.loma["descriptor"]
+        println(io, "- LoMa ($(lm["model"]), $(reg.loma["matcher"]["model"])): ONNX Runtime $(lm["onnxruntime"]) on $(lm["execution_provider"])" *
+                    "$(lm["execution_provider"] == "cuda" ? " (CUDA runtime $(lm["cuda_runtime"]), cuDNN $(lm["cudnn"]), driver $(lm["cuda_driver"]))" : ""), " *
+                    "$(lm["threads"]) threads (registration.execution_provider = \"$(C.cfg["registration"]["execution_provider"])\").")
         println(io, "- Principal point (the ray (0, 0, 1)): ($(f(pp[1]; d = 1)), $(f(pp[2]; d = 1))) px.")
         println(io, "- Compute backend: $(get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])).")
         println(io, "- Seam raster: equirectangular, $(C.cfg["seams"]["deg_per_pixel"])°/px over lon $(f(ext[1]; d = 1))…$(f(ext[2]; d = 1))°, lat $(f(ext[3]; d = 1))…$(f(ext[4]; d = 1))° (up frame).")

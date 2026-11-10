@@ -30,8 +30,10 @@ its rotation angle in degrees), `averaging` (the `fit_rotation_averaging`
 result), `tracks` (the tracks as `(frame, keypoint)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 metadata's `outcome` and `n_dropped_start` say how the bundle ended and how many
-observations it left out at its start, [`RotationBundleMetadata`](@ref)) and `features` (the
-frames' [`FrameFeatures`](@ref)).
+observations it left out at its start, [`RotationBundleMetadata`](@ref)), `features` (the
+frames' [`FrameFeatures`](@ref)) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
+`loma_provenance` of the descriptor and of the matcher — the models, the ONNX Runtime
+provider used and its threads).
 """
 struct Registration{A, B, F}
     rotations::Vector{RotMatrix{3, Float64, 9}}
@@ -42,6 +44,7 @@ struct Registration{A, B, F}
     dropped::Int
     bundle::B
     features::Vector{F}
+    loma::NamedTuple    # (; descriptor, matcher): loma_provenance of each
 end
 
 """
@@ -49,7 +52,7 @@ end
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
-                       bundle_xtol, bundle_whitening = :none, execution_provider = :cpu, say = _ -> nothing) -> Registration
+                       bundle_xtol, bundle_whitening = :none, execution_provider = :auto, say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
@@ -63,9 +66,12 @@ RANSAC's:
   `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections` — see
   [`detect_features`](@ref); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
-  each for the whole registration on `execution_provider` (`:cpu`, the default,
-  or `:cuda`, which needs `import CUDA, cuDNN` and a functional device);
-  `min_score`.
+  each for the whole registration on ONNX Runtime's `execution_provider`
+  (`:auto`, the default: CUDA where VisualGeometryToolkitFeatures finds a device and
+  the environment holds `CUDA_Runtime_jll` and `CUDNN_jll`, else the CPU with a
+  warning naming why; `:cpu`; `:cuda`, an error naming why where it cannot run),
+  on `Threads.nthreads()` ONNX Runtime threads; `min_score`. The provider used is
+  in the result's `loma`.
 - pairs: `pairs = :all` (every frame pair) or `:lag_overlap` (pairs at most
   `max_lag` apart; while the verified pairs leave the frames in more than one
   part, as when a lag pair is dropped, the pair between two parts nearest in
@@ -90,7 +96,7 @@ pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
 stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a `bundle_whitening`
 other than `:none` or `:keypoint_covariance` and an `execution_provider` other
-than `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
+than `:auto`, `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame, [`ViewGraph`](@ref)) is an `ArgumentError` too.
 """
@@ -100,17 +106,17 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, bundle_loss::VgtkCore.AbstractLossShape,
                             bundle_scale_multiple::Real, bundle_iterations::Integer, bundle_max_iter::Integer, bundle_ftol::Real,
-                            bundle_xtol::Real, bundle_whitening::Symbol = :none, execution_provider::Symbol = :cpu, say = _ -> nothing)
+                            bundle_xtol::Real, bundle_whitening::Symbol = :none, execution_provider::Symbol = :auto, say = _ -> nothing)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("register_rotations: pairs = :$pairs is not :all or :lag_overlap"))
     bundle_whitening in (:none, :keypoint_covariance) ||
         throw(ArgumentError("register_rotations: bundle_whitening = :$bundle_whitening is not :none or :keypoint_covariance"))
     pairs === :all || max_lag >= 1 || throw(ArgumentError("register_rotations: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
-    execution_provider in (:cpu, :cuda) ||
-        throw(ArgumentError("register_rotations: execution_provider = :$execution_provider is not :cpu or :cuda"))
+    # resolved once (one warning on a fallback to the CPU), refusing an unknown provider, before any feature is detected
+    provider = VgtkFeatures.resolve_execution_provider(execution_provider)
     K = length(frames)
-    # one ONNX session each for the whole registration, on `execution_provider`
-    desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider)
-    match = VgtkFeatures.LoMaMatcher(matcher; execution_provider)
+    # one ONNX session each for the whole registration, on the resolved provider
+    desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider = provider)
+    match = VgtkFeatures.LoMaMatcher(matcher; execution_provider = provider)
     feats = map(1:K) do k
         f = detect_features(camera, frames[k], desc; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections)
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")
@@ -160,7 +166,8 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.n_dropped_start) observations dropped at the start: not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
-    return Registration(Rs, graph, stats, avg, ts, dropped, bundle, feats)
+    loma = (; descriptor = VgtkFeatures.loma_provenance(desc), matcher = VgtkFeatures.loma_provenance(match))
+    return Registration(Rs, graph, stats, avg, ts, dropped, bundle, feats, loma)
 end
 
 # The bundle's observations with their keypoints' position covariances (`bundle_whitening = :keypoint_covariance`): each
