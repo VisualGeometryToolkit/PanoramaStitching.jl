@@ -34,11 +34,12 @@ used below, and every block runs after it, in order, as the test suite runs them
 
 ```julia
 # Illustrative: VisualGeometryToolkitEstimation's fit_camera, one more package (pkg> add VisualGeometryToolkitEstimation)
-using VisualGeometryToolkitCore: SplineLens, BoundedCamera, imaged_region, lens_coverage, extent, estimate
+using VisualGeometryToolkitCore: SplineLens, imaged_region, with_model, estimate
 import VisualGeometryToolkitEstimation as VgtkEstimation
 
-spline = estimate(VgtkEstimation.fit_camera(SplineLens, camera, imaged_region(camera); tolerance = 1e-2, grid_size = (40, 40)))
-grid = BoundedCamera(spline, extent(camera); lens_coverage = lens_coverage(camera))
+# the same sensor and lens coverage, the model a 40 × 40 SplineLens with its forward spline
+grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera, imaged_region(camera); tolerance = 1e-2,
+                                                             grid_size = (40, 40))))
 # register_rotations(frames, grid; …), sample_frames(grid, …), render_panorama(grid, …)
 ```
 

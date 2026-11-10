@@ -24,9 +24,6 @@ world_direction(lat, lon) = VgtkCore.backproject(VgtkCore.Equirectangular(), SVe
 # `fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`).
 _forward_map(m::VgtkCore.CameraModel) = VgtkCore.imaging_transform(m)
 _forward_map(b::VgtkCore.BoundedCamera) = _forward_map(VgtkCore.model(b))
-_forward_map(c) = throw(ArgumentError("PanoramaStitching: a $(typeof(c).name.name) has no closed-form forward map; supply a CameraModel " *
-                                      "(a grid lens as a SplineLens camera with its forward spline, VisualGeometryToolkitEstimation." *
-                                      "fit_camera(SplineLens, camera, imaged_region(camera); tolerance))"))
 # The forward map on the frames' backend: the camera's model moved to the device first (Core's adapt_structure: a SplineLens's
 # control grids; a parametric model unchanged), then its map.
 _forward_map(camera, proto) = _forward_map(Adapt.adapt(KA.get_backend(proto), VgtkCore.model(camera)))

@@ -15,7 +15,11 @@
   deleted everywhere (no alias): the image circle is the camera's lens coverage,
   `BoundedCamera(model, extent; lens_coverage = Circle(…))`; a camera without one images its whole sensor.
   `detect_features(camera, frame, descriptor; …)` takes the camera first.
-- A grid lens is a `SplineLens` camera (Core 0.9 retired `CentralGenericModel` and `SplineProjection`). The rotation
+- The `projection` keyword of `register_rotations` and `refine_rotations` is deleted (no alias): the camera is its own
+  projection, its model's `imaging_transform`.
+- A grid lens is a `SplineLens` camera (Core 0.9 retired `CentralGenericModel` and `SplineProjection`): it projects through
+  its own forward spline, `fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`, kept in the camera with Core's
+  `with_model`. The rotation
   bundle's residual is NaN only off the camera model's `valid_domain` (where its projection and back-projection Jacobian
   are defined: a grid lens's lattice), never off its lens coverage: a parametric camera's bundle is 0.5.1's.
 - The example: `[inputs] circle` is refused with an `ArgumentError` naming the camera's `lens_coverage`; `load_lens` returns

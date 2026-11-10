@@ -174,10 +174,10 @@ function load_lens(C; raw_width, raw_height)
     camera = if inp["lens_kind"] == "cameras"
         VgtkIO.load(VgtkCore.BoundedCamera, path; name = inp["lens_camera"])
     elseif inp["lens_kind"] == "grid"
-        grid = VgtkIO.load(VgtkCore.BoundedCamera, path)
-        fwd = VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, grid, VgtkCore.imaged_region(grid);
-                                                           tolerance = Float64(inp["spline_tolerance_px"])))
-        VgtkCore.BoundedCamera(fwd, something(VgtkCore.sensor(grid), VgtkCore.extent(grid)); lens_coverage = VgtkCore.lens_coverage(grid))
+        grid = VgtkIO.load(VgtkCore.BoundedCamera, path)                 # its domain is its lens coverage
+        # its forward spline, fitted once over its imaged region and kept in the camera (Core's with_model: same sensor, coverage)
+        VgtkCore.with_model(grid, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, grid, VgtkCore.imaged_region(grid);
+                                                                              tolerance = Float64(inp["spline_tolerance_px"]))))
     else
         error("inputs.lens_kind = $(inp["lens_kind"]) is not \"cameras\" or \"grid\"")
     end

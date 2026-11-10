@@ -8,7 +8,7 @@ using LinearAlgebra: I
 using StaticArrays: SVector, SMatrix, SA
 using StableRNGs: StableRNG
 using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, SplineLens, BoundedCamera, Size2, backproject, bilinear_sample,
-    Equirectangular, project, exp_so3, angle_between, Circle, Point2, imaged_region, estimate
+    Equirectangular, project, exp_so3, angle_between, Circle, Point2, imaged_region, with_model, estimate
 import VisualGeometryToolkitEstimation as VgtkEstimation
 export sequence
 
@@ -40,7 +40,7 @@ function sequence(; K = 4, yaw_deg = 35.0 .* (0:(K - 1)), lit = :circle)
     model = BoundedCamera(kb, Size2(W, H); lens_coverage = circle)
     # the grid: a 40 × 40 SplineLens fitted to the lens over its imaged region, with its forward spline (a grid's projection)
     grid = estimate(VgtkEstimation.fit_camera(SplineLens, model, imaged_region(model); tolerance = 1.0e-2, grid_size = (40, 40)))
-    cam = BoundedCamera(grid, Size2(W, H); lens_coverage = circle)
+    cam = with_model(model, grid)                     # the same sensor and lens coverage, the grid's model
     axis = backproject(cam, SVector(500.0, 500.0))
     R = [k == 1 ? SMatrix{3, 3}(1.0I) : SMatrix{3, 3}(exp_so3(SVector(0.05randn(rng), deg2rad(yaw_deg[k]), 0.05randn(rng)))) for k in 1:K]
     gains = [1.0; exp.(0.1 .* randn(rng, K - 1))]
@@ -296,6 +296,35 @@ end
     ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; bkw...)
     @test ref.metadata.outcome === :converged
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
+end
+
+@testitem "the camera is the projection: no `projection` keyword" begin
+    # a grid lens is a SplineLens camera that projects through its own forward spline, so the registration and the bundle take
+    # the camera alone
+    using Test
+    using PanoramaStitching: register_rotations, refine_rotations
+    for f in (register_rotations, refine_rotations)
+        @test all(m -> :projection ∉ Base.kwarg_decl(m), methods(f))
+    end
+end
+
+@testitem "Review focus 1: a whole-sensor grid camera renders no taller than its parametric lens" setup = [SyntheticSequence] begin
+    # a SplineLens camera calibrated over its whole sensor (no stored coverage: the Tamron case) is bounded by its own lattice:
+    # its cylindrical panorama is no taller than the parametric lens's (+10 %), not stretched by a forward map imaging past it
+    using Test
+    using PanoramaStitching: render_panorama, panorama_view
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    q = sequence(; K = 3, lit = :sensor)
+    bare = VgtkCore.BoundedCamera(VgtkCore.model(q.model), VgtkCore.Size2(1000, 1000))
+    grid = VgtkCore.with_model(bare, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bare, VgtkCore.imaged_region(bare);
+                                                                                 tolerance = 1.0e-2, grid_size = (40, 40))))
+    cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 200.0, -80.0, 80.0), 0.5)
+    kw = (; vignetting = (u, f) -> 1.0, raw_scale = q.raw_scale, rim_margin_px = 0.0, fov_deg = 89.0)
+    rows(r) = count(i -> any(>(0), view(r.owner, i, :)), axes(r.owner, 1))
+    p = render_panorama(bare, q.frames, q.R, cyl; kw...); g = render_panorama(grid, q.frames, q.R, cyl; kw...)
+    @info "Review focus 1: covered rows, parametric $(rows(p)), grid $(rows(g))"
+    @test rows(p) > 0 && rows(g) <= 1.1 * rows(p)
 end
 
 @testitem "frame_region: the margin erodes the lens coverage's edge only" begin

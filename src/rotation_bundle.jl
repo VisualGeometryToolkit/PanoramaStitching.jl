@@ -136,16 +136,15 @@ struct RotationBundleMetadata
 end
 
 """
-    refine_rotations(camera, rotations, tracks; projection = camera, loss, scale_multiple, iterations, max_iter, ftol, xtol,
+    refine_rotations(camera, rotations, tracks; loss, scale_multiple, iterations, max_iter, ftol, xtol,
                      eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
 (fixed; its `backproject` and `backproject_with_jacobian` give the start and
-the Jacobian), projected through `projection`, the camera's closed-form forward
-map π: the `camera` itself (its model's `imaging_transform`; a grid lens's
+the Jacobian; a `CameraModel` or a `BoundedCamera`), projected through its
+closed-form forward map π, its model's `imaging_transform` (a grid lens's
 `SplineLens` through its forward spline, VisualGeometryToolkitEstimation's
-`fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`); a
-`projection` that is no camera is an `ArgumentError`. A residual is NaN off
+`fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`). A residual is NaN off
 the camera model's `valid_domain` (a grid lens's lattice), where its
 back-projection Jacobian is undefined; the lens coverage does not enter the
 bundle. The
@@ -181,10 +180,10 @@ without a start rotation, some observations with a covariance and some
 without, and a covariance that is not finite and positive definite are an
 `ArgumentError`.
 """
-function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector; projection = camera,
+function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector;
                           loss::VgtkCore.AbstractLossShape, scale_multiple::Real, iterations::Integer,
                           max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true) where {K}
-    fwd = _forward_map(projection); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
+    fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
     E = eliminate && _SCHUR

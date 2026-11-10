@@ -102,8 +102,9 @@ end
     W, H = 1000, 800
     pinhole = VgtkCore.CameraModel(800.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px])
     # the grid: a 20 × 16 SplineLens fitted to the pinhole over the sensor, with its forward spline; bounded by the sensor
-    grid = VgtkCore.BoundedCamera(VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, VgtkCore.BoundedCamera(pinhole, VgtkCore.Size2(W, H)), VgtkCore.Rect(0, 0, W, H);
-                                                                               tolerance = 0.01, grid_size = (20, 16))), VgtkCore.Size2(W, H))
+    bounded = VgtkCore.BoundedCamera(pinhole, VgtkCore.Size2(W, H))
+    grid = VgtkCore.with_model(bounded, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bounded, VgtkCore.imaged_region(bounded);
+                                                                                    tolerance = 0.01, grid_size = (20, 16))))
     sp = PanoramaStitching._forward_map(grid)
     rng = Xoshiro(7); K = 5
     R = Dict(k => rot(SVector(0.02randn(rng), 0.3 * (k - 1), 0.02randn(rng))) for k in 1:K)

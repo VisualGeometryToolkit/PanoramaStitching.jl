@@ -45,7 +45,7 @@ struct Registration{A, B, F}
 end
 
 """
-    register_rotations(frames, camera::BoundedCamera; projection = camera, raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+    register_rotations(frames, camera::BoundedCamera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, bundle_loss, bundle_scale_multiple, bundle_iterations, bundle_max_iter, bundle_ftol,
@@ -53,10 +53,9 @@ end
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
-`camera` (fixed; a VisualGeometryToolkitCore `BoundedCamera`, whose `imaged_region` bounds the features),
-projected in the bundle through `projection`, its closed-form forward map (the
-camera itself, through its model's `imaging_transform` — a grid lens's `SplineLens`
-through its forward spline; see [`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's
+`camera` (fixed; a VisualGeometryToolkitCore `BoundedCamera`, whose `imaged_region` bounds the features,
+projected in the bundle through its model's `imaging_transform` — a grid lens's `SplineLens` through its forward spline; see
+[`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's
 statistics. Every setting is the caller's configuration, none defaulted but the
 RANSAC's:
 
@@ -90,14 +89,12 @@ A task verb: it composes the estimators above and does none of its own. Each
 pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
 stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a `bundle_whitening`
-other than `:none` or `:keypoint_covariance`, an `execution_provider` other
-than `:cpu` or `:cuda` and a `projection` that
-is no closed-form forward map (not a camera model) are
-an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
+other than `:none` or `:keypoint_covariance` and an `execution_provider` other
+than `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame, [`ViewGraph`](@ref)) is an `ArgumentError` too.
 """
-function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; projection = camera, raw_scale::Integer,
+function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; raw_scale::Integer,
                             tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer, descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
@@ -110,7 +107,6 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     pairs === :all || max_lag >= 1 || throw(ArgumentError("register_rotations: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
     execution_provider in (:cpu, :cuda) ||
         throw(ArgumentError("register_rotations: execution_provider = :$execution_provider is not :cpu or :cuda"))
-    _forward_map(projection)                                                 # refused before the features, not after
     K = length(frames)
     # one ONNX session each for the whole registration, on `execution_provider`
     desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider)
@@ -157,7 +153,7 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     ts, dropped = chain_tracks(inlier_matches)
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
     obs = bundle_whitening === :none ? [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts] : _uncertain_observations(feats, ts; say)
-    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; projection, loss = bundle_loss, scale_multiple = bundle_scale_multiple,
+    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; loss = bundle_loss, scale_multiple = bundle_scale_multiple,
                               iterations = bundle_iterations, max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.start_nonfinite) observations not finite at the start)")
