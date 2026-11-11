@@ -323,7 +323,7 @@ observations kept at the start are those the GIVEN camera images; the residuals,
 refined camera's.
 
 A contract refine:
-- `optimization_strategy` — the robust strategy, a `Triggs{K}` (VisualGeometryToolkitEstimation's; the default every
+- `optimization_strategy` — the robust strategy, a `Triggs{K}` (VisualGeometryToolkitCore's; the default every
   refine's, `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D residual): the loss `K` as NLLSsolver's
   robustifier at ONE fixed width.
 - exactly one of `scale = σ` (the observations' noise scale, px or whitened units; or an upstream robust result) — the width
@@ -336,7 +336,7 @@ A contract refine:
 - `max_iter`, `ftol`, `xtol`, `eliminate` — as [`refine_rotations`](@ref)'s.
 """
 function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
-                                     optimization_strategy = VgtkEstimation.Triggs{VgtkCore.WelschShape}(
+                                     optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(
                                          efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2)),
                                      scale = nothing, width = nothing, fixed::Tuple{Vararg{Symbol}} = (),
                                      max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
@@ -347,13 +347,13 @@ function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::Ab
             "(every other parameter but the skew is free)"))
         throw(ArgumentError("refine_camera_and_rotations: unknown keyword `$k`"))
     end
-    optimization_strategy isa VgtkEstimation.Triggs || throw(ArgumentError(
+    optimization_strategy isa VgtkCore.Triggs || throw(ArgumentError(
         "refine_camera_and_rotations: the bundle's strategy is a Triggs{K} (its loss K as NLLSsolver's robustifier at one width), " *
         "got $(optimization_strategy === nothing ? "nothing" : nameof(typeof(optimization_strategy)))"))
-    shape = VgtkEstimation.strategy_loss(optimization_strategy)()
+    shape = VgtkCore.strategy_loss(optimization_strategy)()
     input = VgtkCore.scale_input(scale, width)
     w = isfinite(input.width) ? Float64(input.width) :
-        Float64(VgtkEstimation.lo_width_value(VgtkCore.lo_width(optimization_strategy)).value) * Float64(input.scale)
+        Float64(VgtkCore.lo_width_value(VgtkCore.lo_width(optimization_strategy)).value) * Float64(input.scale)
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
     names = VgtkCore.free_parameter_names(m, fixed)
     isempty(names) && throw(ArgumentError(

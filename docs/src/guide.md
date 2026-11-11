@@ -120,8 +120,8 @@ be refined: a `SplineLens` camera is an `ArgumentError`. The tracks come from a 
 rerun [`register_rotations`](@ref) with the refined camera to verify the pairs through it.
 
 ```julia
-# Illustrative: VisualGeometryToolkitEstimation's Triggs strategy, one more package (pkg> add VisualGeometryToolkitEstimation)
-using VisualGeometryToolkitEstimation: Triggs
+# Illustrative: VisualGeometryToolkitCore's Triggs strategy
+using VisualGeometryToolkitCore: Triggs
 
 # the tracks as frame => pixel observations, and the registration's rotations as the start, keyed by frame
 tracks = [[k => reg.features[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]

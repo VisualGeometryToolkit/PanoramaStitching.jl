@@ -369,7 +369,7 @@ end
 # The view graph's averaging is VisualGeometryToolkitEstimation's IRLS strategy on `averaging_loss`, at its default width (the
 # loss's efficiency constant at codimension 3 times the fit's σ̂) and its `[fit_rotation_averaging]` iteration cap of record.
 const _ESTIMATION_DEFAULTS = VgtkCore.parse_defaults(VgtkEstimation.default_config_path())
-_averaging_irls(loss::VgtkCore.AbstractLossShape) = VgtkEstimation.Irls{typeof(loss)}(
+_averaging_irls(loss::VgtkCore.AbstractLossShape) = VgtkCore.Irls{typeof(loss)}(
     max_iter = VgtkCore.toml_default(_ESTIMATION_DEFAULTS, "fit_rotation_averaging", "optimization_strategy")["max_iter"])
 
 # The one noise scale of the bundle: the kept pairs' SIMFIT++ scales pooled as a variance weighted by their inlier counts,

@@ -24,7 +24,7 @@
         fa = FrameFeatures(u1, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u1)), nothing, length(u1))
         fb = FrameFeatures(u2, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u2)), nothing, length(u2))
         cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [(first = i, second = i, score = 1.0) for i in eachindex(u1)])
-        lo = VgtkEstimation.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
+        lo = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
         res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
                                            scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization_strategy = lo)
         s = PanoramaStitching._pair_scale(cs, res, lo, MersenneTwister(2))

@@ -28,7 +28,7 @@ function autocalibration_check(record_path, out_path = nothing)
     start_camera = load_lens(C; raw_width = 2Wf, raw_height = 2Hf)        # the night-star KB, the record's start
     record_camera = VgtkIO.load(VgtkCore.BoundedCamera, record_path; name = "cam")
     # the round's registration: the record's camera and its [registration] settings (config_fx3_14mm_selfcal.toml)
-    vp = verify_pairs(inp.frames, record_camera; frame_map = inp.frame_map, saturated = inp.saturated, tone_percentile = 99.5,
+    vp = verify_pairs(inp.frames, record_camera; frame_map = inp.frame_map, tone_percentile = 99.5,   # no clip mask, as the record's driver
                       detector_margin_px = 30.0, asift_tilts = asift_tilts("imas25"), max_detections = 2048,
                       descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0,
                       min_inliers = 25, seed = 1,
@@ -40,10 +40,11 @@ function autocalibration_check(record_path, out_path = nothing)
     tracks = [[k => vp.features[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
     rotations = Dict(k => SMatrix{3, 3, Float64, 9}(R) for (k, R) in enumerate(reg.rotations))
     # the record's bundle schedule: 3 runs of 100 LM iterations, each from the last (its bundle_iterations = 3, max_iter 100)
-    res = nothing; camera = start_camera
+    # (AUTOCAL_START=record starts from the record's own camera instead: a diagnostic, whether the record is this data's optimum)
+    res = nothing; camera = get(ENV, "AUTOCAL_START", "") == "record" ? record_camera : start_camera
     for run in 1:3
         res = refine_camera_and_rotations(camera, rotations, tracks;
-                                          optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(
+                                          optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(
                                               efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)),
                                           width = Float64(cam["loss_width_px"]), fixed = (:aspect,),
                                           max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)

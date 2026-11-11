@@ -38,7 +38,7 @@ end
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
     using PanoramaStitching: refine_camera_and_rotations
-    import VisualGeometryToolkitCore as VgtkCore, VisualGeometryToolkitEstimation as VgtkEstimation
+    import VisualGeometryToolkitCore as VgtkCore
     rng = Xoshiro(7)
     R = rows_rotations()
     tracks = exact_tracks(rng, R, 600)
@@ -47,7 +47,7 @@ end
                                                        lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
     start = Dict(k => (k == 1 ? R[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * R[k]) for k in 1:10)
     free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)                                   # every parameter but the aspect (held) and the skew
-    kw = (; optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
           xtol = 1.0e-12)
     res = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect,))
     @test res.retcode === :converged
@@ -82,7 +82,7 @@ end
     import ForwardDiff, NLLSsolver
     import PanoramaStitching
     using PanoramaStitching: refine_rotations, refine_camera_and_rotations
-    import VisualGeometryToolkitCore as VgtkCore, VisualGeometryToolkitEstimation as VgtkEstimation
+    import VisualGeometryToolkitCore as VgtkCore
     R = rows_rotations()
     free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)
     cc = VgtkCore.restrict(VgtkCore.ParameterManifold(TRUE_CAM), free)
@@ -103,7 +103,7 @@ end
     end
     kw = (; max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     tr = [[1 => SVector(600.0, 600.0), 2 => SVector(500.0, 600.0)]]
-    ac = (; kw..., optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5)
+    ac = (; kw..., optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5)
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., fixed = (:focal,))      # no such parameter
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., fixed = (:f, :f))       # named twice
     @test_throws r"holds every camera parameter" refine_camera_and_rotations(TRUE_CAM, R, tr; ac...,
@@ -111,7 +111,7 @@ end
     for k in (:camera_free, :free, :fix, :fixed_params, :hold)                 # the retired names, each naming `fixed`
         @test_throws r"`fixed = \(…\)`" refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., (k => (:f,),)...)
     end
-    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; kw..., optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)))   # no scale or width
+    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; kw..., optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)))   # no scale or width
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., scale = 1.0)                          # both
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., optimization_strategy = nothing)
     # the rotation-only bundle holds the calibration: camera_free is refused, pointing at the autocalibration; so is the
