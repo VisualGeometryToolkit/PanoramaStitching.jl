@@ -5,8 +5,9 @@
 [![Coverage](https://codecov.io/gh/VisualGeometryToolkit/PanoramaStitching.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/VisualGeometryToolkit/PanoramaStitching.jl)
 
 PanoramaStitching estimates the rotations of a camera that only rotated from its frames, and renders the panorama
-in any view, through a calibrated lens of any field of view (fisheyes past 90° included). It also fits the camera's
-vignetting from the same frames, with no flat field. It is part of the
+in any view, through a calibrated lens of any field of view (fisheyes past 90° included). With no calibration target, the
+same frames also refine the camera itself (autocalibration), and they fit its vignetting with no flat field. It is part
+of the
 [VisualGeometryToolkit](https://visualgeometrytoolkit.github.io) stack.
 
 ## Installation

@@ -5,12 +5,14 @@ PanoramaStitching
 ```
 
 PanoramaStitching estimates the rotations of a camera that only rotated from its frames, and renders the panorama in any
-view, through a calibrated lens of any field of view (fisheyes past 90° included). It also fits the camera's vignetting
-from the same frames, with no flat field. All geometry is on unit bearings, and every residual is in the camera's pixels.
+view, through a calibrated lens of any field of view (fisheyes past 90° included). With no calibration target, the same
+frames also refine the camera itself (autocalibration), and they fit its vignetting with no flat field. All geometry is
+on unit bearings, and every residual is in the camera's pixels.
 
 | Step | Function | Result |
 |---|---|---|
 | the rotation of every frame | [`register_rotations`](@ref) | a [`Registration`](@ref): rotations, view graph, tracks, bundle |
+| the camera and the rotations together, no target (autocalibration) | [`refine_camera_and_rotations`](@ref) | a `FitResult`: the refined camera and rotations |
 | the frames sampled at directions | [`sample_frames`](@ref) | [`FrameSamples`](@ref) |
 | the panorama in a view | [`panorama_view`](@ref), [`render_panorama`](@ref), [`render_cube_map`](@ref) | `(; image, owner, coverage, extent)` |
 | the vignetting from the frames alone, or the gains under a given one | [`fit_vignetting`](@ref) | a `FitResult` of a VisualGeometryToolkitCore vignetting model |

@@ -31,7 +31,9 @@ from the registries (CauRegistry; General for those it holds).
 - `src/registration.jl` — `register_rotations` and its `Registration`.
 - `src/tracks.jl` — `chain_tracks` (the components of the match graph, VisualGeometryToolkitEstimation's `ViewGraph`). The view
   graph of the verified pairs is Estimation's `ViewGraph` (registration.jl's `_view_graph`): PanoramaStitching has none of its own.
-- `src/rotation_bundle.jl` — `refine_rotations`: NLLSsolver, one `SO3Manifold` per frame and one `SphereManifold` per track.
+- `src/rotation_bundle.jl` — `refine_rotations` (the calibration held) and `refine_camera_and_rotations` (autocalibration: the
+  camera refined too, `fixed` the held parameters), one shared bundle: NLLSsolver, one `SO3Manifold` per frame and one
+  `SphereManifold` per track.
 - `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
   render shares.
 - `src/panorama.jl` — `panorama_view`, `render_panorama`, `render_cube_map`.

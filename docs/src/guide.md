@@ -1,8 +1,9 @@
 # Getting started
 
 PanoramaStitching turns a sweep of frames from a camera that only rotated into the rotation of every frame and a panorama.
-The camera is calibrated and fixed; its lens may have any field of view, so a fisheye imaging past 90° off axis works the same
-as a pinhole. All geometry is on unit bearings (VisualGeometryToolkitCore's `backproject`), never on the `z = 1` plane, and
+The registration holds the camera's calibration fixed; when the calibration is not known, the same frames refine it with the
+rotations, with no target ([Autocalibration](#Autocalibration) below). Its lens may have any field of view, so a fisheye imaging
+past 90° off axis works the same as a pinhole. All geometry is on unit bearings (VisualGeometryToolkitCore's `backproject`), never on the `z = 1` plane, and
 every residual is measured in the camera's pixels.
 
 The pipeline has four steps:
@@ -71,12 +72,11 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two keypoints
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
-   robust (`bundle_loss`) pixel reprojection error through `projection` with NLLSsolver; it holds the camera's
-   calibration. The AUTOCALIBRATION of the rotating camera (no target; Hartley 1994; Agapito, Hayman and Reid 2001) is its
-   companion [`refine_camera_and_rotations`](@ref): the same bundle with the camera's parameters free but those named in
-   `fixed` (and the skew), on the registration's rotations and tracks, the first frame's rotation its one gauge. Its
-   result's `metadata.camera` is the refined camera; `metadata.calibration` holds its parameters' standard deviations and
-   covariance, and the reduced information's spectrum that shows nothing else is free.
+   robust pixel reprojection error through the camera's forward map with NLLSsolver: the loss `bundle_loss` at the width
+   `bundle_efficiency_constant`·σ̂, σ̂ the noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`,
+   pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
+   held, and it takes no keyword that would free a camera parameter. Refining the camera too is a refine of its own,
+   [`refine_camera_and_rotations`](@ref) ([Autocalibration](#Autocalibration) below).
 
 Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold everything the rest reads;
 `register_rotations(pairs::VerifiedPairs, camera; …)` runs steps 4–6 from them, so a caller that keeps the verified pairs
@@ -96,6 +96,40 @@ reg.bundle.metadata.outcome     # how the bundle ended (RotationBundleMetadata)
 ```
 
 On the example's sweep the rotations come back well within 0.05° and the bundle's rms is below a pixel.
+
+### Autocalibration
+
+A camera that only rotates determines its own calibration from its frames, with no target (Hartley 1994; Agapito, Hayman
+and Reid 2001): the observations of one track must back-project to one direction in every frame that sees it, which
+constrains the camera's parameters as well as the rotations. [`refine_camera_and_rotations`](@ref) is that refine. From a
+start camera (a nominal lens, or an earlier calibration of the same one), start rotations and the tracks, it refines the
+camera's parameters jointly with every rotation and one direction per track. Its one gauge is the first frame's rotation,
+held exactly.
+
+It is a refine of the stack's robust-estimation contract, so it never estimates a scale of its own:
+
+- `optimization_strategy` is the robust strategy: a `Triggs` strategy on a loss shape (its loss as NLLSsolver's robustifier at
+  one width; the default `Triggs{WelschShape}` at the shape's efficiency constant). Another strategy is an `ArgumentError`.
+- A robust strategy needs exactly one of `scale = σ` (the noise scale, pixels) or `width = w` (the loss width). Here the
+  scale is the registration's pooled noise scale. Neither, or both, is an `ArgumentError`.
+- `fixed` names the camera parameters to hold, by name or by group (`:k` for every lens coefficient; VisualGeometryToolkitCore's
+  `free_parameter_names`). The default `()` frees every parameter but the skew, which is held by construction.
+
+The start must be close: like every refine, it ends in the local minimum its start leads to. Only a parametric camera can
+be refined: a `SplineLens` camera is an `ArgumentError`. The tracks come from a registration run with the start camera, so
+rerun [`register_rotations`](@ref) with the refined camera to verify the pairs through it.
+
+```julia
+# Illustrative: VisualGeometryToolkitEstimation's Triggs strategy, one more package (pkg> add VisualGeometryToolkitEstimation)
+using VisualGeometryToolkitEstimation: Triggs
+
+# the tracks as frame => pixel observations, and the registration's rotations as the start, keyed by frame
+tracks = [[k => reg.features[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
+start = Dict(enumerate(reg.rotations))
+autocal = refine_camera_and_rotations(camera, start, tracks; optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.0),
+                                      scale = reg.bundle_sigma, fixed = (:aspect,), max_iter = 100, ftol = 1e-10,
+                                      xtol = 1e-10)
+```
 
 ## 2. Sampling the frames at directions
 
@@ -180,8 +214,8 @@ res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCo
                      chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
-# or measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration
-# bundle's core scale (loss width / scale multiple), px
+# or measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration's
+# pooled noise scale reg.bundle_sigma (the bundle's width over its efficiency constant), px
 V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)
 ```

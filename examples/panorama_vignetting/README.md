@@ -91,7 +91,7 @@ Under `$VGTK_DATA_ROOT`:
    linear least squares, each row the constraint of its measurement — sensor point and log I — weighted by its whitening by
    the measurement noise `vignetting.measurement_noise` chooses: `"intensity"` (noise in the value only: weight I²) or
    `"intensity_and_position"` (the value and the sensor position, the sensor point's σ the registration bundle's core scale,
-   loss width / scale multiple, recorded in `rotations.json`; `log_intensity_scale` the σ of log I;
+   loss width over its efficiency constant, recorded in `rotations.json`; `log_intensity_scale` the σ of log I;
    `measurement_noise_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
    solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
    log V = 0 over the domain — no special point is pinned.
