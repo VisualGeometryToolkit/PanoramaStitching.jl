@@ -168,7 +168,8 @@ function render_panorama(camera::VgtkCore.BoundedCamera, frames::AbstractVector,
         Rt = LinearMap(SMatrix{3, 3, Float64, 9}(rotations[k])')
         # frame k's chain: the output pixel → its ray f in the frame's camera frame → the sensor point (camera pixels)
         fk = Rt ∘ view.rays
-        VgtkCore.pointwise!(_AtPixelCentre{Float64}(fwd ∘ fk), U, idx)
+        # (the chain held as Core's BoundedMap, whose Adapt rule moves each link to the device: a SplineLens's control grids)
+        VgtkCore.pointwise!(_AtPixelCentre{Float64}(VgtkCore.BoundedMap(fwd ∘ fk, rect)), U, idx)
         VgtkCore.pointwise!(_AtPixelCentre{Float64}(fk), F, idx)
         VgtkCore.pointwise!(sees, ok, U, F)
         VgtkCore.pointwise!(_WhereSeen(vignetting, T), V, ok, U, F; exec = VgtkCore.OnBackend(KA.get_backend(U)))
@@ -191,7 +192,8 @@ struct _AtPixelCentre{T, M}
     map::M
 end
 _AtPixelCentre{T}(map::M) where {T, M} = _AtPixelCentre{T, M}(map)
-# The device form: the map adapted by Core's rule (a SplineLens's control grids moved to the device).
+# The device form: the map adapted by its own rule (a Core BoundedMap's: each link of its chain, a SplineLens's control grids
+# moved to the device).
 Adapt.adapt_structure(to, p::_AtPixelCentre{T}) where {T} = _AtPixelCentre{T}(Adapt.adapt(to, p.map))
 @inline (p::_AtPixelCentre{T})(I) where {T} = p.map(VgtkCore.pixel_centre(T, I))
 
