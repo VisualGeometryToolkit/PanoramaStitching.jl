@@ -219,7 +219,7 @@ reached a control), `gains`
 and colour plane, `g_1c = 1`; all 1 without gain correction, and one per frame
 — every column the same — with [`IntensityGains`](@ref)), the residual spread of
 log I of the fitted `plane` over the rows
-(`residual_rms` unweighted, `residual_mad` Core's `mad_scale`, the
+(`residual_rms` unweighted, `residual_mad` StatsBase's normalized `mad`, the
 1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the
 result's `rms` is the one weighted by the last solve's weights),
 `relative_residual` (the last solve's ‖r‖/‖b‖), `solver`, `measurement_noise`
@@ -870,7 +870,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = reshape(copy(cL), ch.n, ch.n); scene[reshape(.!active, ch.n, ch.n)] .= NaN
-    meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), VgtkCore.mad_scale(R_all),
+    meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), StatsBase.mad(R_all; normalize = true),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               measurement_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
     return VgtkCore.FitResult(v, retcode, iters, sqrt(swr / sw), length(R_all), meta)

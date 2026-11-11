@@ -28,6 +28,7 @@ module PanoramaStitching
 
 using LinearAlgebra: LinearAlgebra, I, norm, normalize, dot, cross
 using Statistics: Statistics, quantile
+using StatsBase: StatsBase
 using StableRNGs: StableRNG
 using Static: static
 using StaticArrays: SVector, SMatrix, StaticVector
