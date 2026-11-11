@@ -24,6 +24,9 @@ VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
 
 [sources]
 PanoramaStitching = {path = ".."}
+VisualGeometryToolkitCore = {path = "/home/jpr/src/vgtk-09-pm/VisualGeometryToolkitCore"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitEstimation = {path = "/home/jpr/src/vgtk-09-pm/VisualGeometryToolkitEstimation"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitFeatures = {path = "/home/jpr/src/vgtk-09-pm/VisualGeometryToolkitFeatures"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
 [compat]
 Adapt = "4"
 Aqua = "0.8.18"
@@ -43,5 +46,5 @@ Statistics = "1"
 TOML = "1"
 Test = "1"
 VisualGeometryToolkitCore = "0.9"
-VisualGeometryToolkitEstimation = "0.8"   # TEMPORARY: the 0.9 tree's own unbumped version field (../Project.toml [sources]); the released version at the cascade
+VisualGeometryToolkitEstimation = "0.8"   # the 0.9 tree's own version field (0.8.0); the released version at the cascade
 VisualGeometryToolkitFeatures = "0.6.1"   # the 0.9 tree's own version field; the released version at the cascade

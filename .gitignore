@@ -3,3 +3,4 @@ docs/build/
 examples/*/out/
 /.claude/
 /.superpowers/
+/logs/

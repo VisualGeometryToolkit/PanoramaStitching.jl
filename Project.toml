@@ -38,20 +38,16 @@ Static = "1"
 StaticArrays = "1.9"
 Statistics = "1"
 VisualGeometryToolkitCore = "0.9"
-VisualGeometryToolkitEstimation = "0.8"   # TEMPORARY: admits the 0.9 tree's own unbumped version field (0.8.0); the released version at the cascade
+VisualGeometryToolkitEstimation = "0.8"   # the 0.9 tree's own version field (0.8.0); the released version at the cascade
 VisualGeometryToolkitFeatures = "0.6.1"   # the 0.9 tree's own version field; the released version at the cascade
 julia = "1.12"
 
-# TEMPORARY (never pushed or registered while it is here): the VisualGeometryToolkit 0.9 stack is not registered yet, so every
-# stack package resolves from the monorepo worktree beside this repository (~/src/vgtk-simfit, branch
-# simfitpp-estimation: the 0.9 release branch bounded-camera-region, whose Features has LoMa's :auto ONNX Runtime
-# provider, with SIMFIT++ moved into Estimation); Features from ~/src/vgtk-ssc (branch ssc-anms, that branch's SSC
-# selection and variance-stabilized detection image, which detect_features uses).
-# Remove before release, with the compat above at the registered versions.
+# The VisualGeometryToolkit 0.9 stack resolves from the monorepo worktree /home/jpr/src/vgtk-09-pm (bounded-camera-region dde0b5ca with
+# plane-maps 7a50364d merged locally; ssc-anms merged in 6f4fdce9). Every entry is TEMPORARY: never pushed or registered.
 [sources]
-VisualGeometryToolkitCore = {path = "../vgtk-simfit/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../vgtk-simfit/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../vgtk-ssc/VisualGeometryToolkitFeatures"}   # TEMPORARY: branch ssc-anms (spread_strongest, variance_stabilize), not yet in the 0.9 branch
+VisualGeometryToolkitCore = {path = "/home/jpr/src/vgtk-09-pm/VisualGeometryToolkitCore"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitEstimation = {path = "/home/jpr/src/vgtk-09-pm/VisualGeometryToolkitEstimation"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitFeatures = {path = "/home/jpr/src/vgtk-09-pm/VisualGeometryToolkitFeatures"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
 
 [workspace]
 projects = ["test", "docs"]
