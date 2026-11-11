@@ -110,6 +110,6 @@ function score_seams(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rot
     end
     r = filter(!isnan, Array(ratio))
     isempty(r) && throw(ArgumentError("score_seams: no pixel of the raster is measured by two frames"))
-    return (; ratio = reshape(ratio, nv, nλ), rms = sqrt(Statistics.mean(abs2, r)), mad = StatsBase.mad(r; normalize = true),
+    return (; ratio = reshape(ratio, nv, nλ), rms = sqrt(Statistics.mean(abs2, r)), mad = StatsBase.mad(Float64.(r); normalize = true),
             n = length(r))
 end

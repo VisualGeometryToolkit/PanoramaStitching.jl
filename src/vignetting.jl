@@ -870,7 +870,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     seconds[:residuals] = _elapsed(be, t0)
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = reshape(copy(cL), ch.n, ch.n); scene[reshape(.!active, ch.n, ch.n)] .= NaN
-    meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), StatsBase.mad(R_all; normalize = true),
+    meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), StatsBase.mad(Float64.(R_all); normalize = true),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               measurement_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
     return VgtkCore.FitResult(v, retcode, iters, sqrt(swr / sw), length(R_all), meta)

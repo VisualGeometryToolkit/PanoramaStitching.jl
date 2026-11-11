@@ -90,7 +90,7 @@ function compare_arms(arms_path)
                                     "residual_mad" => m.residual_mad, "weighted_rms" => r.rms,
                                     "gains" => [collect(m.gains[k, :]) for k in axes(m.gains, 1)],
                                     "seam_mad" => [s.mad for s in seams], "seam_rms" => [s.rms for s in seams], "seam_n" => [s.n for s in seams],
-                                    "seam_mad_all" => StatsBase.mad(pooled; normalize = true), "seam_rms_all" => sqrt(mean(abs2, pooled)),
+                                    "seam_mad_all" => StatsBase.mad(Float64.(pooled); normalize = true), "seam_rms_all" => sqrt(mean(abs2, pooled)),
                                     "V_min" => summ.V_min, "V_max" => summ.V_max, "V_max_offset_px" => summ.max_offset_px,
                                     "V_asymmetry" => summ.asymmetry, "V_rings_100px" => ring_profile(V, cc, rr))
             push!(rows, row)
