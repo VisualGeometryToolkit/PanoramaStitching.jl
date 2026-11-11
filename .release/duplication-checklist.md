@@ -32,3 +32,17 @@ duplicates gone, all common code hoisted) and VisualGeometryToolkitCore's `test_
 Source: cpu-gpu-twin-audit.md ("PanoramaStitching"); VisualGeometryToolkitCore's `check_duplication` `:backend_branch` / `:twin_name` rules (vgtk-hoists d3a02dbf).
 
 - [x] P1: the Cholesky arm's host product `_apply_host` (BLAS/sparse) vs the CG arm's `apply!` closure (stencil kernel, CSR `mul!`, tall transposed product) → ONE operator, `_NormalOperator` with its `mul!`, built on the fit's backend; Core's `normal_cg` applies it and the Cholesky arm reads its relative residual through it; `_apply_host` deleted. Agreement: the operator against the old host product on a random system (nL = 1600, m = 9) 3.8e-16 (CPU) / 2.8e-16 (CUDA) relative; whole fits old vs new (radial V, intensity gains) control points within 1.4e-12 (Cholesky) and 3.2e-10 / 1.2e-8 (CG, CPU / CUDA), the old code's own run-to-run spread (1.3e-12 / 1.2e-8: atomic accumulation order) (closed by 90ac698)
+
+## Robust schema
+
+### The Student-t keyword (owner ruling 2026-11-11: "there is no threshold for the Student-t, only the outlier half-width")
+
+Every scorer takes its own keyword: `StudentTUniformScoring` its `outlier_halfwidth` (and its priors), never `threshold`; the
+threshold scorers (RANSAC, MSAC, the loss-width families) `threshold`, never `outlier_halfwidth`. No number may cross between
+the two meanings. Audit: studentt-keyword-overload.md.
+
+PanoramaStitching has no Student-t path: a pair's rotation is scored by MSAC, a threshold scorer, at `[registration]
+scoring_threshold_px` (examples) and `MsacScoring(RotationProblem; threshold = w)` (src/registration.jl:184).
+
+- [x] examples/panorama_vignetting/README.md:73 "MSAC scoring with a 5 px half-width" (a threshold called a half-width) → "MSAC scoring at a 5 px threshold" (this commit)
+- [x] test/registration_tests.jl "the rotation's scorer: MSAC at its threshold, no outlier half-width": the configs' `scoring_threshold_px` reaches MSAC's threshold exactly (`===`), MSAC refuses `outlier_halfwidth`, the Student-t scorer refuses `threshold` (this commit)

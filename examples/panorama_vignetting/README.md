@@ -70,7 +70,7 @@ Under `$VGTK_DATA_ROOT`:
    centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Decoding is done once and cached (below).
 2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
-   the rotation of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring with a 5 px half-width), cached in
+   the rotation of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring at a 5 px threshold), cached in
    `verified_pairs.json` before anything else runs on them, keyed by the matching and verification settings (every
    `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files' hashes: changing only the
    averaging or the bundle reuses the pairs, and a failure past them loses none of the hour they take. Then
