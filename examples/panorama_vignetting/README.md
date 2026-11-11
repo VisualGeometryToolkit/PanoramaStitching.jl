@@ -145,9 +145,7 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 
 | file | content |
 |---|---|
-| `decoded/<stem>.png` | the cached frame: 16-bit RGB of per-plane photosite code sums (R and B `2·raw`, G `raw₁ + raw₂`) |
-| `decoded/<stem>_saturated.png` | its saturation mask, 8-bit 0/1, the same size |
-| `decoded/decode.json` | once per set: the decode settings (mode, gain), black and white levels, the planes' sample offsets, and per frame the RAW's SHA-256 |
+| `decoded/linear_raws.jld2` | the decoded frames: VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content and decode settings |
 | `verified_pairs.json` | the verified pairs (the frames' keypoints and covariances; per pair its rotation, counts and inlier matches), with its cache key |
 | `rotations.json` | the registration (`d = R_k·f_k`, the first frame's camera frame), with its cache key |
 | `vignetting.json`, `vignetting_profile.csv`, `vignetting_map.csv`, `vignetting_map.png` | the fitted V of record: its spline space and log-V coefficients; V(ρ) every 4 px (radial); V on the sensor every 32 px; V as an image (normalized to its maximum) |

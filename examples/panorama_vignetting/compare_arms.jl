@@ -53,7 +53,7 @@ function compare_arms(arms_path)
         isfile(joinpath(dir, "results.json")) && (println("$(C.cfg["name"]): reused $dir"); continue)
         device = get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])
         move = device == "cuda" ? CuArray : identity
-        dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps, inp.levels)
+        dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps)
         up = level_up(reg.rotations)[1]
         sc = C.cfg["seams"]; d = C.cfg["domain"]
         ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])

@@ -8,6 +8,7 @@
 # `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
+using JLD2                                         # Features' FileCache: the decoded-RAW cache (its package extension)
 using CUDA                                         # the [compute] device's kernels
 # LoMa's ONNX Runtime CUDA provider (registration.execution_provider = "auto" or "cuda") takes its CUDA 12 runtime and cuDNN
 # from this environment's CUDA_Runtime_jll and CUDNN_jll (VisualGeometryToolkitFeatures loads them for ONNX Runtime alone,
@@ -77,101 +78,32 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 
 # ----------------------------------------------------------------------------- the decode cache
 #
-# Each RAW frame is decoded once (Features' load_raw_mosaic, then LinearRaw: exactly load_raw) and cached under
-# <output>/decoded as two files side by side:
-#   <stem>.png            16-bit RGB: per plane the photosite CODE SUM of the quad — R and B 2·raw, G raw₁ + raw₂ — so the
-#                         linear value is (code/2 − black_p)/(white − black_p)·gain: lossless (load_raw's Float64 values to a
-#                         few ulp, no 16-bit quantization of the linear value)
-#   <stem>_saturated.png  8-bit, 0 or 1: load_raw's per-quad saturation (any photosite at the white level)
-# and decode.json once per set: the decode settings, the black and white levels and per frame the RAW file's SHA-256. A frame is
-# decoded again when its RAW's hash or a decode setting changes. The frames' and the planes' maps onto the camera's pixels are
+# Each RAW frame is decoded once per content and decode settings by Features' `load_raw` into its one persistent cache (a
+# FileCache, <output>/decoded/linear_raws.jld2; the entry is keyed by the RAW file's SHA-256, the mode, the gain and the
+# decoder), and read back as decoded, value for value. The frames' and the planes' maps onto the camera's pixels are
 # Features' (`raw_frame_map`, `bayer_plane_map`) of the set's first frame (all the set's frames share the Bayer phase).
 
-const CACHE_FORMAT = "panorama_vignetting/decode/v3 (code sums, daylight_wb; the plane maps Features')"
-
-# the planes' black levels: R, G (both greens), B
-function plane_blacks(mosaic)
-    b = mosaic.black
-    b[2] == b[4] || error("the two greens' black levels differ ($(b[2]), $(b[4])): the code-sum cache needs them equal")
-    return (b[1], b[2], b[3])
-end
-
-function encode_codes(lin, blacks, white, gain)
-    H, W, _ = size(lin.image)
-    codes = Array{UInt16}(undef, H, W, 3)
-    for p in 1:3, j in 1:W, i in 1:H
-        c = 2 * (lin.image[i, j, p] / gain * (white - blacks[p]) + blacks[p])
-        r = round(c)
-        abs(c - r) < 1.0e-6 && 0 <= r <= typemax(UInt16) || error("pixel ($i, $j, $p): $c is not a code sum")
-        codes[i, j, p] = UInt16(r)
-    end
-    return codes
-end
-decode_codes(codes, blacks, white, gain) =
-    Float32.(cat(((Float64.(view(codes, :, :, p)) ./ 2 .- blacks[p]) ./ (white - blacks[p]) .* gain for p in 1:3)...; dims = 3))
-
-function save_codes(path, codes)
-    n(x) = reinterpret(FPN.N0f16, x)
-    PNGFiles.save(path, CT.RGB{FPN.N0f16}.(n.(view(codes, :, :, 1)), n.(view(codes, :, :, 2)), n.(view(codes, :, :, 3))))
-end
-function load_codes(path)
-    img = PNGFiles.load(path)
-    return cat((reinterpret.(UInt16, getfield.(img, f)) for f in (:r, :g, :b))...; dims = 3)
-end
-save_mask(path, m) = PNGFiles.save(path, CT.Gray{FPN.N0f8}.(reinterpret.(FPN.N0f8, UInt8.(m))))
-load_mask(path) = reinterpret.(UInt8, CT.gray.(PNGFiles.load(path))) .!= 0
-
-"The frames as linear images (H × W × 3 Float32) and, with `masks = true`, their saturation masks; decoded once, cached."
+"The frames as linear images (H × W × 3 Float32), their saturation masks with `masks = true`, their maps and the daylight white balance; each RAW decoded once, cached."
 function decoded_frames(C; masks::Bool, log = devnull)
     dec = C.cfg["decode"]; mode = dec["mode"]; gain = Float64(dec["gain"])
-    mode == "bin2" || error("decode.mode = $mode: the code-sum cache is written for bin2")
+    mode == "bin2" || error("decode.mode = $mode: the example runs on bin2's three planes")
     dir = joinpath(C.out, "decoded"); mkpath(dir)
-    raws = sort([f for f in readdir(input_path(C.cfg["inputs"]["raw_dir"])) if endswith(f, C.cfg["inputs"]["raw_extension"])])
-    meta_path = joinpath(dir, "decode.json")
-    meta = isfile(meta_path) ? JSON.parsefile(meta_path) : Dict{String, Any}()
-    same_settings = get(meta, "format", "") == CACHE_FORMAT && get(meta, "mode", "") == mode && get(meta, "gain", NaN) == gain
-    entries = same_settings ? Dict(e["raw"] => e for e in get(meta, "frames", [])) : Dict{String, Any}()
-    frames = Array{Float32, 3}[]; sats = BitMatrix[]; new_entries = Any[]
-    blacks = same_settings ? Tuple(Float64.(meta["black"])) : nothing; white = same_settings ? Float64(meta["white"]) : NaN
-    lin1 = nothing                                                         # the first frame's LinearRaw: the maps
-    wb = same_settings ? Float64.(meta["daylight_wb"]) : nothing
-    for f in raws
-        src = joinpath(input_path(C.cfg["inputs"]["raw_dir"]), f); stem = splitext(f)[1]
-        h = open(VgtkCore.sha256_hex, src)
-        img_path = joinpath(dir, stem * ".png"); sat_path = joinpath(dir, stem * "_saturated.png")
-        e = get(entries, f, nothing)
-        if e !== nothing && e["sha256"] == h && isfile(img_path) && isfile(sat_path)
-            codes = load_codes(img_path)
-            masks && push!(sats, load_mask(sat_path))
-        else
-            mosaic = VgtkFeatures.load_raw_mosaic(src; decoder = VgtkFeatures.LibRawDecoder())
-            lin = VgtkFeatures.LinearRaw(mosaic; mode = Symbol(mode), gain)
-            bl = plane_blacks(mosaic)
-            (blacks === nothing || bl == blacks) && (isnan(white) || white == mosaic.white) ||
-                error("$f: black/white levels differ from the set's ($bl, $(mosaic.white) vs $blacks, $white)")
-            blacks = bl; white = mosaic.white; lin1 === nothing && (lin1 = lin)
-            wb === nothing && (wb = collect(Float64.(mosaic.metadata.daylight_wb)))
-            codes = encode_codes(lin, blacks, white, gain)
-            back = decode_codes(codes, blacks, white, gain)
-            maximum(abs.(Float64.(back) .- Float32.(lin.image))) <= 2 * eps(1.0f0) ||
-                error("$f: the cache does not round-trip load_raw's values")
-            save_codes(img_path, codes); save_mask(sat_path, lin.saturated)
-            masks && push!(sats, lin.saturated)
-            say(log, "  decoded $f ($(count(lin.saturated)) saturated quads)")
+    raw_dir = input_path(C.cfg["inputs"]["raw_dir"])
+    raws = sort([f for f in readdir(raw_dir) if endswith(f, C.cfg["inputs"]["raw_extension"])])
+    cache = VgtkFeatures.open_cache(joinpath(dir, "linear_raws.jld2"))
+    lins = try
+        map(raws) do f
+            lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, decoder = VgtkFeatures.LibRawDecoder(), cache)
+            say(log, "  $f ($(count(lin.saturated)) saturated quads)")
+            lin
         end
-        push!(frames, decode_codes(codes, blacks, white, gain))
-        push!(new_entries, Dict("raw" => f, "sha256" => h, "image" => stem * ".png", "saturated" => stem * "_saturated.png"))
+    finally
+        VgtkFeatures.close_cache(cache)
     end
-    open(meta_path, "w") do io
-        JSON.print(io, Dict("format" => CACHE_FORMAT, "mode" => mode, "gain" => gain, "black" => collect(blacks), "white" => white,
-                            "daylight_wb" => wb, "raw_dir" => C.cfg["inputs"]["raw_dir"],
-                            "frames" => new_entries), 2)
-    end
-    # on a full cache hit, the maps from one decode of the first RAW (its mosaic alone fixes them)
-    lin1 === nothing && (lin1 = VgtkFeatures.LinearRaw(VgtkFeatures.load_raw_mosaic(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), raws[1]);
-                                                                                    decoder = VgtkFeatures.LibRawDecoder()); mode = Symbol(mode), gain))
-    return (; names = raws, frames, saturated = sats, frame_map = VgtkFeatures.raw_frame_map(lin1),
-            plane_maps = ntuple(c -> VgtkFeatures.bayer_plane_map(lin1, c), 3), daylight_wb = wb, levels = (; black = collect(blacks), white, gain))
+    lin1 = first(lins)
+    return (; names = raws, frames = [Float32.(l.image) for l in lins], saturated = masks ? [l.saturated for l in lins] : BitMatrix[],
+            frame_map = VgtkFeatures.raw_frame_map(lin1), plane_maps = ntuple(c -> VgtkFeatures.bayer_plane_map(lin1, c), 3),
+            daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)))
 end
 
 # ----------------------------------------------------------------------------- the lens
@@ -586,7 +518,7 @@ function run_example(config_path)
     device in ("cuda", "cpu") || error("compute.device = $device is not \"cuda\" or \"cpu\"")
     say(log, "compute: $device$(haskey(ENV, "PANORAMA_VIGNETTING_DEVICE") ? " (PANORAMA_VIGNETTING_DEVICE)" : "")")
     move = device == "cuda" ? CuArray : identity
-    dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps, inp.levels)   # the maps: isbits
+    dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps)   # the maps: isbits
     kind = C.cfg["vignetting"]["model"]
     fkw = (; point_scale_px = reg.point_scale_px)
     fit(kind, C, lens, dev, reg.rotations, W, H; fkw...)                          # compile

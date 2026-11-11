@@ -250,9 +250,6 @@ end
 
 # ----------------------------------------------------------------------------- device helpers
 
-# A zero array on a backend (KernelAbstractions' allocate, filled): the stack has no public form yet (a hoist into Core,
-# beside `ka_upload`, is open: .release/duplication-checklist.md).
-_device_zeros(be, ::Type{T}, dims...) where {T} = fill!(KA.allocate(be, T, dims...), zero(T))
 _elapsed(be, t0) = (KA.synchronize(be); (time_ns() - t0) / 1.0e9)
 
 
@@ -719,7 +716,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     poff = (plane - 1) * Hf * Wf
     nrows = sum(k -> count(.!(saturated[k][lin]) .& (frames[k][lin .+ poff] .> 0)), 1:K)
     nrows > 0 || throw(ArgumentError("fit_vignetting: no unsaturated positive value in the domain"))
-    wbuf = _device_zeros(be, Float64, P)
+    wbuf = VgtkCore.device_zeros(Float64, be, P)
     # the weight scale of one solve's weights (`weight_of(k)` frame k's): their mean over the rows is 1
     function scale_of(weight_of)
         sumw = 0.0; wk! = _weight_kernel!(be, 256)
@@ -752,17 +749,17 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     iters = 0; change = 0.0
     nsolves = position_noise ? 1 + measurement_noise.iterations : 1
     Σx = position_noise ? _noise_covariance(measurement_noise) : nothing
-    LMs = position_noise ? [_device_zeros(be, Float64, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
+    LMs = position_noise ? [VgtkCore.device_zeros(Float64, be, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
     weight_of = k -> _IntensityWeight()                                   # the first solve's weights: I²
     for it in 1:nsolves
         inv_scale = scale_of(weight_of)
 
         # the normal equations
         t0 = time_ns()
-        S = _device_zeros(be, Float64, nL, 49); BG = _device_zeros(be, Float64, nL, max(nG, 1))
-        BV = _device_zeros(be, Float64, nL, nV); bL = _device_zeros(be, Float64, nL)
-        Wp = _device_zeros(be, Float64, P); Yp = _device_zeros(be, Float64, P); Wk = _device_zeros(be, Float64, P); Yk = _device_zeros(be, Float64, P)
-        GVd = _device_zeros(be, Float64, nV, max(nG, 1)); Gdiag = zeros(nG); bG = zeros(nG)
+        S = VgtkCore.device_zeros(Float64, be, nL, 49); BG = VgtkCore.device_zeros(Float64, be, nL, max(nG, 1))
+        BV = VgtkCore.device_zeros(Float64, be, nL, nV); bL = VgtkCore.device_zeros(Float64, be, nL)
+        Wp = VgtkCore.device_zeros(Float64, be, P); Yp = VgtkCore.device_zeros(Float64, be, P); Wk = VgtkCore.device_zeros(Float64, be, P); Yk = VgtkCore.device_zeros(Float64, be, P)
+        GVd = VgtkCore.device_zeros(Float64, be, nV, max(nG, 1)); Gdiag = zeros(nG); bG = zeros(nG)
         acc! = _accumulate_kernel!(be, 256); gvb! = _gain_vblock_kernel!(be, 256)
         for k in 1:K
             col = gains && k >= 2 ? k - 1 : 0
@@ -776,7 +773,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         end
         seconds[:accumulate] += _elapsed(be, t0)
         t0 = time_ns()
-        AVVd = _device_zeros(be, Float64, nV, nV); bVd = _device_zeros(be, Float64, nV); gd = _device_zeros(be, Float64, nV)
+        AVVd = VgtkCore.device_zeros(Float64, be, nV, nV); bVd = VgtkCore.device_zeros(Float64, be, nV); gd = VgtkCore.device_zeros(Float64, be, nV)
         _vblock_kernel!(be, 256)(AVVd, bVd, gd, Wp, Yp, VI, VW; ndrange = P)
         AVV = Array(AVVd); bV = Array(bVd); g = Array(gd) ./ P
         # the weak penalty on the control points P₀ + Z y: λ DᵀD on the increment, −λ DᵀD P₀ on the right-hand side
@@ -812,7 +809,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         t0 = time_ns()
         if solver isa ConjugateGradient
             AVVzd = VgtkCore.ka_upload(Float64, be, AVVz); Pend = VgtkCore.CSRMatrix(Pen; device = be)
-            tmp = _device_zeros(be, Float64, nL); tmpP = _device_zeros(be, Float64, nL); yV = _device_zeros(be, Float64, m)
+            tmp = VgtkCore.device_zeros(Float64, be, nL); tmpP = VgtkCore.device_zeros(Float64, be, nL); yV = VgtkCore.device_zeros(Float64, be, m)
             smv! = _stencil_matvec_kernel!(be, 256); ttm! = _tall_tmatvec_kernel!(be, 64)
             function apply!(y, x)
                 xL = view(x, 1:nL); xV = view(x, (nL + 1):(nL + m))
@@ -871,7 +868,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
 
     # the residuals
     t0 = time_ns()
-    res = _device_zeros(be, Float32, P); ww = _device_zeros(be, Float32, P); R_all = Float32[]; swr = 0.0; sw = 0.0
+    res = VgtkCore.device_zeros(Float32, be, P); ww = VgtkCore.device_zeros(Float32, be, P); R_all = Float32[]; swr = 0.0; sw = 0.0
     rk! = _residual_kernel!(be, 256)
     for k in 1:K
         rk!(res, ww, frames[k], saturated[k], lin, rays, LV, cLd, Rs[k], ch, poff, log_gains[k], weight_of(k); ndrange = P)

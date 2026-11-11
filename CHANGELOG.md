@@ -28,6 +28,11 @@
   VisualGeometryToolkitEval's `data_root` (Eval joins the example's environment). The README's example states its frame
   map, `SimilarityMap(LinearMap(2.0I))` (CoordinateTransformations joins its install line).
 - The quality items run Core's `test_duplication` (the stack repositories from `VGTK_STACK_PATHS`).
+- The example's decode cache is VisualGeometryToolkitFeatures' (`load_raw(path; cache)`, a JLD2 `FileCache` at
+  `out/<name>/decoded/linear_raws.jld2`, one entry per RAW content and decode settings); its code-sum PNGs, `decode.json`
+  and their helpers are deleted (a cache of an earlier run is not read: the frames decode once more). JLD2 joins the
+  example's environment. `decoded_frames` no longer returns `levels`.
+- The fit's zero arrays on its backend are VisualGeometryToolkitCore's `device_zeros` (the private `_device_zeros` is deleted).
 - **Removed: `selection = :strongest`** (the global top `max_detections` by |response|, the private `_global_strongest`, a copy
   of the selection Features retired): `:spread`, Features' `spread_strongest` (SSC), is the one selection, and any other is an
   `ArgumentError`. Both configs of record select `"spread"` with `asift_tilts = "untilted"` (Features' schedule for a
