@@ -120,7 +120,7 @@ end
                              detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                              min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
                              min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                             bundle_scale_multiple = 3.0, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+                             bundle_efficiency_constant = 3.0, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:K]
     @info "synthetic register: rotation errors (deg) $(round.(errs; digits = 4)), bundle rms $(round(reg.bundle.rms; digits = 3)) px"
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
@@ -169,7 +169,7 @@ end
                              detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                              min_score = 0.0, pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0, min_inliers = 40, seed = 1,
                              max_trials = 10000, min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                             bundle_scale_multiple = 3.0, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+                             bundle_efficiency_constant = 3.0, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     @test sort(collect(keys(reg.pairs))) == [(1, 3), (2, 3)]
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:3]
     @info "a dropped lag pair: rotation errors (deg) $(round.(errs; digits = 4))"
@@ -180,7 +180,7 @@ end
                       overlap_deg = 60.0, min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_loss = VgtkCore.HuberShape())
     @test vp isa VerifiedPairs && vp.stats == reg.pairs && length(vp.features) == 3
     @test all(p -> vp.inlier_matches[p] isa Vector{Tuple{Int, Int}} && length(vp.inlier_matches[p]) == vp.verified[p].inliers, keys(vp.verified))
-    bkw = (; bundle_loss = VgtkCore.CauchyShape(), bundle_scale_multiple = 3.0, bundle_max_iter = 100,
+    bkw = (; bundle_loss = VgtkCore.CauchyShape(), bundle_efficiency_constant = 3.0, bundle_max_iter = 100,
            bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     reg2 = register_rotations(vp, q.cam; averaging_loss = VgtkCore.HuberShape(), bkw...)
     @test reg2.rotations == reg.rotations && reg2.tracks == reg.tracks && reg2.pairs == reg.pairs
@@ -218,7 +218,7 @@ end
     @test tried == [(1, 3), (2, 4), (1, 4)]
     @test VgtkEstimation.components(PanoramaStitching._view_graph(4, verified)) == [[1, 2], [3, 4]]
     @test_throws ArgumentError VgtkEstimation.fit_rotation_averaging(PanoramaStitching._view_graph(4, verified);
-                                                                 local_optimization = VgtkEstimation.Irls{VgtkCore.HuberShape}())
+                                                                 optimization_strategy = VgtkEstimation.Irls{VgtkCore.HuberShape}())
     # the samplers: one stream per (seed, i, j), reproducible
     draw(s, i, j) = rand(PanoramaStitching._pair_rng(s, i, j), UInt64, 4)
     @test draw(1, 1, 2) == draw(1, 1, 2) && draw(1, 1, 2) != draw(1, 1, 3)
@@ -305,7 +305,7 @@ end
                                      asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
                                      pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
                                      min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = bkw.loss,
-                                     bundle_scale_multiple = 3.0,
+                                     bundle_efficiency_constant = 3.0,
                                      bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
     a, b = reg(0.0), reg(30.0)
     @test [f.pixels for f in a.features] == [f.pixels for f in b.features]

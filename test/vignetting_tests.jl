@@ -403,9 +403,9 @@ end
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
         # the view-graph filters' tolerances and the detector's variant are stated
         reg = TOML.parsefile(joinpath(dir, f))["registration"]
-        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg", "selection", "detection_image", "local_optimization"))
+        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg", "selection", "detection_image", "local_optimization_strategy"))
         # the pairs' local optimization is an Estimation strategy table, read by Estimation's own loader
-        @test VgtkEstimation.local_optimization_from_toml(reg["local_optimization"]; class = :rotation) isa VgtkCore.AbstractLocalOptimization
+        @test VgtkEstimation.optimization_strategy_from_toml(reg["local_optimization_strategy"]; class = :rotation) isa VgtkCore.AbstractOptimizationStrategy
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
         @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
@@ -456,7 +456,7 @@ end
                                      "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0),
                                      "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
                                                                                "averaging_loss" => "huber", "bundle_loss" => "cauchy",
-                                                                               "bundle_scale_multiple" => 3.0), Dict{String, Any}(string(k) => v for (k, v) in kw)))
+                                                                               "bundle_efficiency_constant" => 3.0), Dict{String, Any}(string(k) => v for (k, v) in kw)))
     out = mktempdir(); inp = (; names = ["a.ARW", "b.ARW"])
     path = joinpath(out, "verified_pairs.json")
     withenv("VGTK_DATA_ROOT" => root) do
@@ -475,7 +475,7 @@ end
         key(f, c; provider = :cuda) = call(f, (; cfg = c, out), inp, provider)
         # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
         @test key(:pairs_key, cfg(); provider = :cpu) != key(:pairs_key, cfg()) && key(:registration_key, cfg(); provider = :cpu) != key(:registration_key, cfg())
-        for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_scale_multiple = 2.5), cfg(; bundle_loss = "huber"),
+        for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_efficiency_constant = 2.5), cfg(; bundle_loss = "huber"),
                   cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0))
             @test key(:registration_key, c) != key(:registration_key, cfg()) && key(:pairs_key, c) == key(:pairs_key, cfg())
             stage(c)

@@ -39,7 +39,7 @@ VisualGeometryToolkitEstimation's `filtered_rotation_averaging`), `tracks` (of t
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 metadata's `outcome` and `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `bundle_sigma` (the
-pooled noise scale σ̂ of the kept pairs, px, whose `bundle_scale_multiple` is the bundle's width), `features` (the
+pooled noise scale σ̂ of the kept pairs, px, whose `bundle_efficiency_constant` is the bundle's width), `features` (the
 frames' [`FrameFeatures`](@ref)) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
 `loma_provenance` of the descriptor and of the matcher — the models, the ONNX Runtime
 provider used and its threads).
@@ -90,7 +90,7 @@ end
 """
     verify_pairs(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                  selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
-                 scoring = nothing, local_optimization = nothing, max_trials, min_trials, averaging_loss,
+                 scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials, averaging_loss,
                  execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
 The verified frame pairs of the pure-rotation sequence `frames`: the features,
@@ -108,8 +108,9 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
                       selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
                       saturated::Union{Nothing, AbstractVector} = nothing, descriptor::Symbol, matcher::Symbol,
                       min_score::Real, pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
-                      scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
-                      averaging_loss::VgtkCore.AbstractLossShape, execution_provider::Symbol = :auto, say = _ -> nothing)
+                      scoring = nothing, local_optimization_strategy = nothing, max_trials::Integer, min_trials::Integer,
+                      averaging_loss::VgtkCore.AbstractLossShape, execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
+    _refuse_retired_registration_keywords("verify_pairs", retired)
     _check_pair_settings("verify_pairs", pairs, max_lag)
     _check_frames("verify_pairs", frames, selection, detection_image, detection_noise)
     saturated === nothing || length(saturated) == length(frames) ||
@@ -139,7 +140,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         cs, kept = pair_bearings(camera, feats[i], feats[j], ms)
         kw = (; max_trials, min_trials, rng = _pair_rng(seed, i, j))
         kw = scoring === nothing ? kw : merge(kw, (; scoring))
-        kw = local_optimization === nothing ? kw : merge(kw, (; local_optimization))
+        kw = local_optimization_strategy === nothing ? kw : merge(kw, (; local_optimization_strategy))
         res = VgtkEstimation.find_rotation(cs; kw...)
         n = res === nothing ? 0 : count(res.inlier_mask)
         if res === nothing || !VgtkCore.converged(res) || n < min_inliers
@@ -151,7 +152,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         verified[(i, j)] = (rotation = R, inliers = n)
         inlier_matches[(i, j)] = kept[res.inlier_mask]
         stats[(i, j)] = (matches = length(ms), inliers = n, rms_px = rms, rotation_deg = ang)
-        scales[(i, j)] = _pair_scale(cs, res, local_optimization, _pair_rng(seed, i, j))
+        scales[(i, j)] = _pair_scale(cs, res, local_optimization_strategy, _pair_rng(seed, i, j))
         say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches, $n inliers, rms $(round(rms; digits = 3)) px, rotation $(round(ang; digits = 2))°, " *
             "σ̂ $(round(scales[(i, j)].sigma; digits = 3)) px$(scales[(i, j)].success ? "" : " (SIMFIT++ found none)")")
         return nothing
@@ -174,17 +175,17 @@ _chisq2_quantile(α) = -2 * log1p(-α)          # the χ²₂ quantile, closed f
 # optimization) and the held-out split's squared residuals at it, seeded with the RANSAC's own σ̂ (its consensus Student-t
 # scale) as a width; σ̂ = width / √χ²₂(α). `rng` the pair's own stream. `success` false when SIMFIT++ found no width in its
 # bounds (the RANSAC σ̂ is then the pair's sigma, and the pair is not pooled).
-function _pair_scale(cs, res, local_optimization, rng)
+function _pair_scale(cs, res, local_optimization_strategy, rng)
     q = _chisq2_quantile(_SIMFIT.alpha)
     w0 = sqrt(q) * res.sigma
     isfinite(w0) && w0 > 0 || return (sigma = Float64(res.sigma), success = false)
     R0 = VgtkCore.estimate(res)
-    lo = local_optimization === nothing ? (;) : (; local_optimization)
+    lo = local_optimization_strategy === nothing ? (;) : (; optimization_strategy = local_optimization_strategy)   # a refine's keyword
     function fit(w, train)
         r = VgtkEstimation.refine_rotation(R0, cs[collect(train)]; scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = w), lo...)
         return VgtkCore.converged(r) ? VgtkCore.estimate(r) : nothing
     end
-    residuals_sq(R, val) = abs2.(VgtkEstimation.refine_rotation(R, cs[collect(val)]; local_optimization = VgtkEstimation.NoLocalOptimization()).residuals)
+    residuals_sq(R, val) = abs2.(VgtkEstimation.refine_rotation(R, cs[collect(val)]; optimization_strategy = nothing).residuals)
     w, ok = VgtkEstimation.simfitpp_loss_width(fit, residuals_sq, length(cs), w0, _SIMFIT; rng)
     return (sigma = w / sqrt(q), success = ok)
 end
@@ -206,18 +207,32 @@ end
 _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint_covariance) ||
     throw(ArgumentError("$what: bundle_whitening = :$bundle_whitening is not :none or :keypoint_covariance"))
 
+# The registration's retired keywords, refused naming their successor; any other unknown keyword is refused as unknown.
+const _RETIRED_REGISTRATION_KEYWORDS = (
+    bundle_camera_free = "the bundle holds the camera's calibration (refine_rotations); the autocalibration of a rotating camera is " *
+                         "refine_camera_and_rotations",
+    bundle_scale_multiple = "the bundle's width multiple is `bundle_efficiency_constant` (the plain multiple of the pooled scale)",
+    local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy`")
+function _refuse_retired_registration_keywords(what, kwargs)
+    for (k, _) in pairs(kwargs)
+        haskey(_RETIRED_REGISTRATION_KEYWORDS, k) && throw(ArgumentError("$what: the keyword `$k` is retired: $(_RETIRED_REGISTRATION_KEYWORDS[k])"))
+        throw(ArgumentError("$what: unknown keyword `$k`"))
+    end
+    return nothing
+end
+
 """
     register_rotations(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                        selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing,
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
-                       scoring = nothing, local_optimization = nothing, max_trials, min_trials,
-                       averaging_loss, cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), bundle_loss, bundle_scale_multiple, bundle_max_iter, bundle_ftol,
-                       bundle_xtol, bundle_whitening = :none, bundle_camera_free = (), execution_provider = :auto,
+                       scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials,
+                       averaging_loss, cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), bundle_loss, bundle_efficiency_constant, bundle_max_iter, bundle_ftol,
+                       bundle_xtol, bundle_whitening = :none, execution_provider = :auto,
                        say = _ -> nothing) -> Registration
     register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; averaging_loss, cycle_tol = deg2rad(2),
-                       orientation_tol = deg2rad(5), bundle_loss, bundle_scale_multiple,
+                       orientation_tol = deg2rad(5), bundle_loss, bundle_efficiency_constant,
                        bundle_max_iter, bundle_ftol, bundle_xtol, bundle_whitening = :none,
-                       bundle_camera_free = (), say = _ -> nothing) -> Registration
+                       say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `frame_map` their map onto the camera's pixels: VisualGeometryToolkitFeatures' `raw_frame_map`) seen by the calibrated
@@ -245,7 +260,7 @@ RANSAC's:
   part, as when a lag pair is dropped, the pair between two parts nearest in
   capture order; then those whose optical axes, aimed by the rotation
   averaging of the verified pairs, are within `overlap_deg`); a pair is verified by `find_rotation` (its `scoring` and
-  `local_optimization` objects, `nothing` for VisualGeometryToolkitEstimation's
+  `local_optimization_strategy` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
   with at least `min_inliers` inliers.
 - graph: VisualGeometryToolkitEstimation's `filtered_rotation_averaging` of the
@@ -261,12 +276,12 @@ RANSAC's:
   CVPRW 2025; VisualGeometryToolkitEstimation's `simfitpp_loss_width` with χ²₂, the
   rotation's Sampson residual's codimension, at coverage α = 0.99): the
   rotation refitted on random train splits (`refine_rotation`, MSAC at the
-  current width, the pair's `local_optimization`), the held-out residuals'
+  current width, the pair's `local_optimization_strategy`), the held-out residuals'
   truncation-debiased median the scale; seeded with the RANSAC's own σ̂, the
   sampler the pair's (`seed`, `i`, `j`). The pairs' `scales`
   ([`VerifiedPairs`](@ref)).
 - bundle: `bundle_loss` (stack loss shapes) at the width
-  `bundle_scale_multiple`·σ̂, σ̂ the pooled scale of the kept pairs whose
+  `bundle_efficiency_constant`·σ̂, σ̂ the pooled scale of the kept pairs whose
   SIMFIT++ succeeded, `σ̂² = Σ nₚσₚ² / Σ nₚ` (`nₚ` the pair's inliers: their
   pooled variance), the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,
   `bundle_ftol`, `bundle_xtol`: [`refine_rotations`](@ref)), the width fixed.
@@ -277,12 +292,10 @@ RANSAC's:
   `tr Σ / 2` over the tracked keypoints, so the whitened residual is in pixels
   of the median keypoint and the width applies; a keypoint the detector did
   not refine takes the identity), the loss acting on the whitened
-  residuals. `bundle_camera_free` (by name, the camera parameters the bundle
-  refines with the rotations, `refine_rotations`' `camera_free`; `()`, the
-  default, holds the camera): the rotating camera's self-calibration, its camera
-  the bundle metadata's `camera` (`result.bundle.metadata.camera`) and its
-  information `result.bundle.metadata.calibration`. The pairs, the averaging and
-  the tracks are those of the given camera.
+  residuals. The bundle holds the camera's calibration (`refine_rotations`); the
+  retired `bundle_camera_free`, `bundle_scale_multiple` and `local_optimization` are an
+  `ArgumentError` naming their successors (the autocalibration of a rotating camera is
+  [`refine_camera_and_rotations`](@ref), on the result's rotations and tracks).
 
 `say` receives one line per frame, pair and step.
 
@@ -306,32 +319,34 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             saturated::Union{Nothing, AbstractVector} = nothing,
                             descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
-                            scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
+                            scoring = nothing, local_optimization_strategy = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_loss::VgtkCore.AbstractLossShape, cycle_tol::Union{Nothing, Real} = deg2rad(2),
                             orientation_tol::Union{Nothing, Real} = deg2rad(5), bundle_loss::VgtkCore.AbstractLossShape,
-                            bundle_scale_multiple::Real, bundle_max_iter::Integer, bundle_ftol::Real,
-                            bundle_xtol::Real, bundle_whitening::Symbol = :none, bundle_camera_free::Tuple{Vararg{Symbol}} = (),
-                            execution_provider::Symbol = :auto, say = _ -> nothing)
+                            bundle_efficiency_constant::Real, bundle_max_iter::Integer, bundle_ftol::Real,
+                            bundle_xtol::Real, bundle_whitening::Symbol = :none,
+                            execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
+    _refuse_retired_registration_keywords("register_rotations", retired)
     _check_pair_settings("register_rotations", pairs, max_lag)
     _check_whitening("register_rotations", bundle_whitening)
     _check_tolerances("register_rotations", cycle_tol, orientation_tol)
     vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
                       detection_image, detection_noise, saturated, descriptor, matcher,
-                      min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization, max_trials, min_trials,
+                      min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization_strategy, max_trials, min_trials,
                       averaging_loss, execution_provider, say)
-    return register_rotations(vp, camera; averaging_loss, cycle_tol, orientation_tol, bundle_loss, bundle_scale_multiple, bundle_max_iter,
-                              bundle_ftol, bundle_xtol, bundle_whitening, bundle_camera_free, say)
+    return register_rotations(vp, camera; averaging_loss, cycle_tol, orientation_tol, bundle_loss, bundle_efficiency_constant, bundle_max_iter,
+                              bundle_ftol, bundle_xtol, bundle_whitening, say)
 end
 
 function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; averaging_loss::VgtkCore.AbstractLossShape,
                             cycle_tol::Union{Nothing, Real} = deg2rad(2), orientation_tol::Union{Nothing, Real} = deg2rad(5),
-                            bundle_loss::VgtkCore.AbstractLossShape, bundle_scale_multiple::Real,
+                            bundle_loss::VgtkCore.AbstractLossShape, bundle_efficiency_constant::Real,
                             bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real, bundle_whitening::Symbol = :none,
-                            bundle_camera_free::Tuple{Vararg{Symbol}} = (), say = _ -> nothing)
+                            say = _ -> nothing, retired...)
+    _refuse_retired_registration_keywords("register_rotations", retired)
     _check_whitening("register_rotations", bundle_whitening)
     feats = vp.features; K = length(feats)
     (; fit, graph) = VgtkEstimation.filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol,
-                                                                   local_optimization = _averaging_irls(averaging_loss))
+                                                                   optimization_strategy = _averaging_irls(averaging_loss))
     avg = fit
     removed = sort!([p for p in keys(vp.verified) if !haskey(graph, p...)])
     say("  rotation averaging: $(VgtkEstimation.nedges(graph)) edges ($(length(removed)) removed by the view-graph filters" *
@@ -339,10 +354,10 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     ts, dropped = chain_tracks(Dict(p => m for (p, m) in vp.inlier_matches if haskey(graph, p...)))
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
     σ = _pooled_scale(vp, graph)
-    say("  scale: σ̂ $(round(σ; digits = 3)) px pooled over the kept pairs' SIMFIT++ scales, bundle width $(round(bundle_scale_multiple * σ; digits = 3))")
+    say("  scale: σ̂ $(round(σ; digits = 3)) px pooled over the kept pairs' SIMFIT++ scales, bundle width $(round(bundle_efficiency_constant * σ; digits = 3))")
     obs = bundle_whitening === :none ? [[k => feats[k].pixels[kp] for (k, kp) in t] for t in ts] : _uncertain_observations(feats, ts; say)
-    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; loss = bundle_loss, loss_width = bundle_scale_multiple * σ,
-                              max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol, camera_free = bundle_camera_free)
+    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; loss = bundle_loss, loss_width = bundle_efficiency_constant * σ,
+                              max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, $(bundle.iterations) iterations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.n_dropped_start) observations dropped at the start: not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
@@ -353,7 +368,7 @@ end
 # loss's efficiency constant at codimension 3 times the fit's σ̂) and its `[fit_rotation_averaging]` iteration cap of record.
 const _ESTIMATION_DEFAULTS = VgtkCore.parse_defaults(VgtkEstimation.default_config_path())
 _averaging_irls(loss::VgtkCore.AbstractLossShape) = VgtkEstimation.Irls{typeof(loss)}(
-    max_iter = VgtkCore.toml_default(_ESTIMATION_DEFAULTS, "fit_rotation_averaging", "local_optimization")["max_iter"])
+    max_iter = VgtkCore.toml_default(_ESTIMATION_DEFAULTS, "fit_rotation_averaging", "optimization_strategy")["max_iter"])
 
 # The one noise scale of the bundle: the kept pairs' SIMFIT++ scales pooled as a variance weighted by their inlier counts,
 # σ̂² = Σ nₚσₚ² / Σ nₚ, over the pairs whose estimate succeeded.
@@ -420,7 +435,7 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_
         attempt(argmin(p -> (p[2] - p[1], p[1]), joins))
     end
     K > 1 || return nothing
-    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(_view_graph(K, verified); local_optimization = _averaging_irls(averaging_loss)))
+    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(_view_graph(K, verified); optimization_strategy = _averaging_irls(averaging_loss)))
     axis = [SMatrix{3, 3}(A[k]) * SVector(0.0, 0.0, 1.0) for k in 1:K]
     for i in 1:K, j in (i + max_lag + 1):K
         ((i, j) ∉ tried && rad2deg(VgtkCore.angle_between(axis[i], axis[j])) < overlap_deg) && attempt((i, j))

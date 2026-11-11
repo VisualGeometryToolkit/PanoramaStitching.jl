@@ -9,6 +9,7 @@ verify_pairs
 VerifiedPairs
 chain_tracks
 refine_rotations
+refine_camera_and_rotations
 RotationBundleMetadata
 ```
 

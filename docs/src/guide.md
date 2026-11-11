@@ -71,12 +71,12 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two keypoints
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
-   robust (`bundle_loss`) pixel reprojection error through `projection` with NLLSsolver. With `bundle_camera_free` (the
-   names of the camera's parameters, e.g. `(:f, :cx, :cy, :k1, :k2, :k3, :k4)` for a Kannala–Brandt lens) the bundle also
-   refines the camera: the rotating camera's self-calibration (Hartley 1994; Agapito, Hayman and Reid 2001), the first
-   frame's rotation its one gauge. The refined camera is `reg.bundle.metadata.camera`; `reg.bundle.metadata.calibration`
-   holds its parameters' standard deviations and covariance, and the reduced information's spectrum that shows nothing
-   else is free.
+   robust (`bundle_loss`) pixel reprojection error through `projection` with NLLSsolver; it holds the camera's
+   calibration. The AUTOCALIBRATION of the rotating camera (no target; Hartley 1994; Agapito, Hayman and Reid 2001) is its
+   companion [`refine_camera_and_rotations`](@ref): the same bundle with the camera's parameters free but those named in
+   `fixed` (and the skew), on the registration's rotations and tracks, the first frame's rotation its one gauge. Its
+   result's `metadata.camera` is the refined camera; `metadata.calibration` holds its parameters' standard deviations and
+   covariance, and the reduced information's spectrum that shows nothing else is free.
 
 Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold everything the rest reads;
 `register_rotations(pairs::VerifiedPairs, camera; …)` runs steps 4–6 from them, so a caller that keeps the verified pairs

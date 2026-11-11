@@ -16,14 +16,16 @@
 # (VisualGeometryToolkitCore `loss_robustifier`) — the pattern of Estimation's
 # relative-pose bundle.
 #
-# The camera optionally free (`camera_free`, the self-calibration of a rotating
-# camera, Hartley 1994; Agapito, Hayman and Reid 2001): one more variable,
-# VisualGeometryToolkitCore's `ParameterManifold` of the camera's model
-# restricted to the named parameters (the camera block of Estimation's
-# `refine_camera_and_poses`), on which every observation then also depends. With
-# the first frame's rotation the gauge, a rotating sequence leaves nothing else
-# free; the bundle's metadata carries the reduced (Schur) information of the
-# rotations and the camera with which to check it.
+# `refine_rotations` holds the camera's calibration. Its one companion,
+# `refine_camera_and_rotations`, frees it: the AUTOCALIBRATION of a rotating
+# camera (no target, a pure-rotation sequence; Hartley 1994; Agapito, Hayman and
+# Reid 2001) — one more variable, VisualGeometryToolkitCore's `ParameterManifold`
+# of the camera's model restricted to its free parameters (the camera block of
+# Estimation's `refine_camera_and_poses`), on which every observation then also
+# depends. With the first frame's rotation the gauge, a rotating sequence leaves
+# nothing else free; the bundle's metadata carries the reduced (Schur) information
+# of the rotations and the camera with which to check it. Both are the one
+# bundle below (`_rotation_bundle`), the camera variable present or absent.
 # =============================================================================
 
 const _FrameChart = VgtkCore.SO3Manifold{Float64}
@@ -97,7 +99,7 @@ end
 
 NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable) = _whiten(r.whitening, _pixel_residual(r, ch, d))
 
-# One observation of the self-calibrating bundle: as `_Observation`, its camera the third variable (`varind` = frame,
+# One observation of the autocalibration bundle: as `_Observation`, its camera the third variable (`varind` = frame,
 # direction, camera), the model's `ParameterManifold` restricted to the free parameters, its projection and its valid domain
 # read from that variable's model.
 struct _CameraObservation{E, L, W} <: NLLSsolver.AbstractResidual
@@ -174,7 +176,8 @@ end
 """
     RotationBundleMetadata
 
-`FitResult` metadata of [`refine_rotations`](@ref): `directions` (one unit
+`FitResult` metadata of [`refine_rotations`](@ref) and
+[`refine_camera_and_rotations`](@ref): `directions` (one unit
 direction per track, the common frame), `residuals` (per track, the pixel
 reprojection error norm of each of its observations at the result, unwhitened),
 `loss_width` (the given width: px, or in whitened units when the
@@ -194,10 +197,11 @@ bundle's outcome:
 - `:converged` — the retcode is `:converged`;
 - otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …);
 
-`camera` (the camera at the result: the one given when it is held, else the
-refined one, of the given camera's type and, for a `BoundedCamera`, its sensor
-and lens coverage) and `calibration`, `nothing` when the camera is held, else
-the self-calibration's information at the result (`camera_free`):
+`camera` (the camera at the result: the one given by `refine_rotations`, which
+holds it, else the refined one, of the given camera's type and, for a
+`BoundedCamera`, its sensor and lens coverage) and `calibration`, `nothing` when
+the camera is held, else the autocalibration's information at the result
+([`refine_camera_and_rotations`](@ref)):
 
 - `free` — the names of the camera parameters refined;
 - `parameters`, `sigma`, `covariance` — their values, standard deviations and
@@ -232,10 +236,11 @@ end
 
 """
     refine_rotations(camera, rotations, tracks; loss, loss_width, max_iter, ftol, xtol,
-                     eliminate = true, camera_free = ()) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+                     eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
-(fixed; its `backproject` and `backproject_with_jacobian` give the start and
+(fixed: the calibration is held, a rotation-only bundle with no parameter
+keyword — [`refine_camera_and_rotations`](@ref) is the autocalibration; its `backproject` and `backproject_with_jacobian` give the start and
 the Jacobian; a `CameraModel` or a `BoundedCamera`), projected through its
 closed-form forward map π, its model's `imaging_transform` (a grid lens's
 `SplineLens` through its forward spline, VisualGeometryToolkitEstimation's
@@ -280,20 +285,6 @@ result's `n` is the number of observations kept; its metadata's
 - `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
-- `camera_free` — the camera parameters refined with the rotations and the
-  directions, by name (VisualGeometryToolkitCore's `parameter_names` of the
-  camera's model: `:f, :aspect, :skew, :cx, :cy`, then the lens's
-  coefficients); `()` (the default) holds the camera fixed, the bundle above.
-  Free, the camera is one more variable, Core's `ParameterManifold` of its model
-  restricted to those parameters (the camera block of Estimation's
-  `refine_camera_and_poses`), its Jacobian ForwardDiff through the chart; the
-  rotating camera's self-calibration. The first frame's rotation stays the one
-  gauge (the metadata's `calibration` carries the reduced information that
-  shows nothing else is free, and the parameters' covariance). A parametric
-  camera only: a SplineLens camera, or a name its model does not have, is an
-  `ArgumentError`. The observations kept at the start are those the GIVEN
-  camera images; the residuals, the loss width and the result are the
-  refined camera's.
 
 A refine ends in the local minimum its start leads to; the result's `retcode`
 and its metadata's `outcome` ([`RotationBundleMetadata`](@ref)) say how the
@@ -301,15 +292,89 @@ bundle ended. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
 without, a covariance that is not finite and positive definite, and a start
 that keeps no observation (every track left in fewer than two imaged frames)
-are an `ArgumentError`.
+are an `ArgumentError`, and so is `camera_free` (the bundle holds the calibration:
+[`refine_camera_and_rotations`](@ref) frees it).
 """
-function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVector;
+function refine_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
                           loss::VgtkCore.AbstractLossShape, loss_width::Real,
                           max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
-                          camera_free::Tuple{Vararg{Symbol}} = ()) where {K}
+                          camera_free = _NotGiven())
+    camera_free isa _NotGiven || throw(ArgumentError(
+        "refine_rotations: the rotation bundle holds the camera's calibration (no parameter keyword); to refine the camera " *
+        "with the rotations — the autocalibration of a rotating camera — call refine_camera_and_rotations(…; fixed)"))
     isfinite(loss_width) && loss_width > 0 ||
         throw(ArgumentError("refine_rotations: the loss width must be positive and finite, got $loss_width"))
-    chc = _camera_chart(camera, camera_free)                     # nothing: the camera held
+    return _rotation_bundle(camera, rotations, tracks, nothing, (); loss, width = Float64(loss_width), max_iter, ftol, xtol,
+                            eliminate, what = "refine_rotations")
+end
+
+"""
+    refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
+                                fixed = (), max_iter, ftol, xtol, eliminate = true)
+        -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+
+The AUTOCALIBRATION of a rotating camera: no target, a pure-rotation sequence (Hartley 1994; Agapito, Hayman and Reid 2001).
+The rotation bundle of [`refine_rotations`](@ref) — the same observations, start, kept set, gauge and result — with the
+camera's free parameters one more variable: VisualGeometryToolkitCore's `ParameterManifold` of the camera's model restricted
+to them (the camera block of Estimation's `refine_camera_and_poses`), its Jacobian ForwardDiff through the chart. The only
+gauge is the first frame's rotation, held exactly; with it a rotating sequence leaves nothing else free, which the metadata's
+`calibration` shows (the reduced information, and the parameters' covariance: [`RotationBundleMetadata`](@ref)). The
+observations kept at the start are those the GIVEN camera images; the residuals, the loss width and the result are the
+refined camera's.
+
+A contract refine:
+- `optimization_strategy` — the robust strategy, a `Triggs{K}` (VisualGeometryToolkitEstimation's; the default every
+  refine's, `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D residual): the loss `K` as NLLSsolver's
+  robustifier at ONE fixed width.
+- exactly one of `scale = σ` (the observations' noise scale, px or whitened units; or an upstream robust result) — the width
+  is then the strategy's efficiency constant × σ — or `width = w` (the loss width itself).
+- `fixed` — the camera parameters HELD, by name or by a coefficient family's group (`:k` for `k1…`, `:d`, `:p`, `:sx`,
+  `:sy`): VisualGeometryToolkitCore's `free_parameter_names(model, fixed)`. The default `()` frees every parameter but the
+  skew, which the stack holds by construction (named in `fixed` it is a no-op). An unknown or repeated entry, a camera with
+  nothing free, a SplineLens camera (its controls have no static chart), and the retired `camera_free`, `free`, `fix`,
+  `fixed_params` and `hold` are an `ArgumentError`.
+- `max_iter`, `ftol`, `xtol`, `eliminate` — as [`refine_rotations`](@ref)'s.
+"""
+function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
+                                     optimization_strategy = VgtkEstimation.Triggs{VgtkCore.WelschShape}(
+                                         efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2)),
+                                     scale = nothing, width = nothing, fixed::Tuple{Vararg{Symbol}} = (),
+                                     max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
+                                     retired...)
+    for k in keys(retired)                                       # camera_free and the other spellings of a held-parameter list
+        k in _RETIRED_HOLD_KEYWORDS && throw(ArgumentError(
+            "refine_camera_and_rotations: the keyword `$k` is not the stack's; give the HELD camera parameters as `fixed = (…)` " *
+            "(every other parameter but the skew is free)"))
+        throw(ArgumentError("refine_camera_and_rotations: unknown keyword `$k`"))
+    end
+    optimization_strategy isa VgtkEstimation.Triggs || throw(ArgumentError(
+        "refine_camera_and_rotations: the bundle's strategy is a Triggs{K} (its loss K as NLLSsolver's robustifier at one width), " *
+        "got $(optimization_strategy === nothing ? "nothing" : nameof(typeof(optimization_strategy)))"))
+    shape = VgtkEstimation.strategy_loss(optimization_strategy)()
+    input = VgtkCore.scale_input(scale, width)
+    w = isfinite(input.width) ? Float64(input.width) :
+        Float64(VgtkEstimation.lo_width_value(VgtkCore.lo_width(optimization_strategy)).value) * Float64(input.scale)
+    m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
+    names = VgtkCore.free_parameter_names(m, fixed)
+    isempty(names) && throw(ArgumentError(
+        "refine_camera_and_rotations: `fixed` holds every camera parameter: nothing to calibrate (refine_rotations is the bundle " *
+        "with the calibration held)"))
+    chc = _camera_chart(camera, names)
+    return _rotation_bundle(camera, rotations, tracks, chc, names; loss = shape, width = w, max_iter, ftol, xtol, eliminate,
+                            what = "refine_camera_and_rotations")
+end
+
+# A keyword's default where giving it at all is refused (a retired name).
+struct _NotGiven end
+# The retired names of the held-parameter keyword (`fixed` is the stack's one): refused naming it.
+const _RETIRED_HOLD_KEYWORDS = (:camera_free, :free, :fix, :fixed_params, :hold)
+
+# The one rotation bundle of `refine_rotations` (`chc === nothing`: the camera held) and `refine_camera_and_rotations` (`chc`
+# the camera's chart over its free parameters `free`), `what` the caller named in a message; `width` the loss width, checked.
+function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free::Tuple{Vararg{Symbol}};
+                          loss::VgtkCore.AbstractLossShape, width::Float64, max_iter::Integer, ftol::Real, xtol::Real,
+                          eliminate::Bool, what::AbstractString) where {K}
+    isfinite(width) && width > 0 || throw(ArgumentError("$what: the loss width must be positive and finite, got $width"))
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
@@ -318,11 +383,11 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}, typeof(chc)}
     nobs = 0; nuncertain = 0
     for t in tracks
-        length(unique(first.(t))) >= 2 || throw(ArgumentError("refine_rotations: a track needs observations in two frames"))
-        all(o -> haskey(fid, first(o)), t) || throw(ArgumentError("refine_rotations: a track names a frame with no start rotation"))
+        length(unique(first.(t))) >= 2 || throw(ArgumentError("$what: a track needs observations in two frames"))
+        all(o -> haskey(fid, first(o)), t) || throw(ArgumentError("$what: a track names a frame with no start rotation"))
         nobs += length(t); nuncertain += count(o -> last(o) isa VgtkCore.Uncertain, t)
     end
-    0 < nuncertain < nobs && throw(ArgumentError("refine_rotations: $nuncertain of $nobs observations carry a covariance; " *
+    0 < nuncertain < nobs && throw(ArgumentError("$what: $nuncertain of $nobs observations carry a covariance; " *
                                                  "every observation or none must"))
     # per observation: its pixel and its whitening (nothing, or L⁻¹ of its covariance)
     pixel(o) = SVector{2, Float64}(_observed_pixel(last(o)))
@@ -340,7 +405,6 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
              [start_direction(t, trues(length(t))) for t in tracks]]
     chc === nothing || push!(vars, chc)                                     # the camera, the last variable
     ic = nf + length(tracks) + 1
-    width = Float64(loss_width)
     observation(kernel, j, i, o) = chc === nothing ?
         _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j), kernel, whitenings[j][i]) :
         _CameraObservation{E, typeof(kernel), Wt}(pixel(o), SVector(fid[first(o)], nf + j, ic), kernel, whitenings[j][i])
@@ -365,7 +429,7 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         end
     end
     nkept = sum(count, active; init = 0)
-    nkept > 0 || throw(ArgumentError("refine_rotations: no observation is imaged at the start (every track keeps fewer than two " *
+    nkept > 0 || throw(ArgumentError("$what: no observation is imaged at the start (every track keeps fewer than two " *
                                      "frames whose start prediction lies in the camera model's valid domain)"))
     unfixed = trues(length(vars)); unfixed[1] = false                       # the gauge frame
     for j in eachindex(tracks)
@@ -401,37 +465,31 @@ function refine_rotations(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     niter = result === nothing ? 0 : result.niterations
     cam_out = chc === nothing ? camera : _with_camera_model(camera, VgtkCore.model(vars[ic]))
     calib = chc === nothing ? nothing :
-        _self_calibration(vars[ic], camera_free, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
+        _autocalibration(vars[ic], free, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
                           (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width), j, i, o),
                           vars, fid, nf, unconstrained)
     return VgtkCore.FitResult(out, code, niter, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
                               RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
 end
 
-# The camera's variable: nothing when held (`camera_free = ()`), else Core's ParameterManifold of its model restricted to the
-# named parameters. A SplineLens camera (a gauge K: its parameters are its lattice's controls, Estimation's own spline route)
-# is refused.
-_camera_chart(camera, free::Tuple{}) = nothing
+# The camera's variable for `refine_camera_and_rotations`: Core's ParameterManifold of its model restricted to the free
+# parameters (`free_parameter_names`: names checked there). A SplineLens camera (a gauge K: its parameters are its lattice's
+# controls, Estimation's own spline route) is refused.
 function _camera_chart(camera, free::Tuple{Vararg{Symbol}})
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
     (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
-        throw(ArgumentError("refine_rotations: camera_free needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
-    names = VgtkCore.parameter_names(m)
-    for p in free
-        p in names || throw(ArgumentError("refine_rotations: the camera has no parameter $(repr(p)); its parameters are $(join(String.(names), ", "))"))
-    end
-    allunique(free) || throw(ArgumentError("refine_rotations: camera_free names a parameter twice: $free"))
+        throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
     return VgtkCore.restrict(VgtkCore.ParameterManifold(m), free)
 end
 _with_camera_model(camera::VgtkCore.BoundedCamera, m) = VgtkCore.with_model(camera, m)
 _with_camera_model(::VgtkCore.CameraModel, m) = m
 
-# The self-calibration's information at the result (`RotationBundleMetadata`'s `calibration`): every kept observation's
+# The autocalibration's information at the result (`RotationBundleMetadata`'s `calibration`): every kept observation's
 # Jacobian (its loss's IRLS weight at the result folded in) over the frames (the gauge frame included), its track's direction
 # and the camera chart; the directions eliminated track by track (the Schur complement of their 2 × 2 blocks); the reduced
 # information's scaled spectrum with and without the gauge frame; the covariance s²·H⁻¹ of the gauge-fixed reduced system,
 # its camera block mapped from the chart to the parameters.
-function _self_calibration(cc, free, kept, observation, vars, fid, nf, unconstrained)
+function _autocalibration(cc, free, kept, observation, vars, fid, nf, unconstrained)
     nd = VgtkCore.tangent_size(cc); P = 3nf + nd
     A = zeros(P, P); S2 = 0.0; n = length(kept)
     Dmin = Inf

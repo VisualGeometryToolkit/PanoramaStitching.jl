@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
+
+- `register_rotations`' `bundle_scale_multiple` is `bundle_efficiency_constant` (the same plain multiple of the pooled scale;
+  results unchanged); the pairs' RANSAC strategy keyword of `verify_pairs`/`register_rotations` is
+  `local_optimization_strategy` (was `local_optimization`), the stack's find_* keyword. The old keywords are an
+  `ArgumentError` naming the new ones. The view graph's averaging and the pairs' SIMFIT++ refits take Estimation's
+  `optimization_strategy` (`nothing` for the plain least squares, no `NoLocalOptimization`).
+- examples/panorama_vignetting: the `[registration]` keys `bundle_efficiency_constant` and `local_optimization_strategy`
+  (the old ones refused by name, as is `bundle_camera_free`); `rotations.json` format v10 (its `bundle_scale_multiple`
+  field is `bundle_efficiency_constant`).
+
 ### Breaking: the VisualGeometryToolkit 0.9 stack — the frames' and the planes' maps, Core's CG and penalty rows
 
 - `raw_scale` (camera pixels per frame pixel) and `plane_offsets` (the planes' sample offsets) are gone from every entry point
@@ -79,14 +90,22 @@
   `{ type = "triggs", loss = "welsch", scale_multiple = 2.5 }` the robustified LM). `scoring_threshold_px` is MSAC's inlier
   threshold (its comment called it a half-width).
 
-### New: the rotation bundle with the camera free — a rotating camera's self-calibration
+### New: `refine_camera_and_rotations` — the autocalibration of a rotating camera
 
-- `refine_rotations(…; camera_free = (:f, :cx, :cy, :k1, …))` refines the named parameters of a parametric camera with the
-  rotations and the track directions, in the same bundle (one more NLLSsolver variable: VisualGeometryToolkitCore's
-  `ParameterManifold` of the camera's model restricted to those parameters, the camera block of Estimation's
+- `refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
+  fixed = ())` refines a parametric camera with the rotations and the track directions, in the same bundle as
+  `refine_rotations` (one internal bundle, the camera variable present or absent: VisualGeometryToolkitCore's
+  `ParameterManifold` of the camera's model restricted to its free parameters, the camera block of Estimation's
   `refine_camera_and_poses`; its Jacobian ForwardDiff through the chart, the frame and direction blocks the closed form).
-  The first frame's rotation stays the one gauge. `register_rotations` takes it as `bundle_camera_free`. A SplineLens
-  camera is refused (its parameters are its lattice's controls, Estimation's own spline route).
+  No target: the first frame's rotation is the one gauge. A contract refine: a `Triggs{K}` strategy, exactly one of
+  `scale`/`width`, and `fixed` naming the HELD parameters (names or groups, VisualGeometryToolkitCore's
+  `free_parameter_names`; the skew always held). A SplineLens camera is refused (its parameters are its lattice's
+  controls, Estimation's own spline route).
+- `refine_rotations` is the rotation-only bundle: it holds the calibration and takes no parameter keyword; its
+  `camera_free` (briefly unreleased) is refused, pointing at `refine_camera_and_rotations`, and `register_rotations`'
+  `bundle_camera_free` likewise. Its numbers are unchanged, bit for bit.
+- "Self-calibration" (of the camera, no target) is "autocalibration" throughout (the tests: `autocalibration_tests.jl`);
+  the vignetting's self-calibration (V from the frames) keeps its name.
 - `RotationBundleMetadata` gains `camera` (the camera at the result: the given one when held) and `calibration`
   (`nothing` when held; else the free parameters' values, standard deviations and covariance — `s²·H⁻¹` of the robust
   Gauss–Newton information reduced to the rotations and the camera by the Schur complement of the directions — and that

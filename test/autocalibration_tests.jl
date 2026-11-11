@@ -1,5 +1,6 @@
 # =============================================================================
-# The rotation bundle with the camera free (`refine_rotations(…; camera_free)`): the self-calibration of a rotating camera.
+# The autocalibration of a rotating camera (`refine_camera_and_rotations`: no target, the rotation bundle with the camera free
+# but `fixed`), and the rotation-only bundle that holds the calibration (`refine_rotations`), one bundle underneath.
 # Exact data from a known Kannala–Brandt camera are fitted exactly from a wrong camera and a perturbed start; the reduced
 # information shows the one gauge (the first frame's rotation) and nothing else free; the camera block's Jacobian against
 # ForwardDiff; the camera held, the bundle's numbers are those it had before the camera could be freed.
@@ -33,11 +34,11 @@ function exact_tracks(rng, R, n)
 end
 end
 
-@testitem "refine_rotations, camera free: a known KB lens recovered exactly from a rotating sequence; one gauge" setup = [RotatingKB] begin
+@testitem "refine_camera_and_rotations: a known KB lens recovered exactly from a rotating sequence; one gauge" setup = [RotatingKB] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
-    using PanoramaStitching: refine_rotations
-    import VisualGeometryToolkitCore as VgtkCore
+    using PanoramaStitching: refine_camera_and_rotations
+    import VisualGeometryToolkitCore as VgtkCore, VisualGeometryToolkitEstimation as VgtkEstimation
     rng = Xoshiro(7)
     R = rows_rotations()
     tracks = exact_tracks(rng, R, 600)
@@ -45,10 +46,18 @@ end
     cam0 = VgtkCore.BoundedCamera(VgtkCore.CameraModel(282.0VgtkCore.px, SA[600.0VgtkCore.px, 600.0VgtkCore.px];
                                                        lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
     start = Dict(k => (k == 1 ? R[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * R[k]) for k in 1:10)
-    free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)
-    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-12)
-    res = refine_rotations(cam0, start, tracks; kw..., camera_free = free)
+    free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)                                   # every parameter but the aspect (held) and the skew
+    kw = (; optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
+          xtol = 1.0e-12)
+    res = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect,))
     @test res.retcode === :converged
+    # the same bundle as the camera_free keyword it replaces: PanoramaStitching ce2ce59's `refine_rotations(…; camera_free =
+    # free, loss = CauchyShape(), loss_width = 1.5)` on this scene, bit for bit
+    @test (res.rms, res.iterations, res.n) === (9.778781600849967e-14, 11, 3624)
+    @test sum(sum, values(VgtkCore.estimate(res))) === 19.8664444387427 && sum(sum, res.metadata.directions) === 231.78800370774763
+    # a group holds its family: the four KB coefficients held keeps them at the start's, f, cx and cy free
+    rk = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect, :k), max_iter = 3)
+    @test rk.metadata.calibration.free == (:f, :cx, :cy)
     cam = res.metadata.camera
     @test cam isa VgtkCore.BoundedCamera && VgtkCore.extent(cam) == VgtkCore.extent(cam0)
     θ = VgtkCore.parameter_vector(VgtkCore.model(cam)); θt = VgtkCore.parameter_vector(TRUE_CAM)
@@ -68,12 +77,12 @@ end
     @test c.nu == 2 * res.n - (3 * 9 + 2 * length(tracks) + 7)
 end
 
-@testitem "refine_rotations, camera free: the camera block's Jacobian; the refusals" setup = [RotatingKB] begin
+@testitem "refine_camera_and_rotations: the camera block's Jacobian; the refusals" setup = [RotatingKB] begin
     using Test, LinearAlgebra, StaticArrays
     import ForwardDiff, NLLSsolver
     import PanoramaStitching
-    using PanoramaStitching: refine_rotations
-    import VisualGeometryToolkitCore as VgtkCore
+    using PanoramaStitching: refine_rotations, refine_camera_and_rotations
+    import VisualGeometryToolkitCore as VgtkCore, VisualGeometryToolkitEstimation as VgtkEstimation
     R = rows_rotations()
     free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)
     cc = VgtkCore.restrict(VgtkCore.ParameterManifold(TRUE_CAM), free)
@@ -92,15 +101,34 @@ end
     for (flags, cols) in ((1, 1:3), (2, 4:5), (3, 1:5), (4, 6:12), (5, [1:3; 6:12]), (6, 4:12))
         @test NLLSsolver.computeresjac(flags, obs, ch, dv, cc)[2] ≈ J[:, cols]
     end
-    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
+    kw = (; max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     tr = [[1 => SVector(600.0, 600.0), 2 => SVector(500.0, 600.0)]]
-    @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw..., camera_free = (:focal,))       # no such parameter
-    @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw..., camera_free = (:f, :f))        # named twice
+    ac = (; kw..., optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5)
+    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., fixed = (:focal,))      # no such parameter
+    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., fixed = (:f, :f))       # named twice
+    @test_throws r"holds every camera parameter" refine_camera_and_rotations(TRUE_CAM, R, tr; ac...,
+                                                                               fixed = VgtkCore.parameter_names(TRUE_CAM))
+    for k in (:camera_free, :free, :fix, :fixed_params, :hold)                 # the retired names, each naming `fixed`
+        @test_throws r"`fixed = \(…\)`" refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., (k => (:f,),)...)
+    end
+    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; kw..., optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)))   # no scale or width
+    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., scale = 1.0)                          # both
+    @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., optimization_strategy = nothing)
+    # the rotation-only bundle holds the calibration: camera_free is refused, pointing at the autocalibration; so is the
+    # registration's bundle_camera_free (and the other retired registration keywords, each naming its successor)
+    @test_throws r"refine_camera_and_rotations" refine_rotations(TRUE_CAM, R, tr; kw..., loss = VgtkCore.CauchyShape(),
+                                                                 loss_width = 1.5, camera_free = (:f,))
+    @test_throws r"refine_camera_and_rotations" PanoramaStitching._refuse_retired_registration_keywords("register_rotations",
+                                                                                                       (; bundle_camera_free = ()))
+    @test_throws r"bundle_efficiency_constant" PanoramaStitching._refuse_retired_registration_keywords("register_rotations",
+                                                                                                     (; bundle_scale_multiple = 3.0))
+    @test_throws r"local_optimization_strategy" PanoramaStitching._refuse_retired_registration_keywords("verify_pairs",
+                                                                                                      (; local_optimization = nothing))
 end
 
-# The camera held (`camera_free = ()`, the default): the numbers of the bundle before the camera could be freed — the fisheye
+# The camera held (`refine_rotations`, the rotation-only bundle): the numbers of the bundle before the camera could be freed — the fisheye
 # sweep of rotation_bundle_tests.jl with outliers, its rms and its rotations as PanoramaStitching 69471ff computed them.
-@testitem "refine_rotations, camera held: no calibration, the given width, the rotations recovered" setup = [SweepScene] begin
+@testitem "refine_rotations holds the calibration: no calibration, the given width, the rotations recovered" setup = [SweepScene, RotatingKB] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
     using PanoramaStitching: refine_rotations
@@ -117,4 +145,18 @@ end
     @test res.metadata.camera === CAM && res.metadata.calibration === nothing
     @test res.metadata.loss_width == 1.5 && res.retcode === :converged && 0 < res.iterations < 1000
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:5) < 0.05
+    # the rotation-only split leaves the held bundle's numbers as they were (PanoramaStitching ce2ce59, bit for bit)
+    @test (res.rms, res.iterations, res.n) === (109.24885291344255, 19, 1489)
+    @test sum(sum, values(VgtkCore.estimate(res))) === 8.795668643015834 && sum(sum, res.metadata.directions) === 144.22098567182522
+    # and on the KB scene, the camera held at the wrong start camera
+    rng = Xoshiro(7)
+    Rk = rows_rotations()
+    tracks = exact_tracks(rng, Rk, 600)
+    cam0 = VgtkCore.BoundedCamera(VgtkCore.CameraModel(282.0VgtkCore.px, SA[600.0VgtkCore.px, 600.0VgtkCore.px];
+                                                       lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
+    startk = Dict(k => (k == 1 ? Rk[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * Rk[k]) for k in 1:10)
+    rk = refine_rotations(cam0, startk, tracks; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12,
+                          xtol = 1.0e-12)
+    @test (rk.rms, rk.iterations, rk.n) === (13.626810529489516, 435, 3624) && rk.metadata.camera === cam0
+    @test sum(sum, values(VgtkCore.estimate(rk))) === 18.480086542920372 && sum(sum, rk.metadata.directions) === 128.27182481038034
 end

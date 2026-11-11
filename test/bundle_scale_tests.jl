@@ -1,7 +1,7 @@
 # =============================================================================
 # The bundle's scale: each verified pair's noise scale by SIMFIT++ (VisualGeometryToolkitEstimation's `simfitpp_loss_width`, after
 # its RANSAC, on held-out splits), pooled over the kept pairs into one σ̂ (inlier-count weighted variance), the bundle's
-# robust width `bundle_scale_multiple·σ̂` fixed for its one LM run.
+# robust width `bundle_efficiency_constant·σ̂` fixed for its one LM run.
 # =============================================================================
 
 @testitem "_pair_scale: SIMFIT++ recovers a rotation pair's pixel noise σ" setup = [SweepScene] begin
@@ -24,9 +24,9 @@
         fa = FrameFeatures(u1, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u1)), nothing, length(u1))
         fb = FrameFeatures(u2, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u2)), nothing, length(u2))
         cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [(first = i, second = i, score = 1.0) for i in eachindex(u1)])
-        lo = VgtkEstimation.Triggs{VgtkCore.WelschShape}(scale_multiple = 2.5)
+        lo = VgtkEstimation.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
         res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
-                                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization = lo)
+                                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization_strategy = lo)
         s = PanoramaStitching._pair_scale(cs, res, lo, MersenneTwister(2))
         @info "SIMFIT++ on a synthetic pair: true σ $σ px, estimated $(round(s.sigma; digits = 3)) px, success $(s.success)"
         @test s.success
@@ -34,7 +34,7 @@
     end
 end
 
-@testitem "register_rotations: the bundle's width is bundle_scale_multiple × the pooled pair scale, one LM run" setup = [SweepScene] begin
+@testitem "register_rotations: the bundle's width is bundle_efficiency_constant × the pooled pair scale, one LM run" setup = [SweepScene] begin
     using Test, Random, LinearAlgebra, StaticArrays
     using PanoramaStitching: register_rotations, refine_rotations, chain_tracks, FrameFeatures, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
@@ -62,7 +62,7 @@ end
     vp = VerifiedPairs(feats, verified, matches, stats, scales, (; descriptor = (;), matcher = (;)))
     pooled = (n = [verified[p].inliers for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
               sqrt(sum(n .* σ .^ 2) / sum(n)))
-    bkw = (; averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.WelschShape(), bundle_scale_multiple = 2.5,
+    bkw = (; averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.WelschShape(), bundle_efficiency_constant = 2.5,
            bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
     reg = register_rotations(vp, bcam; bkw...)
     @test reg.bundle_sigma ≈ pooled

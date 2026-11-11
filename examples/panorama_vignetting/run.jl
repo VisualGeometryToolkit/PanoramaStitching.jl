@@ -55,8 +55,11 @@ function refuse_circle(inputs, where)
 end
 
 # The [registration] keys retired (PanoramaStitching 0.6): refused by name, never read.
-const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM run at the width bundle_scale_multiple × the verified pairs' " *
-                                   "pooled SIMFIT++ noise scale (register_rotations); remove the key",)
+const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM run at the width bundle_efficiency_constant × the verified pairs' " *
+                                   "pooled SIMFIT++ noise scale (register_rotations); remove the key",
+                                   "bundle_scale_multiple" => "it is bundle_efficiency_constant (the same plain multiple of the pooled scale)",
+                                   "local_optimization" => "the pairs' RANSAC strategy table is local_optimization_strategy",
+                                   "bundle_camera_free" => "the bundle holds the camera's calibration")
 function refuse_retired_registration(table, where)
     for (old, why) in RETIRED_REGISTRATION_KEYS
         haskey(table, old) && throw(ArgumentError("$where: the key $old is retired: $why"))
@@ -165,9 +168,11 @@ end
 # count), and holds the frames left with none (`frames_unconstrained`). v6: the key holds the provider LoMa runs on, and the
 # record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's filtered_rotation_averaging at `cycle_tol_deg` and
 # `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed. v8: the bundle is one LM
-# run at bundle_scale_multiple × the pairs' pooled SIMFIT++ scale (bundle_iterations retired); the record holds σ̂ and its iterations.
+# run at bundle_efficiency_constant × the pairs' pooled SIMFIT++ scale (bundle_iterations retired); the record holds σ̂ and its iterations.
 # v9: the verified pairs' v5 (the clip mask, Features' canonical detection order).
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v9 (the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+# v10: the robust-estimation contract's names: the record's bundle_scale_multiple is bundle_efficiency_constant (the same plain
+# multiple), the pairs' strategy key local_optimization_strategy.
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v10 (the bundle's width multiple bundle_efficiency_constant, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -179,7 +184,7 @@ registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORM
 # v5: no keypoint within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
 # Features' canonical order, the frames' map Features' raw_frame_map.
 const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v5 (the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
-const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "cycle_tol_deg", "orientation_tol_deg", "bundle_loss", "bundle_scale_multiple", "bundle_max_iter",
+const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "cycle_tol_deg", "orientation_tol_deg", "bundle_loss", "bundle_efficiency_constant", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol", "bundle_whitening")
 function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_loss"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
@@ -242,11 +247,11 @@ end
 linear_raws(C, inp) = [VgtkFeatures.load_raw(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n); mode = Symbol(C.cfg["decode"]["mode"]),
                                              gain = Float64(C.cfg["decode"]["gain"])) for n in inp.names]
 
-# The pairs' RANSAC local optimization, `[registration] local_optimization`: an Estimation strategy table
-# (`{ type = "triggs", loss = "welsch", scale_multiple = 2.5 }`, `{ type = "irls", loss = "tls" }`), read by Estimation's own
+# The pairs' RANSAC local optimization, `[registration] local_optimization_strategy`: an Estimation strategy table
+# (`{ type = "triggs", loss = "welsch", efficiency_constant = 2.5 }`, `{ type = "irls", loss = "tls" }`), read by Estimation's own
 # loader (an unknown type, loss or key refused).
-rotation_local_optimization(r) = VgtkEstimation.local_optimization_from_toml(r["local_optimization"]; class = :rotation,
-                                                                             section = "registration.local_optimization")
+rotation_local_optimization(r) = VgtkEstimation.optimization_strategy_from_toml(r["local_optimization_strategy"]; class = :rotation,
+                                                                                section = "registration.local_optimization_strategy")
 
 # The verified pairs, cached (verified_pairs.json): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
 # setting, and written before the view graph is built, so a failure past it (the averaging, the bundle) loses none of it.
@@ -262,7 +267,7 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = Float64(r["scoring_threshold_px"])),
-                          local_optimization = rotation_local_optimization(r),
+                          local_optimization_strategy = rotation_local_optimization(r),
                           max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_loss = LOSSES[r["averaging_loss"]],
                           execution_provider = provider, say = m -> say(log, m))
         merge!(pairs_record(vp), Dict{String, Any}("frames" => inp.names, "seconds" => time() - t0))
@@ -279,7 +284,7 @@ function registration(C, inp, lens; log)
         t0 = time()
         reg = register_rotations(vp.pairs, lens; averaging_loss = LOSSES[r["averaging_loss"]], cycle_tol = deg2rad(r["cycle_tol_deg"]),
                                  orientation_tol = deg2rad(r["orientation_tol_deg"]), bundle_loss = LOSSES[r["bundle_loss"]],
-                                 bundle_scale_multiple = r["bundle_scale_multiple"],
+                                 bundle_efficiency_constant = r["bundle_efficiency_constant"],
                                  bundle_max_iter = r["bundle_max_iter"], bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"],
                                  say = m -> say(log, m))
         Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
@@ -298,7 +303,7 @@ function registration(C, inp, lens; log)
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                           # the bundle's robust loss width (camera px) and its scale multiple: the residual core scale, the sensor
                           # point's σ of IntensityAndPositionNoise
-                          "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_scale_multiple" => Float64(r["bundle_scale_multiple"]),
+                          "bundle_loss_width_px" => reg.bundle.metadata.loss_width, "bundle_efficiency_constant" => Float64(r["bundle_efficiency_constant"]),
                           # the bundle's noise scale (the kept pairs' pooled SIMFIT++ σ̂, px) and the LM iterations its one run took
                           "bundle_sigma_px" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.iterations,
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
@@ -312,7 +317,7 @@ function registration(C, inp, lens; log)
             bundle_sigma_px = rec["bundle_sigma_px"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
-            loma = rec["loma"], point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_scale_multiple"] : nothing)
+            loma = rec["loma"], point_scale_px = haskey(rec, "bundle_loss_width_px") ? rec["bundle_loss_width_px"] / rec["bundle_efficiency_constant"] : nothing)
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -610,7 +615,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations at the width " *
-               "$(C.cfg["registration"]["bundle_scale_multiple"]) × σ̂ $(f(reg.bundle_sigma_px; d = 3)) px, the pairs' pooled SIMFIT++ scale)"
+               "$(C.cfg["registration"]["bundle_efficiency_constant"]) × σ̂ $(f(reg.bundle_sigma_px; d = 3)) px, the pairs' pooled SIMFIT++ scale)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_removed)) removed by the view-graph filters" *
                     "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
                     "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *

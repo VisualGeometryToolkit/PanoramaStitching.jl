@@ -47,7 +47,7 @@ import VisualGeometryToolkitFeatures as VgtkFeatures
 using PrecompileTools: @setup_workload, @compile_workload       # src/precompile.jl
 
 export register_rotations, Registration, verify_pairs, VerifiedPairs
-export chain_tracks, refine_rotations, RotationBundleMetadata
+export chain_tracks, refine_rotations, refine_camera_and_rotations, RotationBundleMetadata
 export world_direction, FrameSamples, sample_frames, fibonacci_directions
 export true_up, up_frame, PanoramaView, panorama_view, render_panorama, render_cube_map
 export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, IntensityNoise, IntensityAndPositionNoise
