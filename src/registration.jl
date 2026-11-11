@@ -142,15 +142,15 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         kw = scoring === nothing ? kw : merge(kw, (; scoring))
         kw = local_optimization_strategy === nothing ? kw : merge(kw, (; local_optimization_strategy))
         res = VgtkEstimation.find_rotation(cs; kw...)
-        n = res === nothing ? 0 : count(res.inlier_mask)
+        n = res === nothing ? 0 : count(VgtkCore.inlier_mask(res))
         if res === nothing || !VgtkCore.converged(res) || n < min_inliers
             say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches, $n inliers → dropped"); return nothing
         end
         R = SMatrix{3, 3, Float64, 9}(VgtkCore.estimate(res))
-        r = res.residuals[res.inlier_mask]
+        r = res.residuals[VgtkCore.inlier_mask(res)]
         rms = sqrt(sum(abs2, r) / length(r)); ang = rad2deg(norm(VgtkCore.log_so3(R)))
         verified[(i, j)] = (rotation = R, inliers = n)
-        inlier_matches[(i, j)] = kept[res.inlier_mask]
+        inlier_matches[(i, j)] = kept[VgtkCore.inlier_mask(res)]
         stats[(i, j)] = (matches = length(ms), inliers = n, rms_px = rms, rotation_deg = ang)
         scales[(i, j)] = _pair_scale(cs, res, local_optimization_strategy, _pair_rng(seed, i, j))
         say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches, $n inliers, rms $(round(rms; digits = 3)) px, rotation $(round(ang; digits = 2))°, " *
@@ -177,8 +177,10 @@ _chisq2_quantile(α) = -2 * log1p(-α)          # the χ²₂ quantile, closed f
 # bounds (the RANSAC σ̂ is then the pair's sigma, and the pair is not pooled).
 function _pair_scale(cs, res, local_optimization_strategy, rng)
     q = _chisq2_quantile(_SIMFIT.alpha)
-    w0 = sqrt(q) * res.sigma
-    isfinite(w0) && w0 > 0 || return (sigma = Float64(res.sigma), success = false)
+    # the RANSAC's own scale, read through the hand-off accessor (a result that recorded none has no seed width)
+    s = VgtkCore.scale_source(res) == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(res))
+    w0 = sqrt(q) * s
+    isfinite(w0) && w0 > 0 || return (sigma = s, success = false)
     R0 = VgtkCore.estimate(res)
     lo = local_optimization_strategy === nothing ? (;) : (; optimization_strategy = local_optimization_strategy)   # a refine's keyword
     function fit(w, train)
