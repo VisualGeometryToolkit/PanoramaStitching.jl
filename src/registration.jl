@@ -330,7 +330,8 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
                             bundle_camera_free::Tuple{Vararg{Symbol}} = (), say = _ -> nothing)
     _check_whitening("register_rotations", bundle_whitening)
     feats = vp.features; K = length(feats)
-    (; fit, graph) = VgtkEstimation.filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol, loss = averaging_loss)
+    (; fit, graph) = VgtkEstimation.filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol,
+                                                                   local_optimization = _averaging_irls(averaging_loss))
     avg = fit
     removed = sort!([p for p in keys(vp.verified) if !haskey(graph, p...)])
     say("  rotation averaging: $(VgtkEstimation.nedges(graph)) edges ($(length(removed)) removed by the view-graph filters" *
@@ -347,6 +348,12 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
     return Registration(Rs, graph, removed, vp.stats, avg, ts, dropped, bundle, σ, feats, vp.loma)
 end
+
+# The view graph's averaging is VisualGeometryToolkitEstimation's IRLS strategy on `averaging_loss`, at its default width (the
+# loss's efficiency constant at codimension 3 times the fit's σ̂) and its `[fit_rotation_averaging]` iteration cap of record.
+const _ESTIMATION_DEFAULTS = VgtkCore.parse_defaults(VgtkEstimation.default_config_path())
+_averaging_irls(loss::VgtkCore.AbstractLossShape) = VgtkEstimation.Irls{typeof(loss)}(
+    max_iter = VgtkCore.toml_default(_ESTIMATION_DEFAULTS, "fit_rotation_averaging", "local_optimization")["max_iter"])
 
 # The one noise scale of the bundle: the kept pairs' SIMFIT++ scales pooled as a variance weighted by their inlier counts,
 # σ̂² = Σ nₚσₚ² / Σ nₚ, over the pairs whose estimate succeeded.
@@ -413,7 +420,7 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_
         attempt(argmin(p -> (p[2] - p[1], p[1]), joins))
     end
     K > 1 || return nothing
-    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(_view_graph(K, verified); loss = averaging_loss))
+    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(_view_graph(K, verified); local_optimization = _averaging_irls(averaging_loss)))
     axis = [SMatrix{3, 3}(A[k]) * SVector(0.0, 0.0, 1.0) for k in 1:K]
     for i in 1:K, j in (i + max_lag + 1):K
         ((i, j) ∉ tried && rad2deg(VgtkCore.angle_between(axis[i], axis[j])) < overlap_deg) && attempt((i, j))

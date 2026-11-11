@@ -82,7 +82,7 @@ end
 end
 
 @testitem "detect_features: no keypoint reads a clipped pixel; the tilt schedule by name" setup = [SyntheticSequence, BayerMaps] begin
-    # Features' detection mask (`asift_detect(…; mask)`): a detection within three of its scales of a clipped pixel is dropped.
+    # Features' detection mask (`asift_detect(…; exclusion_mask)`): a detection within three of its scales of a clipped pixel is dropped.
     # `saturated` is the frame's clip mask (a LinearRaw's own saturation by default); `asift_tilts` takes Features'
     # `tilt_schedule` names (`:untilted` is the identity warp alone).
     using Test, StaticArrays

@@ -217,7 +217,8 @@ end
     tried, verified = tried_pairs(4, [(2, 3), (1, 3), (2, 4), (1, 4)])
     @test tried == [(1, 3), (2, 4), (1, 4)]
     @test VgtkEstimation.components(PanoramaStitching._view_graph(4, verified)) == [[1, 2], [3, 4]]
-    @test_throws ArgumentError VgtkEstimation.fit_rotation_averaging(PanoramaStitching._view_graph(4, verified); loss = VgtkCore.HuberShape())
+    @test_throws ArgumentError VgtkEstimation.fit_rotation_averaging(PanoramaStitching._view_graph(4, verified);
+                                                                 local_optimization = VgtkEstimation.Irls{VgtkCore.HuberShape}())
     # the samplers: one stream per (seed, i, j), reproducible
     draw(s, i, j) = rand(PanoramaStitching._pair_rng(s, i, j), UInt64, 4)
     @test draw(1, 1, 2) == draw(1, 1, 2) && draw(1, 1, 2) != draw(1, 1, 3)

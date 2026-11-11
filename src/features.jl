@@ -49,7 +49,7 @@ end
 _frame_image(frame::AbstractArray{<:Real, 3}) = frame
 _frame_image(frame::VgtkFeatures.LinearRaw) = frame.image
 
-# A frame's clip mask (`true` where a value is clipped: Features' detection `mask`): the caller's, else a `LinearRaw`'s own
+# A frame's clip mask (`true` where a value is clipped: Features' detection `exclusion_mask`): the caller's, else a `LinearRaw`'s own
 # saturation, else none.
 _clip_mask(frame, saturated::AbstractMatrix{Bool}) = saturated
 _clip_mask(frame::VgtkFeatures.LinearRaw, ::Nothing) = frame.saturated
@@ -57,12 +57,12 @@ _clip_mask(frame, ::Nothing) = nothing
 
 # ASIFT on the detection image: the tone-mapped green (`toned`'s plane 2) at Features' default contrast threshold, or the
 # variance-stabilized green cells of a `LinearRaw` (Features' `variance_stabilize`, whose saturation Features masks) at
-# `noise_sigmas` noise σ; no detection reads a clipped pixel (Features' `mask`: within three scales of one, dropped).
+# `noise_sigmas` noise σ; no detection reads a clipped pixel (Features' `exclusion_mask`: within three scales of one, dropped).
 _asift(frame, toned, ::Val{:tone}, noise, tilts, mask) =
-    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, mask, uncertainty = VgtkFeatures.FeatureCovariance())
+    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, exclusion_mask = mask, uncertainty = VgtkFeatures.FeatureCovariance())
 _asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
     VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame; noise.electrons_per_dn, noise.read_noise);
-                              noise.noise_sigmas, tilts, mask, uncertainty = VgtkFeatures.FeatureCovariance())
+                              noise.noise_sigmas, tilts, exclusion_mask = mask, uncertainty = VgtkFeatures.FeatureCovariance())
 _asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
     throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
 
@@ -88,7 +88,7 @@ descriptor resamples the image to its network's input).
   (; electrons_per_dn, read_noise, noise_sigmas)` the sensor's conversion gain and
   read noise (raw codes) at the frame's ISO.
 - No detection within three of its scales of a clipped pixel (Features'
-  detection `mask`): `saturated`, the frame's `H × W` saturation mask (a
+  detection `exclusion_mask`): `saturated`, the frame's `H × W` saturation mask (a
   `LinearRaw`'s own by default; `nothing` for an array frame: none).
 - The detections inside the imaged region less `detector_margin_px` at the lens
   coverage's edge (a camera whose coverage is its whole sensor: no margin).
