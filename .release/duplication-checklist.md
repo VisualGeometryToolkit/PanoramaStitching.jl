@@ -1,0 +1,28 @@
+# PanoramaStitching: duplicate removals of the 0.9 cascade
+
+Owner decision 12 (2026-11-11): each item is REQUIRED in the release leg; it is closed by deleting PanoramaStitching's copy in
+favour of the stack's one implementation, and ticked with the commit that closes it. Source:
+cascade-duplicate-removals.md ("PanoramaStitching"), duplication-audit.md, plane-maps-report.md; the owner's ruling (all
+duplicates gone, all common code hoisted) and VisualGeometryToolkitCore's `test_duplication` over the package.
+
+## The cascade's list
+
+- [x] _pcg → Core's normal-form CG (`normal_cg`, monorepo 5305c2e4) (closed by 8f2538b)
+- [x] _penalty_kernel! → Core difference_rows (closed by 8f2538b)
+- [x] its ViewGraph → Estimation's ViewGraph (closed by 69471ff, already in cda8bf7: src/view_graph.jl deleted, registration.jl's `_view_graph` and tracks.jl build Estimation's `ViewGraph`)
+
+## Further copies (duplication-audit.md, plane-maps-report.md, test_duplication)
+
+- [x] _upload → Core's `ka_upload` / `on_device` (audit finding 17) (closed by 8f2538b)
+- [x] the planes' sample offsets (`_plane_offsets`, `raw_scale`, the hand-written offset subtraction, `_SensorPoint`'s scale) → Features' `raw_frame_map` / `bayer_plane_map` and Core's multi-plane `image_warp!` (closed by 8f2538b)
+- [x] the example's sRGB encoder (`srgb`, `save_srgb`'s clamp and rounding) → Features' `srgb_image` (audit finding 16) (closed by 8f2538b)
+- [x] the example's image viewer (compare_makie.jl's menu, linked axes, `rotr90` orientation) → Features' `compare_images` (closed by 8f2538b)
+- [x] the detections' own sort in `detect_features` → Features' canonical detection order (ssc-anms 05c91203) (closed by 8f2538b)
+- [x] test/docs_gates.jl (the docstring gates, copied) → Core's `test_docs` (closed by 8f2538b)
+- [x] the example's `data_root` → VisualGeometryToolkitEval's `data_root` (closed by 8f2538b)
+- [x] the names an upstream package owns: `_PlanePoint` (Estimation) folded into `_AtPixelCentre` with `_RayAt`; `_measurement_covariance` (Core) renamed `_noise_covariance` (a different concept: Σ_x of `IntensityAndPositionNoise`); `_zeros` (Core.Cameras' `_zeros(n)`, a tuple of zeros: another concept) renamed `_device_zeros` (closed by 8f2538b)
+
+## Hoists into the stack
+
+- [ ] hoist the decoded-RAW cache (examples/panorama_vignetting/run.jl `decoded_frames`, `encode_codes`, `decode_codes`, `save_codes`, `load_codes`, `save_mask`, `load_mask`, `plane_blacks`; audit finding 4) into the stack: owner VisualGeometryToolkitFeatures' raw module (the "one RAW image path" rule) with the file writing in VisualGeometryToolkitIO. Proposed: `VgtkFeatures.cached_linear_raws(raw_paths, cache_dir; mode, gain) -> (; images, saturated, raws, levels, daylight_wb)` (one decode per RAW keyed by its SHA-256 and the decode settings; the lossless per-quad code-sum PNG layout, or RC's linear-PNG layout once one is agreed), its first frame's `LinearRaw` (or a mosaic-free header) for `raw_frame_map`/`bayer_plane_map`. Callers: run.jl `decoded_frames` (run_example, compare_arms.jl). The stack lacks it today, so the example keeps its cache until the hoist lands; the switch is the body of `decoded_frames`. test_duplication does not flag it (no restated body: RC's copy, cvpr2027/src/drivers.jl, is another layout).
+- [ ] hoist a zero array on a KernelAbstractions backend, `fill!(KA.allocate(dev, T, dims...), zero(T))` (KernelAbstractions' own `KA.zeros` is not public, so ExplicitImports refuses it across the package boundary): owner VisualGeometryToolkitCore, src/base/device.jl beside `ka_upload`/`on_device`. Proposed: `VgtkCore.device_zeros(T, device, dims...) -> array` (public). Callers here: src/vignetting.jl `_device_zeros` (the fit's accumulators); in the stack the same `fill!(KA.allocate(…))` form is written in Core's `cgls` (penalized_least_squares.jl:170) and Features' matching_ka.jl:249–250. The switch is the one definition line: `const _device_zeros = (be, T, dims...) -> VgtkCore.device_zeros(T, be, dims...)`, or the call sites renamed.
