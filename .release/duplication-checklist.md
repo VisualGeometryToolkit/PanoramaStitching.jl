@@ -14,7 +14,7 @@ duplicates gone, all common code hoisted) and VisualGeometryToolkitCore's `test_
 ## Further copies (duplication-audit.md, plane-maps-report.md, test_duplication)
 
 - [x] _upload → Core's `ka_upload` / `on_device` (audit finding 17) (closed by 8f2538b)
-- [x] the planes' sample offsets (`_plane_offsets`, `raw_scale`, the hand-written offset subtraction, `_SensorPoint`'s scale) → Features' `raw_frame_map` / `bayer_plane_map` and Core's multi-plane `image_warp!` (closed by 8f2538b)
+- [x] the planes' sample offsets (`_plane_offsets`, `raw_scale`, the hand-written offset subtraction, `_SensorPoint`'s scale) → Features' `raw_frame_map` / `bayer_plane_map` and Core's multi-plane `image_warp!` (closed by 8f2538b; its device fix 7e1ed90)
 - [x] the example's sRGB encoder (`srgb`, `save_srgb`'s clamp and rounding) → Features' `srgb_image` (audit finding 16) (closed by 8f2538b)
 - [x] the example's image viewer (compare_makie.jl's menu, linked axes, `rotr90` orientation) → Features' `compare_images` (closed by 8f2538b)
 - [x] the detections' own sort in `detect_features` → Features' canonical detection order (ssc-anms 05c91203) (closed by 8f2538b)

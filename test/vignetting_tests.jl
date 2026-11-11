@@ -241,7 +241,7 @@ end
         fd = SVector((gat(u + SVector(h, 0)) - gat(u - SVector(h, 0))) / 2h, (gat(u + SVector(0, h)) - gat(u - SVector(0, h))) / 2h)
         @test isapprox(SVector(G_x[1], G_x[2]), fd; rtol = 1.0e-5, atol = 1.0e-9) && G_x[3] == 1.0
         @test length(G_θ) == 16 + 4 + 1 && G_θ[end] == -1.0
-        Σx = PanoramaStitching._measurement_covariance(IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)))
+        Σx = PanoramaStitching._noise_covariance(IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)))
         @test VgtkCore.whitening_factor(G_x, Σx)^2 ≈ 1 / (1.5^2 * (G_x[1]^2 + G_x[2]^2) + 0.01^2)
     end
 
