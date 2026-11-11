@@ -17,6 +17,7 @@ import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
 import VisualGeometryToolkitFeatures as VgtkFeatures
 import VisualGeometryToolkitIO as VgtkIO
+import VisualGeometryToolkitEval as VgtkEval
 using StaticArrays: SVector, SMatrix, SA
 using LinearAlgebra: LinearAlgebra, norm, normalize, dot, cross, eigen, Symmetric
 using Statistics: mean, median, quantile
@@ -28,9 +29,8 @@ const CT = PNGFiles.ColorTypes
 
 # ----------------------------------------------------------------------------- configuration
 
-data_root() = get(ENV, "VGTK_DATA_ROOT", "") |> r -> isempty(r) ?
-    error("VGTK_DATA_ROOT is not set: bind it to the data root that holds the config's inputs (README, \"Inputs\")") : r
-input_path(rel) = joinpath(data_root(), rel)
+# Every input path is relative to the data root: VisualGeometryToolkitEval.Experiments' `data_root` ($VGTK_DATA_ROOT, README "Inputs").
+input_path(rel) = joinpath(VgtkEval.Experiments.data_root(), rel)
 
 # The vignetting keys of earlier releases (PanoramaStitching 0.4 renamed them): a table that holds one is refused by name, never
 # read as the new setting.
@@ -83,10 +83,11 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 #                         linear value is (code/2 − black_p)/(white − black_p)·gain: lossless (load_raw's Float64 values to a
 #                         few ulp, no 16-bit quantization of the linear value)
 #   <stem>_saturated.png  8-bit, 0 or 1: load_raw's per-quad saturation (any photosite at the white level)
-# and decode.json once per set: the decode settings, the black and white levels, the planes' sample offsets and per frame the
-# RAW file's SHA-256. A frame is decoded again when its RAW's hash or a decode setting changes.
+# and decode.json once per set: the decode settings, the black and white levels and per frame the RAW file's SHA-256. A frame is
+# decoded again when its RAW's hash or a decode setting changes. The frames' and the planes' maps onto the camera's pixels are
+# Features' (`raw_frame_map`, `bayer_plane_map`) of the set's first frame (all the set's frames share the Bayer phase).
 
-const CACHE_FORMAT = "panorama_vignetting/decode/v2 (code sums, daylight_wb)"
+const CACHE_FORMAT = "panorama_vignetting/decode/v3 (code sums, daylight_wb; the plane maps Features')"
 
 # the planes' black levels: R, G (both greens), B
 function plane_blacks(mosaic)
@@ -132,7 +133,7 @@ function decoded_frames(C; masks::Bool, log = devnull)
     entries = same_settings ? Dict(e["raw"] => e for e in get(meta, "frames", [])) : Dict{String, Any}()
     frames = Array{Float32, 3}[]; sats = BitMatrix[]; new_entries = Any[]
     blacks = same_settings ? Tuple(Float64.(meta["black"])) : nothing; white = same_settings ? Float64(meta["white"]) : NaN
-    offsets = same_settings ? [Float64.(o) for o in meta["plane_offsets"]] : nothing
+    lin1 = nothing                                                         # the first frame's LinearRaw: the maps
     wb = same_settings ? Float64.(meta["daylight_wb"]) : nothing
     for f in raws
         src = joinpath(input_path(C.cfg["inputs"]["raw_dir"]), f); stem = splitext(f)[1]
@@ -148,7 +149,7 @@ function decoded_frames(C; masks::Bool, log = devnull)
             bl = plane_blacks(mosaic)
             (blacks === nothing || bl == blacks) && (isnan(white) || white == mosaic.white) ||
                 error("$f: black/white levels differ from the set's ($bl, $(mosaic.white) vs $blacks, $white)")
-            blacks = bl; white = mosaic.white; offsets = [Vector(o) for o in lin.plane_offsets]
+            blacks = bl; white = mosaic.white; lin1 === nothing && (lin1 = lin)
             wb === nothing && (wb = collect(Float64.(mosaic.metadata.daylight_wb)))
             codes = encode_codes(lin, blacks, white, gain)
             back = decode_codes(codes, blacks, white, gain)
@@ -163,11 +164,14 @@ function decoded_frames(C; masks::Bool, log = devnull)
     end
     open(meta_path, "w") do io
         JSON.print(io, Dict("format" => CACHE_FORMAT, "mode" => mode, "gain" => gain, "black" => collect(blacks), "white" => white,
-                            "plane_offsets" => offsets, "daylight_wb" => wb, "raw_dir" => C.cfg["inputs"]["raw_dir"],
+                            "daylight_wb" => wb, "raw_dir" => C.cfg["inputs"]["raw_dir"],
                             "frames" => new_entries), 2)
     end
-    return (; names = raws, frames, saturated = sats, plane_offsets = [SVector{2, Float64}(o...) for o in offsets], daylight_wb = wb,
-            levels = (; black = collect(blacks), white, gain))
+    # on a full cache hit, the maps from one decode of the first RAW (its mosaic alone fixes them)
+    lin1 === nothing && (lin1 = VgtkFeatures.LinearRaw(VgtkFeatures.load_raw_mosaic(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), raws[1]);
+                                                                                    decoder = VgtkFeatures.LibRawDecoder()); mode = Symbol(mode), gain))
+    return (; names = raws, frames, saturated = sats, frame_map = VgtkFeatures.raw_frame_map(lin1),
+            plane_maps = ntuple(c -> VgtkFeatures.bayer_plane_map(lin1, c), 3), daylight_wb = wb, levels = (; black = collect(blacks), white, gain))
 end
 
 # ----------------------------------------------------------------------------- the lens
@@ -230,7 +234,8 @@ end
 # record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's filtered_rotation_averaging at `cycle_tol_deg` and
 # `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed. v8: the bundle is one LM
 # run at bundle_scale_multiple × the pairs' pooled SIMFIT++ scale (bundle_iterations retired); the record holds σ̂ and its iterations.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v8 (one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+# v9: the verified pairs' v5 (the clip mask, Features' canonical detection order).
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v9 (the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -239,7 +244,9 @@ registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORM
 # v3: the detector's selection and detection image (`selection`, `detection_image` and its noise keys), every ASIFT detection
 # refined (VisualGeometryToolkitFeatures 0.9), the kept keypoints the described set.
 # v4: per pair its SIMFIT++ noise scale (sigma, success).
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v4 (per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+# v5: no keypoint within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
+# Features' canonical order, the frames' map Features' raw_frame_map.
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v5 (the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_loss", "cycle_tol_deg", "orientation_tol_deg", "bundle_loss", "bundle_scale_multiple", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol", "bundle_whitening")
 function pairs_settings(r)
@@ -279,6 +286,10 @@ function pairs_from_record(rec)
     return VerifiedPairs(feats, verified, matches, stats, scales, loma)
 end
 
+# ASIFT's tilts, `[registration] asift_tilts`: a Features `tilt_schedule` name ("imas25", "untilted") or a list of [t, φ] pairs.
+asift_tilts(t::AbstractString) = Symbol(t)
+asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
+
 # The detector's settings of [registration]: `selection` ("spread" or "strongest"), `detection_image` ("tone" or "vst") and, with
 # "vst" only, the sensor's noise at the frames' ISO (`electrons_per_dn`, `read_noise_dn`) and the threshold `noise_sigmas`: a noise
 # key with "tone" is refused, never read.
@@ -313,8 +324,8 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
         t0 = time()
         det = detector_settings(r)
         frames = det.detection_image === :vst ? linear_raws(C, inp) : inp.frames
-        vp = verify_pairs(frames, lens; raw_scale = 2, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
-                          asift_tilts = r["asift_tilts"] == "imas25" ? nothing : [Tuple(t) for t in r["asift_tilts"]],
+        vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
+                          asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
                           max_detections = r["max_detections"], det..., descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
                           min_inliers = r["min_inliers"], seed = r["seed"],
@@ -460,8 +471,8 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
     gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
     return fit_vignetting(m, lens, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
-                          saturated = dev.saturated, raw_scale = 2,
-                          rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_offsets = dev.plane_offsets,
+                          saturated = dev.saturated, frame_map = dev.frame_map,
+                          rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_maps = dev.plane_maps,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
                           measurement_noise = fit_measurement_noise(v, point_scale_px))
@@ -477,22 +488,17 @@ gains_text(G; d = 4) = join([join(round.(G[k, :]; digits = d), " / ") for k in a
 no_vignetting(u, f) = 1.0
 
 "The covered (lon, lat) box in the up frame: a coarse equirectangular render's seen pixels."
-function coverage_extent(lens, frames, rotations, up; δ = 0.5)
+function coverage_extent(lens, frames, rotations, up, frame_map; δ = 0.5)
     v = panorama_view(VgtkCore.Equirectangular(), (-180.0, 180.0, -89.0, 89.0), δ; up)
-    r = render_panorama(lens, frames, rotations, v; vignetting = no_vignetting, raw_scale = 2,
+    r = render_panorama(lens, frames, rotations, v; vignetting = no_vignetting, frame_map,
                         rim_margin_px = 0.0, fov_deg = 89.0)
     seen = findall(>(0), Array(r.coverage))
     rows = extrema(I -> I[1], seen); cols = extrema(I -> I[2], seen)
     return (-180 + δ * (cols[1] - 1), -180 + δ * cols[2], 89 - δ * rows[2], 89 - δ * (rows[1] - 1))
 end
 
-srgb(x) = x <= 0.0031308f0 ? 12.92f0 * x : 1.055f0 * x^(1 / 2.4f0) - 0.055f0
-"An H × W × 3 linear image as 8-bit sRGB at a fixed exposure, each plane times its white-balance factor (NaN, no frame: black)."
-function save_srgb(path, img, exposure, wb)
-    q = clamp.(ifelse.(isnan.(img), 0.0f0, Float32.(img) .* (Float32(exposure) .* reshape(Float32.(wb), 1, 1, 3))), 0.0f0, 1.0f0)
-    n(x) = reinterpret(FPN.N0f8, round(UInt8, 255 * srgb(x)))
-    PNGFiles.save(path, CT.RGB{FPN.N0f8}.(n.(view(q, :, :, 1)), n.(view(q, :, :, 2)), n.(view(q, :, :, 3))))
-end
+"An H × W × 3 linear image as 8-bit sRGB at a fixed exposure, each plane times its white-balance factor (NaN, no frame: black): Features' `srgb_image`."
+save_srgb(path, img, exposure, wb) = PNGFiles.save(path, VgtkFeatures.srgb_image(img; exposure, white_balance = wb))
 "A seam-ratio map: red where the other frames are brighter than the shown one, blue darker, ±`lim` in log; grey unmeasured."
 function save_ratio(path, M; lim = 0.3)
     col(v) = isnan(v) ? CT.RGB{FPN.N0f8}(0.5, 0.5, 0.5) : (x = clamp(v / lim, -1, 1);
@@ -580,7 +586,7 @@ function run_example(config_path)
     device in ("cuda", "cpu") || error("compute.device = $device is not \"cuda\" or \"cpu\"")
     say(log, "compute: $device$(haskey(ENV, "PANORAMA_VIGNETTING_DEVICE") ? " (PANORAMA_VIGNETTING_DEVICE)" : "")")
     move = device == "cuda" ? CuArray : identity
-    dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.plane_offsets, inp.levels)
+    dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps, inp.levels)   # the maps: isbits
     kind = C.cfg["vignetting"]["model"]
     fkw = (; point_scale_px = reg.point_scale_px)
     fit(kind, C, lens, dev, reg.rotations, W, H; fkw...)                          # compile
@@ -596,10 +602,10 @@ function run_example(config_path)
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
-    ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up) : Tuple(sc["extent"])
+    ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])
     sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
-    skw = (; saturated = dev.saturated, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
-           plane = d["plane"], plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
+    skw = (; saturated = dev.saturated, frame_map = dev.frame_map, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
+           plane = d["plane"], plane_maps = dev.plane_maps, chunk = sc["chunk"])
     t = time()
     before = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
     after = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
@@ -611,7 +617,7 @@ function run_example(config_path)
     # the renders: the real images (no saturation mask), corrected and uncorrected at one exposure
     rc = C.cfg["render"]
     rext = rc["extent"] == "coverage" ? ext : Tuple(rc["extent"])
-    rkw = (; raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_offsets = dev.plane_offsets)
+    rkw = (; frame_map = dev.frame_map, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_maps = dev.plane_maps)
     V = VgtkCore.estimate(res)
     # the corrected renders divide by the frames' gains as well; the uncorrected ones show the frames as they are
     render(view, vig) = Array(render_panorama(lens, dev.frames, reg.rotations, view; vignetting = vig,

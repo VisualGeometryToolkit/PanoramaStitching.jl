@@ -58,8 +58,8 @@ Adapt.@adapt_structure _SeamRatio
 end
 
 """
-    score_seams(camera::BoundedCamera, frames, rotations, view; vignetting, saturated, raw_scale, rim_margin_px, fov_deg, plane,
-                plane_offsets, chunk, gains = nothing) -> (; ratio, rms, mad, n)
+    score_seams(camera::BoundedCamera, frames, rotations, view; vignetting, saturated, frame_map, rim_margin_px, fov_deg, plane,
+                plane_maps = ntuple(_ -> frame_map, 3), chunk, gains = nothing) -> (; ratio, rms, mad, n)
 
 How well `vignetting` makes the frames agree where they overlap, at every
 pixel of the panorama raster `view` ([`panorama_view`](@ref)): the pixel's ray
@@ -77,15 +77,16 @@ colour plane: [`fit_vignetting`](@ref)'s `metadata.gains`) divides each
 frame's exposure gain of `plane` out as well, `log(I_k/(g_k,plane·V_k))`;
 `nothing` takes the frames as one exposure.
 
-The camera and the masks are [`sample_frames`](@ref)'s (`camera` a
+The camera, the masks and the frames' and planes' maps (`frame_map`,
+`plane_maps`) are [`sample_frames`](@ref)'s (`camera` a
 VisualGeometryToolkitCore `BoundedCamera`: its forward map and its `imaged_region`). The raster is sampled in
 chunks of `chunk` pixels (the samples are `chunk × K × 3` values on the frames'
 backend: chunk to fit a shared GPU's memory). Returns `ratio` (rows × columns,
 NaN where fewer than two frames measure the pixel) on the frames' backend.
 """
 function score_seams(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView;
-                     vignetting, saturated::AbstractVector, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane::Integer,
-                     plane_offsets, chunk::Integer, gains = nothing)
+                     vignetting, saturated::AbstractVector, frame_map, rim_margin_px::Real, fov_deg::Real, plane::Integer,
+                     plane_maps = ntuple(_ -> frame_map, 3), chunk::Integer, gains = nothing)
     K = length(frames)
     1 <= plane <= 3 || throw(ArgumentError("score_seams: plane $plane of a 3-plane frame"))
     chunk > 0 || throw(ArgumentError("score_seams: chunk must be positive, got $chunk"))
@@ -93,15 +94,15 @@ function score_seams(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rot
     nv, nλ = view.size; N = nv * nλ
     proto = frames[1]; be = KA.get_backend(proto)
     D = similar(proto, SVector{3, Float64}, nv, nλ)
-    VgtkCore.pointwise!(_RayAt{Float64}(view.rays), D, CartesianIndices((nv, nλ)))
+    VgtkCore.pointwise!(_AtPixelCentre{Float64}(view.rays), D, CartesianIndices((nv, nλ)))
     D = vec(D)
     ratio = fill!(similar(proto, Float64, N), NaN)
     G = gains === nothing ? nothing : reshape(Adapt.adapt(be, Float64.(collect(gains[:, plane]))), 1, K)
     exec = VgtkCore.OnBackend(be)
     for lo in 1:chunk:N
         hi = min(lo + chunk - 1, N)
-        S = sample_frames(camera, frames, rotations, D[lo:hi]; saturated, raw_scale, rim_margin_px, fov_deg, vignetting,
-                          plane_offsets)
+        S = sample_frames(camera, frames, rotations, D[lo:hi]; saturated, frame_map, rim_margin_px, fov_deg, vignetting,
+                          plane_maps)
         vals = Base.view(S.values, :, :, plane)
         G === nothing || (S.vignetting .*= G)                             # I_k / (g_k·V_k): the frame's exposure too
         VgtkCore.pointwise!(_SeamRatio(vals, S.vignetting, S.seen, K), Base.view(ratio, lo:hi), CartesianIndices((hi - lo + 1,)); exec)

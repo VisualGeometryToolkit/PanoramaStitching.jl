@@ -36,3 +36,12 @@ end
     foreach(v -> @info(sprint(show, v)), found)
     @test isempty(found)
 end
+
+@testitem "duplication: one implementation per concept" begin
+    # VisualGeometryToolkitCore's `check_duplication` over the package (names an upstream stack package owns, restated function
+    # bodies, copied files, retired patterns), against the stack repositories in ENV["VGTK_STACK_PATHS"] (absent ones skipped)
+    using Test
+    import VisualGeometryToolkitCore as VgtkCore
+    using PanoramaStitching
+    VgtkCore.test_duplication(PanoramaStitching)
+end

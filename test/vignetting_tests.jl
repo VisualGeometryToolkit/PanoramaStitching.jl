@@ -35,11 +35,11 @@ function vignetting_sequence(logV; gains = ones(6))
         img
     end
     camera = BoundedCamera(model, Size2(W, H); lens_coverage = circle)                 # the sensor lit inside the image circle
-    return (; frames, camera, raw_scale = s, R, saturated = [falses(Hf, Wf) for _ in R])
+    return (; frames, camera, R, saturated = [falses(Hf, Wf) for _ in R])
 end
 end
 
-@testitem "fit_vignetting: a radial and an off-centre 2-D V recovered, host and device, CG and Cholesky" setup = [VignettingSequence] begin
+@testitem "fit_vignetting: a radial and an off-centre 2-D V recovered, host and device, CG and Cholesky" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
     using LinearAlgebra: I
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, panorama_view, ConjugateGradient, SparseCholesky
@@ -56,8 +56,8 @@ end
         r = exp.(a .- b) .- 1
         return maximum(abs, r), sqrt(mean(abs2, r))
     end
-    kw = (; raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
-          plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
+    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0,
+          plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
           vignetting_penalty_weight = 1.0e-6, gain_correction = nothing)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
 
@@ -94,8 +94,8 @@ end
 
     # the seam score: the true V leaves (almost) nothing, no correction leaves the vignetting's steps
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
-          plane_offsets = nothing, chunk = 20_000)
+    sk = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+          chunk = 20_000)
     fitted = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(cg), sk...)
     none = score_seams(q.camera, q.frames, q.R, view; vignetting = (u, f) -> 1.0, sk...)
     @info "score_seams: fitted V rms $(fitted.rms) mad $(fitted.mad), none rms $(none.rms) mad $(none.mad), $(fitted.n) pixels"
@@ -103,7 +103,7 @@ end
     @test fitted.mad < 0.1 * none.mad && fitted.rms < 0.1 * none.rms
 end
 
-@testitem "fit_vignetting, score_seams: the device agrees with the host" setup = [VignettingSequence] begin
+@testitem "fit_vignetting, score_seams: the device agrees with the host" setup = [VignettingSequence, BayerMaps] begin
     using Test, StaticArrays, CUDA
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient
     import VisualGeometryToolkitCore as VgtkCore
@@ -126,8 +126,8 @@ end
         radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
         q = vignetting_sequence(radial)
         v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-        kw = (; raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0,
-              plane = 2, plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
+        kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0,
+              plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
               vignetting_penalty_weight = 1.0e-6, gain_correction = ChannelGains(), free_directions = pole_regular_basis(v0),
               solver = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000))
         h = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, kw...)
@@ -145,7 +145,7 @@ end
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-        sk = (; raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+        sk = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
               chunk = 20_000, vignetting = VgtkCore.estimate(h))
         sh = score_seams(q.camera, q.frames, q.R, view; saturated = q.saturated, sk...)
         sd = score_seams(q.camera, df, q.R, view; saturated = ds, sk...)
@@ -157,7 +157,7 @@ end
         hf = fit_vignetting(tv, q.camera, q.frames, q.R; saturated = q.saturated, kw..., free_directions = zeros(0, 0))
         dfit = fit_vignetting(tv, q.camera, df, q.R; saturated = ds, kw..., free_directions = zeros(0, 0))
         @test maximum(abs.(dfit.metadata.gains .- hf.metadata.gains)) < 1.0e-8
-        rk = (; vignetting = tv, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+        rk = (; vignetting = tv, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0)
         a = render_panorama(q.camera, q.frames, q.R, view; rk...); b = render_panorama(q.camera, df, q.R, view; rk...)
         @test isequal(Array(b.owner), a.owner) && maximum(abs, filter(!isnan, vec(Array(b.image) .- a.image))) < 1.0e-5
         sdt = score_seams(q.camera, df, q.R, view; saturated = ds, sk..., vignetting = tv)
@@ -169,7 +169,7 @@ end
 # recovers the gains (gauge g₁ = 1, exactly) and V; without them the exposure differences go into V and the scene, and V is
 # wrong. With V held fixed (no free direction: gain compensation under a calibration's V) the same solve recovers the gains
 # alone. score_seams and render_panorama divide the gains out.
-@testitem "fit_vignetting: the frames' exposure gains recovered (gauge g₁ = 1), V free or held fixed; score_seams and render_panorama divide them out" setup = [VignettingSequence] begin
+@testitem "fit_vignetting: the frames' exposure gains recovered (gauge g₁ = 1), V free or held fixed; score_seams and render_panorama divide them out" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient,
         SparseCholesky, IntensityAndPositionNoise, IntensityGains
@@ -180,7 +180,7 @@ end
     g = [1.0, 1.12, 0.9, 1.2, 0.95, 1.07]
     q = vignetting_sequence(radial; gains = g)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-    kw = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
     function v_error(v)
@@ -247,7 +247,7 @@ end
 
     # the seams: the fitted V with its gains leaves (almost) nothing; the same V with the frames taken at one exposure does not
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+    sk = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           chunk = 20_000, vignetting = VgtkCore.estimate(with))
     sg = score_seams(q.camera, q.frames, q.R, view; gains = G, sk...)
     s1 = score_seams(q.camera, q.frames, q.R, view; sk...)
@@ -257,7 +257,7 @@ end
     @test_throws DimensionMismatch score_seams(q.camera, q.frames, q.R, view; gains = gw, sk...)      # K × 3, not a vector
 
     # the render: dividing by g_k·V makes every frame show the same scene value
-    rk = (; vignetting = VgtkCore.estimate(with), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+    rk = (; vignetting = VgtkCore.estimate(with), frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0)
     a = render_panorama(q.camera, q.frames, q.R, view; gains = G, rk...)
     b = render_panorama(q.camera, q.frames, q.R, view; rk...)
     o = a.owner; m = o .> 0
@@ -269,7 +269,7 @@ end
 # LogVignetting along its free directions) and with V held fixed (the true V as a plain callable: its log V(u) the fixed numbers).
 # ChannelGains recovers every plane's gains and V; IntensityGains the fitted plane's gains, every column the same; nothing, ones.
 # score_seams and render_panorama read the K × 3 gains per plane.
-@testitem "fit_vignetting: gain_correction none / intensity / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence] begin
+@testitem "fit_vignetting: gain_correction none / intensity / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, ConjugateGradient,
         IntensityGains, ChannelGains, GAIN_CORRECTIONS
@@ -281,7 +281,7 @@ end
     q = vignetting_sequence(radial; gains = G)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     truth(u, f) = exp(radial(u))                                     # a V given as any callable
-    kw = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, plane_offsets = nothing,
+    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
     function v_error(v)
         us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([SVector((j - 0.5) * 2, (i - 0.5) * 2) for j in 1:400, i in 1:400]))
@@ -314,13 +314,13 @@ end
     ch = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), kw...)
     fr = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = IntensityGains(), kw...)
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0, plane_offsets = nothing, chunk = 20_000)
+    sk = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, chunk = 20_000)
     for p in (1, 3)
         sc = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(ch), gains = ch.metadata.gains, plane = p, sk...)
         sf = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(fr), gains = fr.metadata.gains, plane = p, sk...)
         @test sc.rms < 0.1 * sf.rms
     end
-    rk = (; vignetting = VgtkCore.estimate(ch), raw_scale = 2, rim_margin_px = 8.0, fov_deg = 120.0)
+    rk = (; vignetting = VgtkCore.estimate(ch), frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0)
     a = render_panorama(q.camera, q.frames, q.R, view; gains = ch.metadata.gains, rk...)
     b = render_panorama(q.camera, q.frames, q.R, view; rk...)
     o = a.owner; m = findall(o .> 0)[1:97:end]
@@ -432,7 +432,10 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head in (:(=), :function) && named(x.args[1], name))
     m = Module()
     Core.eval(m, :(using PanoramaStitching, StaticArrays; import JSON; import VisualGeometryToolkitCore as VgtkCore))
-    for name in (:data_root, :input_path, :say, :stage_key, :cached_record, :REGISTRATION_FORMAT, :registration_key, :PAIRS_FORMAT,
+    # the example's input_path reads VisualGeometryToolkitEval's data_root (not a test dependency: the stack's allow-list), which is
+    # ENV["VGTK_DATA_ROOT"] when it is set, as here
+    Core.eval(m, :(input_path(rel) = joinpath(ENV["VGTK_DATA_ROOT"], rel)))
+    for name in (:say, :stage_key, :cached_record, :REGISTRATION_FORMAT, :registration_key, :PAIRS_FORMAT,
                  :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :loma_record, :pairs_record, :pairs_from_record,
                  :DETECTION_NOISE_KEYS, :detector_settings)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))

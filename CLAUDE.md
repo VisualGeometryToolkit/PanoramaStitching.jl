@@ -36,7 +36,8 @@ from the registries (CauRegistry; General for those it holds).
   render shares.
 - `src/panorama.jl` — `panorama_view`, `render_panorama`, `render_cube_map`.
 - `src/vignetting.jl` — `fit_vignetting`: the spline spaces (`RadialVignetting`, `TensorProductVignetting`), the scene's
-  `AzimuthalChart`, the scatter-add kernels of the normal equations (KernelAbstractions + Atomix), device CG or host
+  `AzimuthalChart`, the scatter-add kernels of the normal equations (KernelAbstractions + Atomix), the scene penalty Core's
+  `difference_rows`, device CG (Core's `normal_cg`) or host
   Cholesky (SparseArrays).
 - `src/seams.jl` — `score_seams`: the seam ratio per raster pixel through `sample_frames`.
 - `examples/panorama_vignetting/` — the RAW-to-corrected-panorama driver (`run.jl`) and its configs of record; its own

@@ -32,7 +32,7 @@ using StableRNGs: StableRNG
 using Static: static
 using StaticArrays: SVector, SMatrix, StaticVector
 using Rotations: RotMatrix
-using CoordinateTransformations: AffineMap, LinearMap, Translation
+using CoordinateTransformations: AffineMap, LinearMap
 import NLLSsolver
 import KernelAbstractions as KA
 import Adapt

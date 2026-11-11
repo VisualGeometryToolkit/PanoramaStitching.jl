@@ -110,8 +110,8 @@ function panorama_view(camera::VgtkCore.CameraModel, width::Integer, height::Int
 end
 
 """
-    render_panorama(camera::BoundedCamera, frames, rotations, view; vignetting, raw_scale, rim_margin_px, fov_deg,
-                    plane_offsets = nothing, gains = nothing) -> (; image, owner, coverage, extent)
+    render_panorama(camera::BoundedCamera, frames, rotations, view; vignetting, frame_map, rim_margin_px, fov_deg,
+                    plane_maps = ntuple(_ -> frame_map, 3), gains = nothing) -> (; image, owner, coverage, extent)
 
 The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the REVERSE warp, Core's
 `image_warp`/`image_warp!`: every pixel's ray `d` (the view's pixel → ray map) is rotated into each frame `k`
@@ -129,11 +129,11 @@ A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z ax
 and at least 2 px inside the frame — the geometric masks of [`sample_frames`](@ref), evaluated as batches at the warp's own
 sensor points. The render shows the frames as they are: a saturated pixel is rendered with its clipped value (a window that
 clips in every frame comes out bright, not empty); saturation masks measurements only ([`sample_frames`](@ref),
-[`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images with `raw_scale` camera pixels
-per frame pixel; `plane_offsets` are the three planes' sample
-positions relative to the pixel centre in frame pixels (`nothing`: all at the centre) — a 2 × 2 Bayer binning's R and B sit
-at `(±¼, ±¼)` (VisualGeometryToolkitFeatures' `load_raw(…; mode = :bin2).plane_offsets`), and each plane is read at the
-sensor point less its offset. The masks and the vignetting are at the pixel centre's point.
+[`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images. `frame_map` is the frames' map
+onto the camera's pixels (VisualGeometryToolkitFeatures' `raw_frame_map(L)`), and `plane_maps` each plane's
+(`bayer_plane_map(L, c)`; by default every plane's is the frame's); plane c is read through
+`inv(plane_maps[c]) ∘ camera ∘ R_kᵀ ∘ rays`, all three planes in one Core `image_warp!`. The masks and the vignetting are at
+the pixel centre's sensor point.
 
 Every step runs on the backend that owns `frames` (GPU arrays: one kernel per warp, mask and update; the same code on the
 host); for device arrays `vignetting` must be kernel-lawful (it is evaluated only where a frame sees the pixel). The warp's
@@ -145,65 +145,55 @@ Returns `image` (rows × columns × 3, NaN where no frame sees the pixel), `owne
 none), `coverage` (how many frames see each pixel), all on the frames' backend, and the view's `extent`.
 """
 function render_panorama(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector, view::PanoramaView;
-                         vignetting, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, plane_offsets = nothing, gains = nothing)
-    offsets = _plane_offsets(plane_offsets)
+                         vignetting, frame_map, rim_margin_px::Real, fov_deg::Real, plane_maps = ntuple(_ -> frame_map, 3),
+                         gains = nothing)
+    _checked_plane_maps("render_panorama", plane_maps)
     K = length(frames)
     length(rotations) == K || throw(DimensionMismatch("render_panorama: $K frames and $(length(rotations)) rotations"))
     Hf, Wf, C = size(frames[1])
     C == 3 || throw(DimensionMismatch("render_panorama: frames are H × W × 3, got $(size(frames[1]))"))
     _check_gains("render_panorama", gains, K, C)
-    T = float(eltype(frames[1])); s = raw_scale
+    T = float(eltype(frames[1]))
     fwd = _forward_map(camera, frames[1])
-    sees = _Sees(frame_region(camera, Wf * s, Hf * s, rim_margin_px), cosd(Float64(fov_deg)))
+    sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg)))
     nv, nλ = view.size
     rect = VgtkCore.Rect(0, 0, nλ, nv)
     proto = frames[1]
     image = fill!(similar(proto, T, nv, nλ, 3), T(NaN)); owner = fill!(similar(proto, Int, nv, nλ), 0)
     coverage = fill!(similar(proto, Int, nv, nλ), 0)
     U = similar(proto, SVector{2, Float64}, nv, nλ); F = similar(proto, SVector{3, Float64}, nv, nλ)
-    ok = similar(proto, Bool, nv, nλ); V = similar(proto, T, nv, nλ); w = similar(proto, T, nv, nλ)
+    ok = similar(proto, Bool, nv, nλ); V = similar(proto, T, nv, nλ); w3 = similar(proto, T, nv, nλ, 3)
     idx = CartesianIndices((nv, nλ))
-    scale = LinearMap(SMatrix{2, 2, Float64, 4}(1 / s, 0.0, 0.0, 1 / s))        # camera pixels → the binned frame's
     for k in 1:K
         Rt = LinearMap(SMatrix{3, 3, Float64, 9}(rotations[k])')
-        # frame k's warp: the output (row, col) → the frame's (row, col); the same chain without the camera, the rays f
+        # frame k's chain: the output pixel → its ray f in the frame's camera frame → the sensor point (camera pixels)
         fk = Rt ∘ view.rays
-        bm = VgtkCore.image_warp(Float64, scale ∘ fwd ∘ fk, rect)
-        VgtkCore.pointwise!(_SensorPoint{Float64}(bm, s), U, idx)
-        VgtkCore.pointwise!(_RayAt{Float64}(fk), F, idx)
+        VgtkCore.pointwise!(_AtPixelCentre{Float64}(fwd ∘ fk), U, idx)
+        VgtkCore.pointwise!(_AtPixelCentre{Float64}(fk), F, idx)
         VgtkCore.pointwise!(sees, ok, U, F)
         VgtkCore.pointwise!(_WhereSeen(vignetting, T), V, ok, U, F; exec = VgtkCore.OnBackend(KA.get_backend(U)))
+        # each plane read through its own map: the output (row, col) → the plane's (row, col)
+        warps = map(P -> VgtkCore.image_warp(Float64, inv(P) ∘ fwd ∘ fk, rect), plane_maps)
+        VgtkCore.image_warp!(w3, warps, frames[k])
         for c in 1:3
-            # a plane whose samples sit at o_c (frame pixels) is read at the frame point less o_c
-            bmc = iszero(offsets[c]) ? bm : VgtkCore.image_warp(Float64, Translation(-offsets[c]) ∘ scale ∘ fwd ∘ fk, rect)
-            VgtkCore.image_warp!(w, bmc, Base.view(frames[k], :, :, c))
             img = Base.view(image, :, :, c)
             g = gains === nothing ? one(T) : T(gains[k, c])                   # the frame's exposure in this plane, divided out with V
-            img .= ifelse.(ok, w ./ (g .* V), img)
+            img .= ifelse.(ok, Base.view(w3, :, :, c) ./ (g .* V), img)
         end
         owner .= ifelse.(ok, k, owner); coverage .+= ok
     end
     return (; image, owner, coverage, view.extent)
 end
 
-# The warp's sensor point of an output pixel (row, col), in camera pixels: the warp lands on the binned frame's (row, col), whose
-# COLMAP point scaled by `s` is the camera's (a fractional index, so not Core's `pixel_centre` of an array index). And the ray
-# map of the output pixel's COLMAP centre (Core's `pixel_centre`). Isbits functors (a closure over the element type would not
-# reach a device).
-struct _SensorPoint{T, B}
-    bm::B
-    s::T
+# A map (an output pixel's chain: its ray, its sensor point) at the output pixel's COLMAP centre (Core's `pixel_centre`): an
+# isbits functor (a closure over the element type would not reach a device).
+struct _AtPixelCentre{T, M}
+    map::M
 end
-_SensorPoint{T}(bm::B, s) where {T, B} = _SensorPoint{T, B}(bm, T(s))
-# The device form: the warp adapted by Core's rule (a SplineLens's control grids moved to the device), the scale kept.
-Adapt.adapt_structure(to, p::_SensorPoint{T}) where {T} = _SensorPoint{T}(Adapt.adapt(to, p.bm), p.s)
-@inline (p::_SensorPoint{T})(I) where {T} =
-    (q = p.bm(SVector{2, T}(I[1], I[2])); SVector{2, T}(p.s * (q[2] - T(0.5)), p.s * (q[1] - T(0.5))))
-struct _RayAt{T, M}
-    rays::M
-end
-_RayAt{T}(rays::M) where {T, M} = _RayAt{T, M}(rays)
-@inline (r::_RayAt{T})(I) where {T} = SVector{3, T}(r.rays(VgtkCore.pixel_centre(T, I)))
+_AtPixelCentre{T}(map::M) where {T, M} = _AtPixelCentre{T, M}(map)
+# The device form: the map adapted by Core's rule (a SplineLens's control grids moved to the device).
+Adapt.adapt_structure(to, p::_AtPixelCentre{T}) where {T} = _AtPixelCentre{T}(Adapt.adapt(to, p.map))
+@inline (p::_AtPixelCentre{T})(I) where {T} = p.map(VgtkCore.pixel_centre(T, I))
 
 """
     CUBE_FACES

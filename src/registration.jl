@@ -88,8 +88,8 @@ struct VerifiedPairs{F}
 end
 
 """
-    verify_pairs(frames, camera::BoundedCamera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                 selection = :spread, detection_image = :tone, detection_noise = nothing, descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
+    verify_pairs(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+                 selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                  scoring = nothing, local_optimization = nothing, max_trials, min_trials, averaging_loss,
                  execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
@@ -103,14 +103,17 @@ pairs aims the pairs past the lag. A `pairs` other than `:all` or
 `LinearRaw`) and an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
 are an `ArgumentError` before any feature is detected.
 """
-function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; raw_scale::Integer,
+function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; frame_map,
                       tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
-                      selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing, descriptor::Symbol, matcher::Symbol,
+                      selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
+                      saturated::Union{Nothing, AbstractVector} = nothing, descriptor::Symbol, matcher::Symbol,
                       min_score::Real, pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                       scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
                       averaging_loss::VgtkCore.AbstractLossShape, execution_provider::Symbol = :auto, say = _ -> nothing)
     _check_pair_settings("verify_pairs", pairs, max_lag)
     _check_frames("verify_pairs", frames, selection, detection_image, detection_noise)
+    saturated === nothing || length(saturated) == length(frames) ||
+        throw(DimensionMismatch("verify_pairs: $(length(frames)) frames and $(length(saturated)) saturation masks"))
     # resolved once (one warning on a fallback to the CPU), refusing an unknown provider, before any feature is detected
     provider = VgtkFeatures.resolve_execution_provider(execution_provider)
     K = length(frames)
@@ -118,8 +121,8 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; ra
     desc = VgtkFeatures.LoMaDescriptor(descriptor; max_detections, execution_provider = provider)
     match = VgtkFeatures.LoMaMatcher(matcher; execution_provider = provider)
     feats = map(1:K) do k
-        f = detect_features(camera, frames[k], desc; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                            selection, detection_image, detection_noise)
+        f = detect_features(camera, frames[k], desc; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+                            selection, detection_image, detection_noise, saturated = saturated === nothing ? nothing : saturated[k])
         say("  frame $(k - 1): $(f.n_detected) ASIFT detections, $(length(f.pixels)) kept")
         f
     end
@@ -204,8 +207,8 @@ _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint
     throw(ArgumentError("$what: bundle_whitening = :$bundle_whitening is not :none or :keypoint_covariance"))
 
 """
-    register_rotations(frames, camera::BoundedCamera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                       selection = :spread, detection_image = :tone, detection_noise = nothing,
+    register_rotations(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
+                       selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing,
                        descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
                        scoring = nothing, local_optimization = nothing, max_trials, min_trials,
                        averaging_loss, cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), bundle_loss, bundle_scale_multiple, bundle_max_iter, bundle_ftol,
@@ -217,7 +220,7 @@ _check_whitening(what, bundle_whitening) = bundle_whitening in (:none, :keypoint
                        bundle_camera_free = (), say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
-capture order, `raw_scale` camera pixels per frame pixel) seen by the calibrated
+capture order, `frame_map` their map onto the camera's pixels: VisualGeometryToolkitFeatures' `raw_frame_map`) seen by the calibrated
 `camera` (fixed; a VisualGeometryToolkitCore `BoundedCamera`, whose `imaged_region` bounds the features,
 projected in the bundle through its model's `imaging_transform` — a grid lens's `SplineLens` through its forward spline; see
 [`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's
@@ -225,8 +228,10 @@ statistics. Every setting is the caller's configuration, none defaulted but the
 RANSAC's:
 
 - features: inside the camera's `imaged_region`; `tone_percentile`,
-  `detector_margin_px`, `asift_tilts` (`nothing`: IMAS-25), `max_detections`,
-  `selection`, `detection_image`, `detection_noise` — see
+  `detector_margin_px`, `asift_tilts` (a Features `tilt_schedule` name, `:imas25`
+  or `:untilted`, or its pairs), `max_detections`, `selection`,
+  `detection_image`, `detection_noise`, `saturated` (the frames' clip masks,
+  `nothing`: a `LinearRaw`'s own, none for an array) — see
   [`detect_features`](@ref) (`detection_image = :vst`: the frames are `LinearRaw`s); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
   each for the whole registration on ONNX Runtime's `execution_provider`
@@ -295,9 +300,10 @@ than `:auto`, `:cpu` or `:cuda` are an `ArgumentError` before any feature is det
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `ArgumentError` too.
 """
-function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; raw_scale::Integer,
+function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; frame_map,
                             tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
                             selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
+                            saturated::Union{Nothing, AbstractVector} = nothing,
                             descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
                             scoring = nothing, local_optimization = nothing, max_trials::Integer, min_trials::Integer,
@@ -309,8 +315,8 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     _check_pair_settings("register_rotations", pairs, max_lag)
     _check_whitening("register_rotations", bundle_whitening)
     _check_tolerances("register_rotations", cycle_tol, orientation_tol)
-    vp = verify_pairs(frames, camera; raw_scale, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
-                      detection_image, detection_noise, descriptor, matcher,
+    vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
+                      detection_image, detection_noise, saturated, descriptor, matcher,
                       min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization, max_trials, min_trials,
                       averaging_loss, execution_provider, say)
     return register_rotations(vp, camera; averaging_loss, cycle_tol, orientation_tol, bundle_loss, bundle_scale_multiple, bundle_max_iter,

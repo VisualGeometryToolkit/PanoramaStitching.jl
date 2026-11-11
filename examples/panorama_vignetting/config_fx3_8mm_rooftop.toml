@@ -21,13 +21,13 @@ lens_camera = "none"                               # (a grid file holds one came
 device = "cuda"                                    # "cuda" or "cpu": the same kernels (log V agrees to 1e-6)
 
 [decode]
-mode = "bin2"                                      # Features' load_raw: 2 × 2 Bayer quads (R, mean G, B), raw_scale 2
+mode = "bin2"                                      # Features' load_raw: 2 × 2 Bayer quads (R, mean G, B); raw_frame_map x ↦ 2x
 gain = 1.0                                         # linear values, 1.0 = the white level
 
 [registration]                                     # register_rotations (every keyword stated); the settings that worked on
 tone_percentile = 99.5                             # the 14 mm set (2026-11-04)
 detector_margin_px = 30.0
-asift_tilts = "imas25"                             # nothing: Features' IMAS-25 tilt set
+asift_tilts = "imas25"                             # Features' tilt_schedule name ("imas25", "untilted") or [[t, φ], …]
 max_detections = 2048
 selection = "strongest"                            # "spread" (SSC: about max_detections spread over the frame) or "strongest" (the global top N by |response|)
 detection_image = "tone"                           # "tone" (sqrt(G / p), tone_percentile) or "vst" (the RAW's variance-stabilized green; then

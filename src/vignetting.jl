@@ -23,7 +23,7 @@
 # of a tensor surface's, none for a V held fixed — then any vignetting enters as the fixed numbers
 # log V(u): gain compensation under a given V). The normal equations are accumulated on the frames'
 # backend by atomic scatter-add (KernelAbstractions; GPU arrays or the host, one code path) and solved
-# by Jacobi-preconditioned conjugate gradients on that backend (`ConjugateGradient`) or by a sparse
+# by Jacobi-preconditioned conjugate gradients on that backend (Core's `normal_cg`: `ConjugateGradient`) or by a sparse
 # Cholesky factorization on the host (`SparseCholesky`).
 #
 # A row is the implicit constraint g(θ; x) = log I − log L(R_k·f(u)) − log V(u) − γ_k on the
@@ -45,8 +45,10 @@
     ConjugateGradient(; tolerance, max_iter)
 
 [`fit_vignetting`](@ref)'s solve by Jacobi-preconditioned conjugate gradients
-on the frames' backend, to the relative residual `tolerance` within `max_iter`
-iterations (`retcode = :max_iterations` when the budget ends first).
+on the frames' backend (VisualGeometryToolkitCore's `normal_cg` on the applied
+normal equations), to the relative residual `tolerance` (`‖g − N x‖ ≤
+tolerance·‖g‖`, `g` the right-hand side) within `max_iter` iterations
+(`retcode = :max_iterations` when the budget ends first).
 """
 struct ConjugateGradient
     tolerance::Float64
@@ -167,7 +169,7 @@ const MEASUREMENT_NOISES = VgtkCore.TagRegistry(:measurement_noise, "Noise", "in
                                                 paths = [r"^vignetting\.measurement_noise$"])
 
 # The measurement covariance Σ_x over (u₁, u₂, log I).
-function _measurement_covariance(w::IntensityAndPositionNoise)
+function _noise_covariance(w::IntensityAndPositionNoise)
     Σ = w.point_covariance; s2 = w.log_intensity_scale^2
     return SMatrix{3, 3, Float64, 9}(Σ[1, 1], Σ[2, 1], 0.0, Σ[1, 2], Σ[2, 2], 0.0, 0.0, 0.0, s2)
 end
@@ -248,17 +250,11 @@ end
 
 # ----------------------------------------------------------------------------- device helpers
 
-_zeros(be, ::Type{T}, dims...) where {T} = fill!(KA.allocate(be, T, dims...), zero(T))
-_upload(be, x::AbstractArray) = copyto!(KA.allocate(be, eltype(x), size(x)), Array{eltype(x)}(x))   # a BitArray as Bools
+# A zero array on a backend (KernelAbstractions' allocate, filled): the stack has no public form yet (a hoist into Core,
+# beside `ka_upload`, is open: .release/duplication-checklist.md).
+_device_zeros(be, ::Type{T}, dims...) where {T} = fill!(KA.allocate(be, T, dims...), zero(T))
 _elapsed(be, t0) = (KA.synchronize(be); (time_ns() - t0) / 1.0e9)
 
-# The sensor point of a frame pixel (row, col) for a plane whose sample sits at `offset` (frame pixels): the frame's COLMAP point
-# (Core's `pixel_centre`) + offset, scaled by `s` camera pixels per frame pixel.
-struct _PlanePoint{T}
-    s::T
-    offset::SVector{2, T}
-end
-@inline (p::_PlanePoint{T})(I) where {T} = p.s * (VgtkCore.pixel_centre(T, I) + p.offset)
 
 # log V at a sensor point u and its ray f, in u's own number type (a ForwardDiff dual for the measurement gradient): a LogVignetting's
 # spline of log V, else the log of any vignetting held fixed (any vignetting the render takes, `v(u, f)`; a Core model reads u
@@ -460,31 +456,6 @@ end
     end
 end
 
-# The difference penalty of order 2 or 3 along each chart axis, on runs of order + 1 active controls; an inactive control gets
-# a unit diagonal (its coefficient solves to 0 and is reported NaN). `dd` the difference's coefficients, Core's
-# `difference_stencil(order)` (padded with a zero to four).
-@kernel function _penalty_kernel!(S, @Const(active), λ::Float64, n::Int, order::Int, dd::NTuple{4, Float64})
-    q = @index(Global)
-    @inbounds begin
-        a = (q - 1) % n + 1; b = (q - 1) ÷ n + 1
-        for axis in 1:2
-            ok = true
-            for j in 0:order
-                aj = axis == 1 ? a + j : a; bj = axis == 1 ? b : b + j
-                (aj > n || bj > n || !active[_chart_index(n, aj, bj)]) && (ok = false)
-            end
-            if ok
-                for j in 0:order, l in 0:order
-                    aj = axis == 1 ? a + j : a; bj = axis == 1 ? b : b + j
-                    off = axis == 1 ? 3 * 7 + (l - j + 3) + 1 : (l - j + 3) * 7 + 3 + 1
-                    Atomix.@atomic S[_chart_index(n, aj, bj), off] += λ * dd[j + 1] * dd[l + 1]
-                end
-            end
-        end
-        active[q] || (S[q, 3 * 7 + 3 + 1] = 1.0)
-    end
-end
-
 # y = S x for the 7 × 7 stencil matrix S.
 @kernel function _stencil_matvec_kernel!(y, @Const(S), @Const(x), n::Int)
     q = @index(Global)
@@ -540,31 +511,9 @@ end
     end
 end
 
-# Jacobi-preconditioned conjugate gradients on the arrays' backend, from `x0` (zero by default).
-function _pcg(apply!, b, dinv; x0 = nothing, tolerance, max_iter)
-    Ap = similar(b)
-    if x0 === nothing
-        x = zero(b); r = copy(b)
-    else
-        x = copy(x0); apply!(Ap, x); r = b .- Ap
-    end
-    z = dinv .* r; p = copy(z)
-    rz = dot(r, z); nb = norm(b); it = 0; rel = 1.0
-    while it < max_iter
-        it += 1
-        apply!(Ap, p)
-        α = rz / dot(p, Ap)
-        x .+= α .* p; r .-= α .* Ap
-        rel = norm(r) / nb
-        rel < tolerance && break
-        z .= dinv .* r
-        rz2 = dot(r, z); p .= z .+ (rz2 / rz) .* p; rz = rz2
-    end
-    return x, it, rel
-end
-
-# The same system assembled sparse on the host and factored (CHOLMOD).
-function _cholesky_solve(S, BVz, AVVz, rhs, n)
+# The same system assembled sparse on the host and factored (CHOLMOD): the stencil's data block, the scene's penalty `Pen`
+# (sparse, nL × nL) and the small block.
+function _cholesky_solve(S, Pen, BVz, AVVz, rhs, n)
     nL = size(S, 1); nV = size(BVz, 2)
     Is = Int[]; Js = Int[]; Vs = Float64[]
     sizehint!(Is, 30nL); sizehint!(Js, 30nL); sizehint!(Vs, 30nL)
@@ -585,6 +534,8 @@ function _cholesky_solve(S, BVz, AVVz, rhs, n)
     for i in 1:nV, j in 1:nV
         push!(Is, nL + i); push!(Js, nL + j); push!(Vs, AVVz[i, j])
     end
+    Ip, Jp, Vp = SparseArrays.findnz(Pen)
+    append!(Is, Ip); append!(Js, Jp); append!(Vs, Vp)
     M = SparseArrays.sparse(Is, Js, Vs, nL + nV, nL + nV)
     return LinearAlgebra.cholesky(LinearAlgebra.Symmetric(M)) \ rhs
 end
@@ -592,8 +543,8 @@ end
 # ----------------------------------------------------------------------------- the fit
 
 """
-    fit_vignetting(vignetting, camera::BoundedCamera, frames, rotations; free_directions, gain_correction, saturated, raw_scale,
-                   rim_margin_px, fov_deg, plane, plane_offsets, chart_spacing_deg, penalty_order, penalty_weight,
+    fit_vignetting(vignetting, camera::BoundedCamera, frames, rotations; free_directions, gain_correction, saturated, frame_map,
+                   rim_margin_px, fov_deg, plane, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg, penalty_order, penalty_weight,
                    vignetting_penalty_weight, solver, measurement_noise = IntensityNoise())
         -> FitResult{<:VisualGeometryToolkitCore.AbstractVignetting, VignettingMetadata}
 
@@ -636,15 +587,15 @@ V and the gains.
   +18 % and V at the domain's edge came out 7 % too dark without them); per
   channel when the white balance or the light's colour can change too.
   Required, no default (TOML: [`GAIN_CORRECTIONS`](@ref)).
-- The fit domain: every pixel of the `H × W × 3` `frames` (`raw_scale` camera
-  pixels per frame pixel) whose sensor point lies inside the camera's
+- The fit domain: every pixel of the `H × W × 3` `frames` whose sensor point lies inside the camera's
   `imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain)
   less `rim_margin_px` at its lens coverage's edge, and 2 px inside the frame, with its ray within
   `fov_deg` of the optical axis. A row (a pixel of a frame) counts when its
   `saturated` mask is false and its value positive. `plane` is the plane fitted
-  (2: green), read at its own sample position: `plane_offsets` (frame pixels,
-  `nothing` for the pixel centre; VisualGeometryToolkitFeatures'
-  `load_raw(…).plane_offsets`).
+  (2: green), read at its own sample position. `frame_map`/`plane_maps`: the
+  frames' and the planes' maps onto the camera's pixels
+  (VisualGeometryToolkitFeatures' `raw_frame_map`, `bayer_plane_map`; by
+  default every plane's is the frame's).
 - The model: `log I = log g + log L(d) + log V(u)`, linear in log L's
   controls, log V's control points and the log gains: one weighted linear
   least squares (the weights normalized by their mean over the rows), with
@@ -708,8 +659,8 @@ end
 # g₁ = 1; else all 1). `gains_only`: the K gains, the last solve's retcode and the CG iterations alone, without the residuals'
 # statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
-                    free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, raw_scale::Integer,
-                    rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_offsets, chart_spacing_deg::Real,
+                    free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, frame_map,
+                    rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg::Real,
                     penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
                     solver::Union{ConjugateGradient, SparseCholesky},
                     measurement_noise::Union{IntensityNoise, IntensityAndPositionNoise} = IntensityNoise(),
@@ -730,17 +681,18 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     1 <= plane <= C || throw(ArgumentError("fit_vignetting: plane $plane of a $C-plane frame"))
     be = KA.get_backend(frames[1])
     t_all = time_ns(); seconds = Dict{Symbol, Float64}(s => 0.0 for s in _STAGES)   # the stages' wall times
-    offset = _plane_offsets(plane_offsets)[plane]
+    _checked_plane_maps("fit_vignetting", plane_maps)
+    1 <= plane <= length(plane_maps) || throw(ArgumentError("fit_vignetting: plane $plane of $(length(plane_maps)) plane maps"))
     Rs = [SMatrix{3, 3, Float64, 9}(R) for R in rotations]
 
     # the domain: the pixels' sensor points and rays, once
     t0 = time_ns()
     U2 = similar(frames[1], SVector{2, Float64}, Hf, Wf)
-    VgtkCore.pointwise!(_PlanePoint{Float64}(Float64(raw_scale), SVector{2, Float64}(offset)), U2, CartesianIndices((Hf, Wf)))
+    VgtkCore.pointwise!(_AtPixelCentre{Float64}(plane_maps[plane]), U2, CartesianIndices((Hf, Wf)))   # the plane's sensor points
     Uall = vec(U2)
     Fall = VgtkCore.backproject(VgtkCore.model(camera), Uall)
     inside = similar(frames[1], Bool, Hf * Wf)
-    VgtkCore.pointwise!(_Sees(frame_region(camera, Wf * raw_scale, Hf * raw_scale, rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
+    VgtkCore.pointwise!(_Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
     lin = findall(inside)                                                 # the domain: linear indices into one H × W plane
     P = length(lin)
     P > 0 || throw(ArgumentError("fit_vignetting: the fit domain is empty"))
@@ -767,7 +719,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     poff = (plane - 1) * Hf * Wf
     nrows = sum(k -> count(.!(saturated[k][lin]) .& (frames[k][lin .+ poff] .> 0)), 1:K)
     nrows > 0 || throw(ArgumentError("fit_vignetting: no unsaturated positive value in the domain"))
-    wbuf = _zeros(be, Float64, P)
+    wbuf = _device_zeros(be, Float64, P)
     # the weight scale of one solve's weights (`weight_of(k)` frame k's): their mean over the rows is 1
     function scale_of(weight_of)
         sumw = 0.0; wk! = _weight_kernel!(be, 256)
@@ -799,18 +751,18 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     xh = Float64[]; cL = Float64[]; active = falses(nL); rel = NaN; retcode = :solved
     iters = 0; change = 0.0
     nsolves = position_noise ? 1 + measurement_noise.iterations : 1
-    Σx = position_noise ? _measurement_covariance(measurement_noise) : nothing
-    LMs = position_noise ? [_zeros(be, Float64, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
+    Σx = position_noise ? _noise_covariance(measurement_noise) : nothing
+    LMs = position_noise ? [_device_zeros(be, Float64, P) for _ in 1:K] : nothing        # the model of log I per frame: its change between solves
     weight_of = k -> _IntensityWeight()                                   # the first solve's weights: I²
     for it in 1:nsolves
         inv_scale = scale_of(weight_of)
 
         # the normal equations
         t0 = time_ns()
-        S = _zeros(be, Float64, nL, 49); BG = _zeros(be, Float64, nL, max(nG, 1))
-        BV = _zeros(be, Float64, nL, nV); bL = _zeros(be, Float64, nL)
-        Wp = _zeros(be, Float64, P); Yp = _zeros(be, Float64, P); Wk = _zeros(be, Float64, P); Yk = _zeros(be, Float64, P)
-        GVd = _zeros(be, Float64, nV, max(nG, 1)); Gdiag = zeros(nG); bG = zeros(nG)
+        S = _device_zeros(be, Float64, nL, 49); BG = _device_zeros(be, Float64, nL, max(nG, 1))
+        BV = _device_zeros(be, Float64, nL, nV); bL = _device_zeros(be, Float64, nL)
+        Wp = _device_zeros(be, Float64, P); Yp = _device_zeros(be, Float64, P); Wk = _device_zeros(be, Float64, P); Yk = _device_zeros(be, Float64, P)
+        GVd = _device_zeros(be, Float64, nV, max(nG, 1)); Gdiag = zeros(nG); bG = zeros(nG)
         acc! = _accumulate_kernel!(be, 256); gvb! = _gain_vblock_kernel!(be, 256)
         for k in 1:K
             col = gains && k >= 2 ? k - 1 : 0
@@ -824,7 +776,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         end
         seconds[:accumulate] += _elapsed(be, t0)
         t0 = time_ns()
-        AVVd = _zeros(be, Float64, nV, nV); bVd = _zeros(be, Float64, nV); gd = _zeros(be, Float64, nV)
+        AVVd = _device_zeros(be, Float64, nV, nV); bVd = _device_zeros(be, Float64, nV); gd = _device_zeros(be, Float64, nV)
         _vblock_kernel!(be, 256)(AVVd, bVd, gd, Wp, Yp, VI, VW; ndrange = P)
         AVV = Array(AVVd); bV = Array(bVd); g = Array(gd) ./ P
         # the weak penalty on the control points P₀ + Z y: λ DᵀD on the increment, −λ DᵀD P₀ on the right-hand side
@@ -833,9 +785,12 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         fits_v && (AVV .+= λV .* D2; bV .-= λV .* (D2 * P0))
         seconds[:vignetting_block] += _elapsed(be, t0)
         t0 = time_ns()
+        # the scene's difference penalty of order 2 or 3 along each chart axis (Core's `difference_rows` on the lattice of the
+        # active controls: a row per run of order + 1 of them), λ DᵀD, and a unit diagonal on an inactive control (no row reads
+        # it: its coefficient solves to 0 and is reported NaN)
         active = Array(S[:, 3 * 7 + 3 + 1]) .> 0
-        dd = penalty_order == 3 ? VgtkCore.difference_stencil(3) : (VgtkCore.difference_stencil(2)..., 0.0)
-        _penalty_kernel!(be, 256)(S, _upload(be, active), Float64(penalty_weight), ch.n, Int(penalty_order), dd; ndrange = nL)
+        Dp = VgtkCore.difference_rows(reshape(active, ch.n, ch.n), Int(penalty_order))
+        Pen = Float64(penalty_weight) .* (Dp' * Dp) .+ SparseArrays.spdiagm(0 => Float64.(.!active))
         seconds[:penalty] += _elapsed(be, t0)
 
         # V's increment over the free directions under the gauge: Z = Zp·N, N the null space of the gauge row gᵀZp (the overall
@@ -843,7 +798,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         # gain_correction): BVz its L columns, AVVz its own block, bVz its right-hand side.
         Z = fits_v ? Zp * LinearAlgebra.nullspace(reshape(Zp' * g, 1, :)) : zeros(nV, 0)
         mV = size(Z, 2)
-        BVz = BV * _upload(be, Z)
+        BVz = BV * VgtkCore.ka_upload(Float64, be, Z)
         AVVz = Z' * AVV * Z; bVz = Z' * bV
         if nG > 0
             GVz = Z' * Array(GVd)
@@ -852,32 +807,35 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             bVz = vcat(bVz, bG)
         end
         m = mV + nG
-        rhs = vcat(bL, _upload(be, bVz))
+        rhs = vcat(bL, VgtkCore.ka_upload(Float64, be, bVz))
 
         t0 = time_ns()
         if solver isa ConjugateGradient
-            AVVzd = _upload(be, AVVz)
-            tmp = _zeros(be, Float64, nL); yV = _zeros(be, Float64, m)
+            AVVzd = VgtkCore.ka_upload(Float64, be, AVVz); Pend = VgtkCore.CSRMatrix(Pen; device = be)
+            tmp = _device_zeros(be, Float64, nL); tmpP = _device_zeros(be, Float64, nL); yV = _device_zeros(be, Float64, m)
             smv! = _stencil_matvec_kernel!(be, 256); ttm! = _tall_tmatvec_kernel!(be, 64)
             function apply!(y, x)
                 xL = view(x, 1:nL); xV = view(x, (nL + 1):(nL + m))
                 smv!(tmp, S, xL, ch.n; ndrange = nL)
-                view(y, 1:nL) .= tmp .+ BVz * xV
+                LinearAlgebra.mul!(tmpP, Pend, xL)
+                view(y, 1:nL) .= tmp .+ tmpP .+ BVz * xV
                 yV .= AVVzd * xV
                 m > 0 && ttm!(yV, BVz, xL, nL, m, 16; ndrange = cld(nL, 16))
                 view(y, (nL + 1):(nL + m)) .= yV
                 return y
             end
-            dinv = vcat(1 ./ S[:, 3 * 7 + 3 + 1], _upload(be, 1 ./ LinearAlgebra.diag(AVVz)))
+            diagonal = vcat(S[:, 3 * 7 + 3 + 1] .+ VgtkCore.ka_upload(Float64, be, Vector(LinearAlgebra.diag(Pen))),
+                            VgtkCore.ka_upload(Float64, be, LinearAlgebra.diag(AVVz)))
             # warm start after the first solve: the scene and the gains as solved (absolute unknowns), V's increment 0
-            x0 = it == 1 ? nothing : _upload(be, vcat(cL, zeros(mV), xh[(end - nG + 1):end]))
-            x, it_cg, rel = _pcg(apply!, rhs, dinv; x0, solver.tolerance, solver.max_iter)
-            iters += it_cg
-            retcode = rel < solver.tolerance ? :converged : :max_iterations
+            x0 = it == 1 ? nothing : VgtkCore.ka_upload(Float64, be, vcat(cL, zeros(mV), xh[(end - nG + 1):end]))
+            # Core's conjugate gradients on the applied normal operator (Jacobi, cgls's stopping rule ‖g − N x‖ ≤ tolerance·‖g‖)
+            sol = VgtkCore.normal_cg(apply!, rhs; diagonal, x0, rtol = solver.tolerance, max_iter = solver.max_iter)
+            x = sol.x; rel = sol.relres; iters += sol.iterations
+            retcode = sol.converged ? :converged : :max_iterations
         else
-            xh = _cholesky_solve(Array(S), Array(BVz), AVVz, Array(rhs), ch.n)
+            xh = _cholesky_solve(Array(S), Pen, Array(BVz), AVVz, Array(rhs), ch.n)
             x = xh
-            rel = norm(_apply_host(Array(S), Array(BVz), AVVz, ch.n, xh) .- Array(rhs)) / norm(Array(rhs))
+            rel = norm(_apply_host(Array(S), Pen, Array(BVz), AVVz, ch.n, xh) .- Array(rhs)) / norm(Array(rhs))
             retcode = :solved
         end
         seconds[:solve] += _elapsed(be, t0)
@@ -894,7 +852,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         end
         position_noise || break
         # the next solve's weights: the whitening at this solve's model of every frame (and its log I, for the change between solves)
-        lg = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG)); cLm = _upload(be, reshape(cL, ch.n, ch.n)); mk! = _model_kernel!(be, 256)
+        lg = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG)); cLm = VgtkCore.ka_upload(Float64, be, reshape(cL, ch.n, ch.n)); mk! = _model_kernel!(be, 256)
         change = 0.0
         for k in 1:K
             old = Array(LMs[k])
@@ -909,11 +867,11 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     end
     log_gains = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG))
     gains_only && return exp.(log_gains), retcode, iters
-    cLd = _upload(be, reshape(cL, ch.n, ch.n))
+    cLd = VgtkCore.ka_upload(Float64, be, reshape(cL, ch.n, ch.n))
 
     # the residuals
     t0 = time_ns()
-    res = _zeros(be, Float32, P); ww = _zeros(be, Float32, P); R_all = Float32[]; swr = 0.0; sw = 0.0
+    res = _device_zeros(be, Float32, P); ww = _device_zeros(be, Float32, P); R_all = Float32[]; swr = 0.0; sw = 0.0
     rk! = _residual_kernel!(be, 256)
     for k in 1:K
         rk!(res, ww, frames[k], saturated[k], lin, rays, LV, cLd, Rs[k], ch, poff, log_gains[k], weight_of(k); ndrange = P)
@@ -934,12 +892,12 @@ end
 const _STAGES = (:backproject, :chart, :accumulate, :vignetting_block, :penalty, :solve, :residuals, :total)
 
 # The full system's product on the host (the Cholesky solve's relative residual).
-function _apply_host(S, BVz, AVVz, n, x)
+function _apply_host(S, Pen, BVz, AVVz, n, x)
     nL = size(S, 1); m = size(BVz, 2)
     xL = x[1:nL]; xV = x[(nL + 1):end]
     y = similar(x)
     _stencil_matvec_kernel!(KA.CPU(), 256)(view(y, 1:nL), S, xL, n; ndrange = nL)
-    y[1:nL] .+= BVz * xV
+    y[1:nL] .+= Pen * xL .+ BVz * xV
     y[(nL + 1):end] .= BVz' * xL .+ AVVz * xV
     return y
 end

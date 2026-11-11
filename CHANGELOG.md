@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Breaking: the VisualGeometryToolkit 0.9 stack — the frames' and the planes' maps, Core's CG and penalty rows
+
+- `raw_scale` (camera pixels per frame pixel) and `plane_offsets` (the planes' sample offsets) are gone from every entry point
+  (`detect_features`, `verify_pairs`, `register_rotations`, `sample_frames`, `render_panorama`, `score_seams`,
+  `fit_vignetting`): `frame_map` is the frames' map onto the camera's pixels (a Core `SimilarityMap`; a RAW's `:bin2`
+  frames', VisualGeometryToolkitFeatures' `raw_frame_map(L)`), and `plane_maps` each plane's (`bayer_plane_map(L, c)`; by
+  default every plane's is the frame's). Plane c is read at `inv(plane_maps[c])(u)`; the render reads the three planes in
+  one Core `image_warp!(dst, warps, src)`. On the suite's fixtures the render and the seam score are bit-identical to
+  0.5.1's (the BGGR plane maps against the offsets `(+¼, 0, −¼)`), the vignetting fit's control points within 2e-12
+  (Cholesky) and 4e-9 (CG). A keypoint's covariance moves as `J Σ Jᵀ` through the frame map.
+- `fit_vignetting`'s CG is VisualGeometryToolkitCore's `normal_cg` (Jacobi; cgls's stopping rule `‖g − N x‖ ≤
+  tolerance·‖g‖`, so a warm start at the solution takes no iteration), and the scene's difference penalty is Core's
+  `difference_rows` on the active controls (`λ DᵀD`, applied as a sparse operator beside the data's stencil); both equal
+  the private copies they replace to rounding (the penalty to 6e-17). The private `_pcg`, `_penalty_kernel!`, `_upload`,
+  `_zeros` and the docs gates' copy (`test/docs_gates.jl`: Core's `test_docs`) are deleted.
+- The detector (VisualGeometryToolkitFeatures 0.9's ASIFT): `asift_tilts` is a `tilt_schedule` name (`:imas25`,
+  `:untilted`) or its pairs (`nothing` is gone); the detections come in Features' canonical order (the package's own sort
+  is deleted; the same keypoints in the same order on the suite's fixture); `detect_features`, `verify_pairs` and
+  `register_rotations` take `saturated` (the frames' clip masks, a `LinearRaw`'s own by default): no keypoint within three
+  of its scales of a clipped pixel (Features' detection mask). The example gives them its frames' saturation (verified pairs v5,
+  rotations v9: the records of earlier versions are recomputed).
+- The example: the decode cache (v3) holds no plane offsets (the maps are Features' of the set's first frame); the renders
+  are encoded by Features' `srgb_image`; `compare_makie.jl` is Features' `compare_images`; the data root is
+  VisualGeometryToolkitEval's `data_root` (Eval joins the example's environment). The README's example states its frame
+  map, `SimilarityMap(LinearMap(2.0I))` (CoordinateTransformations joins its install line).
+- The quality items run Core's `test_duplication` (the stack repositories from `VGTK_STACK_PATHS`).
+
 ### Breaking: the bundle's scale from the verified pairs — SIMFIT++ per pair, one LM run
 
 - After its RANSAC each verified pair gets its noise scale by SIMFIT++ (Edstedt, "Less Biased Noise Scale Estimation for

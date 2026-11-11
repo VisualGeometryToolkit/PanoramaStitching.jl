@@ -49,14 +49,21 @@ end
 _frame_image(frame::AbstractArray{<:Real, 3}) = frame
 _frame_image(frame::VgtkFeatures.LinearRaw) = frame.image
 
+# A frame's clip mask (`true` where a value is clipped: Features' detection `mask`): the caller's, else a `LinearRaw`'s own
+# saturation, else none.
+_clip_mask(frame, saturated::AbstractMatrix{Bool}) = saturated
+_clip_mask(frame::VgtkFeatures.LinearRaw, ::Nothing) = frame.saturated
+_clip_mask(frame, ::Nothing) = nothing
+
 # ASIFT on the detection image: the tone-mapped green (`toned`'s plane 2) at Features' default contrast threshold, or the
-# variance-stabilized green cells of a `LinearRaw` (Features' `variance_stabilize`) at `noise_sigmas` noise σ.
-_asift(frame, toned, ::Val{:tone}, noise, tilts) =
-    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, uncertainty = VgtkFeatures.FeatureCovariance())
-_asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts) =
+# variance-stabilized green cells of a `LinearRaw` (Features' `variance_stabilize`, whose saturation Features masks) at
+# `noise_sigmas` noise σ; no detection reads a clipped pixel (Features' `mask`: within three scales of one, dropped).
+_asift(frame, toned, ::Val{:tone}, noise, tilts, mask) =
+    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, mask, uncertainty = VgtkFeatures.FeatureCovariance())
+_asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
     VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame; noise.electrons_per_dn, noise.read_noise);
-                              noise.noise_sigmas, tilts, uncertainty = VgtkFeatures.FeatureCovariance())
-_asift(frame, toned, ::Val{:vst}, noise, tilts) =
+                              noise.noise_sigmas, tilts, mask, uncertainty = VgtkFeatures.FeatureCovariance())
+_asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
     throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
 
 # selection = :strongest: the global top `n` by |response| (ties: the earlier detection first), in detector order. The
@@ -64,58 +71,69 @@ _asift(frame, toned, ::Val{:vst}, noise, tilts) =
 _global_strongest(dets, n) = length(dets) <= n ? dets : dets[sort!(sortperm(abs.(getproperty.(dets, :response)); rev = true)[1:n])]
 
 """
-    detect_features(camera::BoundedCamera, frame, descriptor; raw_scale, tone_percentile, detector_margin_px, asift_tilts,
-                    max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing) -> FrameFeatures
+    detect_features(camera::BoundedCamera, frame, descriptor; frame_map, tone_percentile, detector_margin_px, asift_tilts,
+                    max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing,
+                    saturated = nothing) -> FrameFeatures
 
 The features of one frame (`H × W × 3` linear, or a VisualGeometryToolkitFeatures
-`LinearRaw` of mode `:bin2`; `raw_scale` camera pixels per frame pixel) of
+`LinearRaw` of mode `:bin2`; `frame_map` its map onto the camera's pixels,
+Features' `raw_frame_map(L)`) of
 `camera`, described by `descriptor` (a `LoMaDescriptor`) on the frame's tone
 `sqrt(G / p)` clamped to `[0, 1]` (`p` the `tone_percentile`-th percentile of the
 green channel inside the camera's `imaged_region` — its sensor ∩ its lens
 coverage ∩ its model's valid domain), the detections in the frame's pixels (the
 descriptor resamples the image to its network's input).
 
-- ASIFT (`asift_tilts`: VisualGeometryToolkitFeatures' tilt schedule, `nothing`:
-  IMAS-25) on the `detection_image`: `:tone`, that tone's green at Features'
+- ASIFT (`asift_tilts`: a VisualGeometryToolkitFeatures `tilt_schedule` name,
+  `:imas25` or `:untilted`, or its `(t, φ)` pairs) on the `detection_image`: `:tone`, that tone's green at Features'
   default contrast threshold; `:vst`, the frame's variance-stabilized green cells
   (Features' `variance_stabilize`, noise σ = 1 at every level; the frame must be
   its `LinearRaw`) at `detection_noise.noise_sigmas` noise σ, `detection_noise =
   (; electrons_per_dn, read_noise, noise_sigmas)` the sensor's conversion gain and
   read noise (raw codes) at the frame's ISO.
+- No detection within three of its scales of a clipped pixel (Features'
+  detection `mask`): `saturated`, the frame's `H × W` saturation mask (a
+  `LinearRaw`'s own by default; `nothing` for an array frame: none).
 - The detections inside the imaged region less `detector_margin_px` at the lens
   coverage's edge (a camera whose coverage is its whole sensor: no margin).
 - `selection`: `:spread`, about `max_detections` of the strongest spread over the
   frame (Features' `spread_strongest`, which the descriptor applies); `:strongest`,
   the global top `max_detections` by |response|.
 
-The kept pixels are the described set's.
+The kept pixels are the described set's, in Features' canonical order of the
+detections (a function of the image: the same run to run, on any number of
+threads).
 """
-function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; raw_scale::Integer,
+function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; frame_map,
                          tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
-                         selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing)
+                         selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
+                         saturated::Union{Nothing, AbstractMatrix{Bool}} = nothing)
     _check_detector_settings("detect_features", selection, detection_image, detection_noise)
     img = _frame_image(frame)
-    Hf, Wf = size(img, 1), size(img, 2); s = raw_scale
+    Hf, Wf = size(img, 1), size(img, 2)
     region = VgtkCore.imaged_region(camera)
-    inside = VgtkCore.pixel_mask(_binned(region, s), Wf, Hf)                  # the imaged region in the binned frame's pixels
+    inside = VgtkCore.pixel_mask(_in_frame(region, frame_map), Wf, Hf)        # the imaged region in the frame's pixels
     p = quantile(vec(view(img, :, :, 2))[vec(inside)], tone_percentile / 100)
     toned = sqrt.(clamp.(Float64.(img) ./ p, 0, 1))
-    dets = _asift(frame, toned, Val(detection_image), detection_noise, asift_tilts)
-    n = length(dets)
-    # ASIFT's detections arrive in its threads' order: sorted by position (then response) the kept set, its order and so every
+    # the detections in Features' canonical order (a function of the image), so the kept set, its order and every
     # index-sampled RANSAC downstream are the same run to run
-    sort!(dets; by = d -> (d.center[1], d.center[2], d.response))
+    dets = _asift(frame, toned, Val(detection_image), detection_noise, asift_tilts, _clip_mask(frame, saturated))
+    n = length(dets)
     kept = _imaged_less_rim(camera, detector_margin_px)
-    dets = filter(d -> VgtkCore.Point2(s * d.center[1], s * d.center[2]) ∈ kept, dets)
+    at(d) = frame_map(SVector{2, Float64}(d.center[1], d.center[2]))         # a detection's centre in the camera's pixels
+    dets = filter(d -> VgtkCore.Point2(at(d)...) ∈ kept, dets)
     selection === :strongest && (dets = _global_strongest(dets, max_detections))
     # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
     # the image to its network's input, and keeps about max_detections of them spread over it: the kept set is the described one)
     F = descriptor(permutedims(toned, (3, 1, 2)), dets)
     described = [f.detection for f in F]
-    pixels = [SVector(s * d.center[1], s * d.center[2]) for d in described]
+    pixels = [SVector{2, Float64}(at(d)) for d in described]
     # the centres' position covariance (the top-left 2 × 2 of the (x, y, log σ) covariance, detection-image pixels²), in camera
-    # pixels² as the centres are scaled: s²·Σ
-    covs = [(Σ = Statistics.cov(d); s^2 * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2])) for d in described]
+    # pixels² as the centres are mapped: J Σ Jᵀ, J the frame map's Jacobian (s·I for a Bayer cell grid's)
+    covs = map(described) do d
+        Σ = Statistics.cov(d); J = VgtkCore.transform_deriv(frame_map, SVector{2, Float64}(d.center[1], d.center[2]))
+        SMatrix{2, 2, Float64, 4}(J * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2]) * J')
+    end
     return FrameFeatures(pixels, covs, F, n)
 end
 

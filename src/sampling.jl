@@ -49,17 +49,26 @@ function _rim(r::VgtkCore.Rect, m, sensor::VgtkCore.Rect)
     return x1 > x0 && y1 > y0 ? VgtkCore.Rect2{Float64}(x0, y0, x1 - x0, y1 - y0) : nothing
 end
 
-# A region in the pixels of a frame binned by `s` (a COLMAP coordinate scales by exactly 1/s), by its parts: a `Rect` scaled,
-# an `Ellipse` by Core's similarity image.
-_binned(r::VgtkCore.Rect, s) = VgtkCore.Rect(r.origin[1] / s, r.origin[2] / s, r.widths[1] / s, r.widths[2] / s)
-_binned(e::VgtkCore.Ellipse, s) = VgtkCore.SimilarityMap(LinearMap(I / s))(e)
-_binned(r::VgtkCore.RegionIntersection, s) = _binned(r.a, s) ∩ _binned(r.b, s)
+# A region of the camera's pixels in a frame's pixels, `frame_map` the frame's map onto the camera's pixels (a Core
+# `SimilarityMap` without rotation: VisualGeometryToolkitFeatures' `raw_frame_map`), by its parts: an `Ellipse` by Core's
+# similarity image under the map's inverse, a `Rect` by its corners (axis-aligned under a scale and a translation).
+_in_frame(e::VgtkCore.Ellipse, frame_map) = inv(frame_map)(e)
+function _in_frame(r::VgtkCore.Rect, frame_map)
+    lo = inv(frame_map)(SVector{2, Float64}(r.origin[1], r.origin[2]))
+    hi = inv(frame_map)(SVector{2, Float64}(r.origin[1] + r.widths[1], r.origin[2] + r.widths[2]))
+    return VgtkCore.Rect(lo[1], lo[2], hi[1] - lo[1], hi[2] - lo[2])
+end
+_in_frame(r::VgtkCore.RegionIntersection, frame_map) = _in_frame(r.a, frame_map) ∩ _in_frame(r.b, frame_map)
 
-# The three planes' sample offsets (frame pixels): `nothing` puts every plane at the pixel centre.
-_plane_offsets(::Nothing) = ntuple(_ -> SVector(0.0, 0.0), 3)
-function _plane_offsets(o)
-    length(o) == 3 || throw(ArgumentError("plane_offsets: one offset per plane (3), got $(length(o))"))
-    return ntuple(c -> SVector{2, Float64}(o[c][1], o[c][2]), 3)
+# The camera's pixels a `width × height` frame covers (`frame_map` without a translation, as a Bayer cell grid's): its far
+# corner's image.
+_covered_extent(frame_map, width, height) = Tuple(frame_map(SVector{2, Float64}(width, height)))
+
+# The planes' maps checked: one per plane of a 3-plane frame.
+function _checked_plane_maps(what, plane_maps)
+    plane_maps isa Tuple && length(plane_maps) == 3 ||
+        throw(ArgumentError("$what: plane_maps holds one map per plane (3), got $(plane_maps isa Tuple ? length(plane_maps) : typeof(plane_maps))"))
+    return plane_maps
 end
 
 """
@@ -114,8 +123,8 @@ struct FrameSamples{D, P, F, V, W, S}
 end
 
 """
-    sample_frames(camera::BoundedCamera, frames, rotations, directions; saturated, raw_scale, rim_margin_px, fov_deg,
-                  vignetting, plane_offsets = nothing) -> FrameSamples
+    sample_frames(camera::BoundedCamera, frames, rotations, directions; saturated, frame_map, rim_margin_px, fov_deg,
+                  vignetting, plane_maps = ntuple(_ -> frame_map, 3)) -> FrameSamples
 
 The frames sampled at `directions` (unit 3-vectors of the common frame, any
 array): for every frame `k` and direction `d`, the ray `f = R_kᵀ·d`
@@ -136,12 +145,11 @@ A frame sees a direction by [`render_panorama`](@ref)'s masks: the ray within
 less `rim_margin_px` at its lens coverage's edge, and at least 2 px inside the frame,
 and no `saturated` pixel among those any plane's value blends (the four at
 each plane's own sample position). `frames` are
-`H × W × 3` linear images with `raw_scale` camera pixels per frame pixel,
-`saturated` their `H × W` masks; `plane_offsets` the planes' sample positions
-relative to the pixel centre, frame pixels (`nothing`: all at the centre; a
-2 × 2 Bayer binning's R and B at `(±¼, ±¼)`, VisualGeometryToolkitFeatures'
-`load_raw(…; mode = :bin2).plane_offsets`): each plane is read at the sensor
-point less its offset.
+`H × W × 3` linear images, `saturated` their `H × W` masks. `frame_map` is the
+frames' map onto the camera's pixels (VisualGeometryToolkitFeatures'
+`raw_frame_map(L)`), and `plane_maps` each plane's (`bayer_plane_map(L, c)`;
+by default every plane's is the frame's): plane `c` is read at
+`inv(plane_maps[c])(u)`.
 
 Every step is a batch on the backend that owns `frames` and `directions`
 (Core's `pointwise!`, `image_sample!`: one kernel each on a GPU array, the
@@ -150,37 +158,37 @@ kernel-lawful (isbits, no allocation, no throw); it is evaluated only where
 the frame sees the direction. The precision is the directions' element type.
 """
 function sample_frames(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
-                       directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, raw_scale::Integer, rim_margin_px::Real, fov_deg::Real, vignetting,
-                       plane_offsets = nothing)
-    offsets = _plane_offsets(plane_offsets); sat_offsets = unique(offsets)   # the planes' distinct sample positions
+                       directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, frame_map, rim_margin_px::Real, fov_deg::Real, vignetting,
+                       plane_maps = ntuple(_ -> frame_map, 3))
+    _checked_plane_maps("sample_frames", plane_maps)
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("sample_frames: frames, rotations and saturated disagree"))
     Hf, Wf, C = size(frames[1])
     C == 3 || throw(DimensionMismatch("sample_frames: frames are H × W × 3, got $(size(frames[1]))"))
-    T = eltype(eltype(directions)); s = raw_scale
+    T = eltype(eltype(directions))
     fwd = _forward_map(camera, frames[1])
-    sees = _Sees(frame_region(camera, Wf * s, Hf * s, rim_margin_px), T(cosd(fov_deg)))
+    sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), T(cosd(fov_deg)))
     N = length(directions); D = reshape(directions, N)
     proto = frames[1]
     pixels = similar(proto, SVector{2, T}, N, K); rays = similar(proto, SVector{3, T}, N, K)
     values = similar(proto, T, N, K, 3); vig = similar(proto, T, N, K); seen = similar(proto, Bool, N, K)
-    Uf = similar(proto, SVector{2, T}, N); Uc = similar(Uf); w = similar(proto, T, N)
+    Uc = similar(proto, SVector{2, T}, N); w = similar(proto, T, N)
     for k in 1:K
         Rt = SMatrix{3, 3, T, 9}(rotations[k])'
         F = view(rays, :, k); U = view(pixels, :, k); ok = view(seen, :, k)
         VgtkCore.pointwise!(d -> Rt * d, F, D)
         VgtkCore.pointwise!(fwd, U, F)
-        Uf .= U ./ T(s)                                                   # the frame's COLMAP pixels
         VgtkCore.pointwise!(sees, ok, U, F)
-        for o in sat_offsets                                              # unsaturated at every plane's taps
-            Uc .= Uf .- Ref(SVector{2, T}(o))
+        for (c, P) in enumerate(plane_maps)                               # unsaturated at every plane's taps
+            any(j -> plane_maps[j] == P, 1:(c - 1)) && continue           # a plane at another's samples: its taps are read
+            VgtkCore.pointwise!(inv(P), Uc, U)                            # the plane's own COLMAP pixels
             VgtkCore.image_sample!(w, saturated[k], Uc)                   # the tap converts the mask: no float copy of it
             ok .&= iszero.(w)
         end
         VgtkCore.pointwise!(_WhereSeen(vignetting, T), view(vig, :, k), ok, U, F; exec = VgtkCore.OnBackend(KA.get_backend(U)))
         for c in 1:3
             v = view(values, :, k, c)
-            Uc .= Uf .- Ref(SVector{2, T}(offsets[c]))                      # the plane's samples sit at its offset
+            VgtkCore.pointwise!(inv(plane_maps[c]), Uc, U)                # the plane's samples sit where its map says
             VgtkCore.image_sample!(w, view(frames[k], :, :, c), Uc)
             v .= ifelse.(ok, w, T(NaN))
         end

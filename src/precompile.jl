@@ -18,9 +18,12 @@
         img
     end
     saturated = [falses(40, 40) for _ in rotations]
+    # the frames' map onto the camera's pixels: a Bayer cell grid's (Features' raw_frame_map, x ↦ 2x), from a synthetic 2 × 2 mosaic
+    mosaic = VgtkFeatures.RawMosaic(zeros(UInt16, 2, 2), UInt8[0 1; 3 2], (0.0, 0.0, 0.0, 0.0), 1.0, (0, 0), (2, 2), (; model = "synthetic"))
+    frame_map = VgtkFeatures.raw_frame_map(VgtkFeatures.LinearRaw(mosaic; mode = :bin2))
     @compile_workload begin
-        kw = (; raw_scale = 2, rim_margin_px = 2.0, fov_deg = 100.0)
-        fit = (; saturated, kw..., plane = 2, plane_offsets = nothing, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,
+        kw = (; frame_map, rim_margin_px = 2.0, fov_deg = 100.0)
+        fit = (; saturated, kw..., plane = 2, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,
                vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
         # the radial and the tensor log-vignetting, each from log V ≡ 0
         radial = VgtkCore.LogVignetting(VgtkCore.with_control_points(VgtkCore.RadialVignetting(6, SVector(40.0, 40.0), 42.0), zeros(6)))
@@ -31,7 +34,7 @@
         view = panorama_view(VgtkCore.Equirectangular(), (-60.0, 90.0, -40.0, 40.0), 5.0)
         render_panorama(camera, frames, rotations, view; vignetting = v, kw...)
         render_cube_map(camera, frames, rotations, 8; vignetting = v, kw...)
-        score_seams(camera, frames, rotations, view; vignetting = v, saturated, kw..., plane = 2, plane_offsets = nothing, chunk = 1000)
+        score_seams(camera, frames, rotations, view; vignetting = v, saturated, kw..., plane = 2, chunk = 1000)
         sample_frames(camera, frames, rotations, fibonacci_directions(rotations, 50; fov_deg = 100.0); saturated, vignetting = v, kw...)
         # (not refine_rotations: an NLLSsolver solve evaluates into NLLSsolver, which a precompiling package may not do)
     end

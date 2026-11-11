@@ -27,7 +27,9 @@ used below, and every block runs after it, in order, as the test suite runs them
 ## The inputs
 
 - **Frames**: a `Vector` of `H × W × 3` linear (not gamma-encoded) images in capture order. They may be binned relative to the
-  calibration: `raw_scale` is the number of camera pixels per frame pixel.
+  calibration: `frame_map` is their map onto the camera's pixels (a Core `SimilarityMap`; a RAW's `:bin2` frames',
+  VisualGeometryToolkitFeatures' `raw_frame_map(L)`), and `plane_maps` each colour plane's (`bayer_plane_map(L, c)`: a
+  Bayer binning's R and B sit ¼ px off the cell centre; by default every plane's is the frame's).
 - **Camera**: a VisualGeometryToolkitCore `BoundedCamera` (a camera model and its sensor). A parametric `CameraModel` serves
   every step. A grid lens is a `CameraModel` with a `SplineLens`; it projects through its forward spline, fitted by
   VisualGeometryToolkitEstimation's `fit_camera`. The example's camera as a 40 × 40 grid, with its forward spline:
@@ -105,7 +107,7 @@ bilinearly and evaluates the vignetting model continuously at the same point, `v
 ```julia
 saturated = [falses(size(f, 1), size(f, 2)) for f in frames]     # mask clipped pixels here
 D = fibonacci_directions(reg.rotations, 200_000; fov_deg = 89.0)
-S = sample_frames(camera, frames, reg.rotations, D; saturated, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0,
+S = sample_frames(camera, frames, reg.rotations, D; saturated, frame_map, rim_margin_px = 12.0, fov_deg = 89.0,
                   vignetting = (u, f) -> 1.0)
 ```
 
@@ -123,7 +125,7 @@ frame that sees it — no gain, no seam, no blend. It renders the frames as they
 
 ```julia
 cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.25)  # columns longitude, rows tan(latitude)
-pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, raw_scale = 2, rim_margin_px = 12.0,
+pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, frame_map, rim_margin_px = 12.0,
                        fov_deg = 89.0)
 pano.image      # rows × columns × 3, NaN where no frame sees the pixel
 pano.owner      # the frame each pixel holds
@@ -174,8 +176,8 @@ conjugate gradients there, or by a host Cholesky factorization:
 s = VgtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
 v0 = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
 res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCore.pole_regular_basis(v0),
-                     gain_correction = ChannelGains(), saturated, raw_scale = 2, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
-                     plane_offsets = nothing, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
+                     gain_correction = ChannelGains(), saturated, frame_map, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
+                     chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
 # or measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration
@@ -190,10 +192,10 @@ measures the result where it matters, at the seams of the unblended panorama: pe
 the median log ratio of the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD:
 
 ```julia
-seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, raw_scale = 2,
-                    rim_margin_px = 12.0, fov_deg = 89.0, plane = 2, plane_offsets = nothing, chunk = 200_000)
+seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, frame_map,
+                    rim_margin_px = 12.0, fov_deg = 89.0, plane = 2, chunk = 200_000)
 seams.rms, seams.mad              # the spread of the log ratio over the n pixels two frames or more measure
-corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, raw_scale = 2,
+corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, frame_map,
                             rim_margin_px = 12.0, fov_deg = 89.0)   # the panorama with V and the frames' gains divided out
 ```
 

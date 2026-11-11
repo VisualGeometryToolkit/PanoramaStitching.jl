@@ -4,7 +4,7 @@
 # LinearRaw), the kept pixels the described set's, and the refusals.
 # =============================================================================
 
-@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept pixels are the described set" setup = [SyntheticSequence] begin
+@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept pixels are the described set" setup = [SyntheticSequence, BayerMaps] begin
     using Test, StaticArrays, Statistics
     using PanoramaStitching: PanoramaStitching, detect_features
     import VisualGeometryToolkitCore as VgtkCore
@@ -14,30 +14,30 @@
     frame[:, 1:(Wf ÷ 2), :] .*= 0.05f0                                  # a dim left half
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
-    kw = (; raw_scale = q.raw_scale, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
+    kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
     sp = detect_features(q.cam, frame, desc; kw..., selection = :spread)
     st = detect_features(q.cam, frame, desc; kw..., selection = :strongest)
     @test detect_features(q.cam, frame, desc; kw...).pixels == sp.pixels           # :spread and :tone the defaults
     for f in (sp, st)
         @test length(f.pixels) == length(f.features) == length(f.pixel_covariances)
-        @test all(i -> f.pixels[i] == q.raw_scale .* SVector{2, Float64}(f.features[i].detection.center...), eachindex(f.pixels))
+        @test all(i -> f.pixels[i] == FRAME_MAP(SVector{2, Float64}(f.features[i].detection.center...)), eachindex(f.pixels))
         @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, f.pixels)
     end
     @test length(st.pixels) == N && round(Int, 0.9N) <= length(sp.pixels) <= round(Int, 1.1N)
-    dim(f) = count(p -> p[1] < q.raw_scale * Wf / 2, f.pixels) / length(f.pixels)
+    dim(f) = count(p -> p[1] < VgtkCore.scale(FRAME_MAP) * Wf / 2, f.pixels) / length(f.pixels)
     @info "detect_features: the dim half holds $(round(dim(sp); digits = 3)) of :spread's keypoints, $(round(dim(st); digits = 3)) of :strongest's"
     @test dim(sp) > 0.15
     @test dim(st) < dim(sp) / 3
     # :strongest is the global top N by |response| of the region's detections (the oracle: ASIFT on the documented tone)
-    p = quantile(vec(view(frame, :, :, 2))[vec(VgtkCore.pixel_mask(PanoramaStitching._binned(VgtkCore.imaged_region(q.cam), q.raw_scale), Wf, Hf))], 0.995)
+    p = quantile(vec(view(frame, :, :, 2))[vec(VgtkCore.pixel_mask(PanoramaStitching._in_frame(VgtkCore.imaged_region(q.cam), FRAME_MAP), Wf, Hf))], 0.995)
     dets = VgtkFeatures.asift_detect(Float32.(sqrt.(clamp.(Float64.(view(frame, :, :, 2)) ./ p, 0, 1))); tilts = [(1.0, 0.0)])
     kept = PanoramaStitching._imaged_less_rim(q.cam, 20.0)
-    inside = filter(d -> VgtkCore.Point2(q.raw_scale * d.center[1], q.raw_scale * d.center[2]) ∈ kept, dets)
+    inside = filter(d -> VgtkCore.Point2(FRAME_MAP(SVector{2, Float64}(d.center...))...) ∈ kept, dets)
     r = sort(abs.(getproperty.(inside, :response)); rev = true)
     @test minimum(abs(f.detection.response) for f in st.features) >= r[N]
 end
 
-@testitem "detect_features: :vst on the frame's LinearRaw; the refusals" setup = [SyntheticSequence] begin
+@testitem "detect_features: :vst on the frame's LinearRaw; the refusals" setup = [SyntheticSequence, BayerMaps] begin
     using Test, StaticArrays
     using PanoramaStitching: PanoramaStitching, detect_features, verify_pairs, register_rotations
     import VisualGeometryToolkitCore as VgtkCore
@@ -56,7 +56,7 @@ end
                                                       (; model = "synthetic")); mode = :bin2)
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
-    kw = (; raw_scale = q.raw_scale, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
+    kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
     noise = (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
     # :tone reads a LinearRaw's image as it reads the array
     @test detect_features(q.cam, L, desc; kw...).pixels == detect_features(q.cam, L.image, desc; kw...).pixels
@@ -80,4 +80,30 @@ end
     @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_loss = VgtkCore.CauchyShape(),
                                                   bundle_scale_multiple = 3.0, bundle_max_iter = 1,
                                                   bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
+end
+
+@testitem "detect_features: no keypoint reads a clipped pixel; the tilt schedule by name" setup = [SyntheticSequence, BayerMaps] begin
+    # Features' detection mask (`asift_detect(…; mask)`): a detection within three of its scales of a clipped pixel is dropped.
+    # `saturated` is the frame's clip mask (a LinearRaw's own saturation by default); `asift_tilts` takes Features'
+    # `tilt_schedule` names (`:untilted` is the identity warp alone).
+    using Test, StaticArrays
+    using PanoramaStitching: PanoramaStitching, detect_features
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitFeatures as VgtkFeatures
+    q = sequence(; K = 1)
+    frame = copy(q.frames[1]); Hf, Wf = size(frame, 1), size(frame, 2)
+    clip = falses(Hf, Wf); clip[150:350, 150:350] .= true                         # a clipped window in the imaged region
+    N = 300
+    desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
+    kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = :untilted, max_detections = N)
+    free = detect_features(q.cam, frame, desc; kw...)
+    masked = detect_features(q.cam, frame, desc; kw..., saturated = clip)
+    in_window(p) = all(c -> 2 * (150 - 1) <= c <= 2 * 350, p)                   # camera pixels of the clipped window
+    @test count(in_window, free.pixels) > 20
+    @test !any(in_window, masked.pixels)
+    @test masked.n_detected < free.n_detected
+    # the tilt schedule by name: :untilted is the identity tilt
+    @test free.pixels == detect_features(q.cam, frame, desc; kw..., asift_tilts = [(1.0, 0.0)]).pixels
+    @test_throws ArgumentError detect_features(q.cam, frame, desc; kw..., asift_tilts = :imas26)
+    @test_throws DimensionMismatch detect_features(q.cam, frame, desc; kw..., saturated = falses(Hf + 1, Wf))
 end

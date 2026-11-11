@@ -53,13 +53,13 @@ function compare_arms(arms_path)
         isfile(joinpath(dir, "results.json")) && (println("$(C.cfg["name"]): reused $dir"); continue)
         device = get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])
         move = device == "cuda" ? CuArray : identity
-        dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.plane_offsets, inp.levels)
+        dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps, inp.levels)
         up = level_up(reg.rotations)[1]
         sc = C.cfg["seams"]; d = C.cfg["domain"]
-        ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up) : Tuple(sc["extent"])
+        ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])
         sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
-        skw = (; saturated = dev.saturated, raw_scale = 2, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
-               plane_offsets = dev.plane_offsets, chunk = sc["chunk"])
+        skw = (; saturated = dev.saturated, frame_map = dev.frame_map, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
+               plane_maps = dev.plane_maps, chunk = sc["chunk"])
         rim = Float64(d["rim_margin_px"])
         domain = PanoramaStitching.frame_region(lens, W, H, rim)
         in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain

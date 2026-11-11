@@ -71,13 +71,13 @@
     @test_throws ArgumentError register_rotations(vp, BCAM; bkw..., orientation_tol = -1.0)
 end
 
-@testitem "register_rotations: a filter tolerance is refused before any feature is detected" begin
+@testitem "register_rotations: a filter tolerance is refused before any feature is detected" setup = [BayerMaps] begin
     using Test, StaticArrays
     using PanoramaStitching: register_rotations
     import VisualGeometryToolkitCore as VgtkCore
     cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[64.0VgtkCore.px, 64.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
                                  VgtkCore.Size2(128, 128))
-    kw = (; raw_scale = 1, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = nothing,
+    kw = (; frame_map = IDENTITY_MAP, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = :imas25,
           max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 90.0,
           min_inliers = 10, seed = 1, max_trials = 10, min_trials = 1, averaging_loss = VgtkCore.HuberShape(),
           bundle_loss = VgtkCore.CauchyShape(), bundle_scale_multiple = 3.0, bundle_max_iter = 1,

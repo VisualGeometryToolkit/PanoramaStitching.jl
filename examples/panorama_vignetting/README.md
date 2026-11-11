@@ -65,10 +65,11 @@ Under `$VGTK_DATA_ROOT`:
 
 1. **Decode** (`decoded_frames`). Each RAW file is read by VisualGeometryToolkitFeatures' `load_raw` (LibRaw through
    LibRaw_jll; the two steps `load_raw_mosaic` then `LinearRaw(mosaic; mode = :bin2, gain)`): 2 × 2 Bayer quads become one
-   pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (`raw_scale = 2`), with the
-   planes' true sample positions (G at the quad centre, R and B ¼ px off) and a per-quad saturation mask (any of the four
-   photosites at the white level). Decoding is done once and cached (below).
-2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints described by DeDoDe and matched by LoMa,
+   pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (the frames' map onto the
+   camera's pixels is Features' `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
+   centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Decoding is done once and cached (below).
+2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints (none within three scales of a saturated
+   pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (`find_rotation`, MSAC scoring with a 5 px half-width), cached in
    `verified_pairs.json` before anything else runs on them, keyed by the matching and verification settings (every
    `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files' hashes: changing only the
@@ -119,7 +120,7 @@ Under `$VGTK_DATA_ROOT`:
 5. **Render** (`render_panorama`). Cylindrical, cylindrical equal-area and a rectilinear virtual camera, each corrected
    (divided by V) and uncorrected, unblended (the last frame that sees a pixel wins, so a wrong V shows as a step at every
    frame boundary), at ONE fixed exposure (1 / the 99.5 % green of the corrected cylindrical), LibRaw's daylight white
-   balance (for viewing only) and sRGB-encoded. The up frame is `level`: the vertical orthogonal to every frame's image x
+   balance (for viewing only) and sRGB-encoded (Features' `srgb_image`). The up frame is `level`: the vertical orthogonal to every frame's image x
    axis (a roll-free sweep), which holds whatever the frames' pitch.
    The renders show the REAL images: saturated pixels keep their clipped values (bright windows stay bright), the masks are
    only used by the fit and the seam score.
@@ -155,8 +156,8 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 | `cylindrical_*.png`, `equal_area_*.png`, `rectilinear_*.png` | the renders, `_corrected` and `_uncorrected` at the same exposure |
 | `summary.md`, `run.log` | the numbers: registration, the fits (retcode, residual spread, V's range, maximum and asymmetry), the seam spreads, the wall times |
 
-**Viewing a run.** `compare_makie.jl` shows a run's uncorrected and corrected outputs in GLMakie, one above the other with
-linked axes (pan and zoom move both), and a menu to switch between the projections and the seam maps:
+**Viewing a run.** `compare_makie.jl` shows a run's uncorrected and corrected outputs in GLMakie (Features'
+`compare_images`), one above the other with linked axes (pan and zoom move both), and a menu to switch between the projections and the seam maps:
 
 ```bash
 julia --project=examples/panorama_vignetting examples/panorama_vignetting/compare_makie.jl examples/panorama_vignetting/out/fx3_14mm_indoor
