@@ -808,31 +808,21 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
 
         t0 = time_ns()
         if solver isa ConjugateGradient
-            AVVzd = VgtkCore.ka_upload(Float64, be, AVVz); Pend = VgtkCore.CSRMatrix(Pen; device = be)
-            tmp = VgtkCore.device_zeros(Float64, be, nL); tmpP = VgtkCore.device_zeros(Float64, be, nL); yV = VgtkCore.device_zeros(Float64, be, m)
-            smv! = _stencil_matvec_kernel!(be, 256); ttm! = _tall_tmatvec_kernel!(be, 64)
-            function apply!(y, x)
-                xL = view(x, 1:nL); xV = view(x, (nL + 1):(nL + m))
-                smv!(tmp, S, xL, ch.n; ndrange = nL)
-                LinearAlgebra.mul!(tmpP, Pend, xL)
-                view(y, 1:nL) .= tmp .+ tmpP .+ BVz * xV
-                yV .= AVVzd * xV
-                m > 0 && ttm!(yV, BVz, xL, nL, m, 16; ndrange = cld(nL, 16))
-                view(y, (nL + 1):(nL + m)) .= yV
-                return y
-            end
+            N = _NormalOperator(be, S, Pen, BVz, AVVz, ch.n)
             diagonal = vcat(S[:, 3 * 7 + 3 + 1] .+ VgtkCore.ka_upload(Float64, be, Vector(LinearAlgebra.diag(Pen))),
                             VgtkCore.ka_upload(Float64, be, LinearAlgebra.diag(AVVz)))
             # warm start after the first solve: the scene and the gains as solved (absolute unknowns), V's increment 0
             x0 = it == 1 ? nothing : VgtkCore.ka_upload(Float64, be, vcat(cL, zeros(mV), xh[(end - nG + 1):end]))
             # Core's conjugate gradients on the applied normal operator (Jacobi, cgls's stopping rule ‖g − N x‖ ≤ tolerance·‖g‖)
-            sol = VgtkCore.normal_cg(apply!, rhs; diagonal, x0, rtol = solver.tolerance, max_iter = solver.max_iter)
+            sol = VgtkCore.normal_cg(N, rhs; diagonal, x0, rtol = solver.tolerance, max_iter = solver.max_iter)
             x = sol.x; rel = sol.relres; iters += sol.iterations
             retcode = sol.converged ? :converged : :max_iterations
         else
             xh = _cholesky_solve(Array(S), Pen, Array(BVz), AVVz, Array(rhs), ch.n)
             x = xh
-            rel = norm(_apply_host(Array(S), Pen, Array(BVz), AVVz, ch.n, xh) .- Array(rhs)) / norm(Array(rhs))
+            # its relative residual through the same operator as the CG arm's, on the fit's backend
+            Nx = LinearAlgebra.mul!(similar(rhs), _NormalOperator(be, S, Pen, BVz, AVVz, ch.n), VgtkCore.ka_upload(Float64, be, xh))
+            rel = norm(Array(Nx) .- Array(rhs)) / norm(Array(rhs))
             retcode = :solved
         end
         seconds[:solve] += _elapsed(be, t0)
@@ -888,13 +878,40 @@ end
 
 const _STAGES = (:backproject, :chart, :accumulate, :vignetting_block, :penalty, :solve, :residuals, :total)
 
-# The full system's product on the host (the Cholesky solve's relative residual).
-function _apply_host(S, Pen, BVz, AVVz, n, x)
+# The fit's normal operator N = [S + Pen  BVz; BVzᵀ  AVVz] on the stacked unknowns (the scene's nL = n² controls, then the m
+# coordinates of V and the gains), held on the backend `be`: the scene block through the stencil kernel over `S`'s 49-point
+# rows and the penalty `Pen` as Core's CSR matrix, BVzᵀ through the tall transposed product. One operator for both solvers:
+# Core's `normal_cg` applies it (`mul!`), the Cholesky solve reads its relative residual through it.
+struct _NormalOperator{TS, TP, TB, TA, TV, K1, K2}
+    S::TS
+    Pen::TP
+    BVz::TB
+    AVVz::TA
+    n::Int
+    tmp::TV
+    tmpP::TV
+    yV::TV
+    smv!::K1
+    ttm!::K2
+end
+
+function _NormalOperator(be, S, Pen, BVz, AVVz, n)
     nL = size(S, 1); m = size(BVz, 2)
-    xL = x[1:nL]; xV = x[(nL + 1):end]
-    y = similar(x)
-    _stencil_matvec_kernel!(KA.CPU(), 256)(view(y, 1:nL), S, xL, n; ndrange = nL)
-    y[1:nL] .+= Pen * xL .+ BVz * xV
-    y[(nL + 1):end] .= BVz' * xL .+ AVVz * xV
+    return _NormalOperator(S, VgtkCore.CSRMatrix(Pen; device = be), BVz, VgtkCore.ka_upload(Float64, be, AVVz), n,
+                           VgtkCore.device_zeros(Float64, be, nL), VgtkCore.device_zeros(Float64, be, nL),
+                           VgtkCore.device_zeros(Float64, be, m), _stencil_matvec_kernel!(be, 256), _tall_tmatvec_kernel!(be, 64))
+end
+
+# y = N x (x and y on the operator's backend)
+function LinearAlgebra.mul!(y::AbstractVector, N::_NormalOperator, x::AbstractVector)
+    (; S, Pen, BVz, AVVz, n, tmp, tmpP, yV) = N
+    nL = size(S, 1); m = size(BVz, 2)
+    xL = view(x, 1:nL); xV = view(x, (nL + 1):(nL + m))
+    N.smv!(tmp, S, xL, n; ndrange = nL)
+    LinearAlgebra.mul!(tmpP, Pen, xL)
+    view(y, 1:nL) .= tmp .+ tmpP .+ BVz * xV
+    yV .= AVVz * xV
+    m > 0 && N.ttm!(yV, BVz, xL, nL, m, 16; ndrange = cld(nL, 16))
+    view(y, (nL + 1):(nL + m)) .= yV
     return y
 end
