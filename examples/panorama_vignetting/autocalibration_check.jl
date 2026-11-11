@@ -39,11 +39,18 @@ function autocalibration_check(record_path, out_path = nothing)
                              bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     tracks = [[k => vp.features[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
     rotations = Dict(k => SMatrix{3, 3, Float64, 9}(R) for (k, R) in enumerate(reg.rotations))
-    res = refine_camera_and_rotations(start_camera, rotations, tracks;
-                                      optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(
-                                          efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)),
-                                      width = Float64(cam["loss_width_px"]), fixed = (:aspect,),
-                                      max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
+    # the record's bundle schedule: 3 runs of 100 LM iterations, each from the last (its bundle_iterations = 3, max_iter 100)
+    res = nothing; camera = start_camera
+    for run in 1:3
+        res = refine_camera_and_rotations(camera, rotations, tracks;
+                                          optimization_strategy = VgtkEstimation.Triggs{VgtkCore.CauchyShape}(
+                                              efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)),
+                                          width = Float64(cam["loss_width_px"]), fixed = (:aspect,),
+                                          max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10)
+        println("run $run: $(res.retcode), $(res.iterations) iterations, rms $(round(res.rms; digits = 4)) px")
+        camera = res.metadata.camera
+        rotations = Dict(k => SMatrix{3, 3, Float64, 9}(R) for (k, R) in VgtkCore.estimate(res))
+    end
     names = Tuple(Symbol.(cam["covariance_order"]))
     got = NamedTuple{VgtkCore.parameter_names(VgtkCore.model(res.metadata.camera))}(
         Tuple(VgtkCore.parameter_vector(VgtkCore.model(res.metadata.camera))))
@@ -64,7 +71,7 @@ function autocalibration_check(record_path, out_path = nothing)
         println("FAIL: |Δ| > 3σ for ", join(String.(bad), ", "))
         return false
     end
-    println("PASS: every |Δ| ≤ 3σ")
+    println("OKAY: every |Δ| ≤ 3σ")
     if out_path !== nothing
         prov = rec["provenance"]
         prov["method"] = "rotating-camera autocalibration (no target; Hartley 1994; Agapito, Hayman, Reid 2001): " *
