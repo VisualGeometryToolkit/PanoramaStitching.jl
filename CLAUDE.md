@@ -45,7 +45,8 @@ from the registries (CauRegistry; General for those it holds).
 
 ## Git Commit Conventions
 
-- Commit messages end with the co-author line the owner's repositories use; no "Generated with" footer.
+- Never add "Co-Authored-By: Claude" or any other AI attribution to a commit message.
+- Never add a "Generated with Claude Code" footer.
 
 ## Stack Conventions
 
