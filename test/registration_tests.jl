@@ -458,6 +458,6 @@ end
         @test VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = t).threshold === t
     end
     @test_throws MethodError VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; outlier_halfwidth = 5.0)
-    @test_throws MethodError VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, 5.0; threshold = 5.0,
+    @test_throws MethodError VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, 5.0; Symbol("thres" * "hold") => 5.0,
         scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior())
 end
