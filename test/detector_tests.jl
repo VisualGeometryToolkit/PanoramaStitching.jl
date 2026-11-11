@@ -1,6 +1,6 @@
 # =============================================================================
-# detect_features' variants: the selection (:spread, VisualGeometryToolkitFeatures' spread_strongest through the descriptor;
-# :strongest, the global top N) and the detection image (:tone; :vst, the variance-stabilized green cells of the frame's
+# detect_features' variants: the selection (:spread, VisualGeometryToolkitFeatures' spread_strongest through the descriptor,
+# the one selection) and the detection image (:tone; :vst, the variance-stabilized green cells of the frame's
 # LinearRaw), the kept pixels the described set's, and the refusals.
 # =============================================================================
 
@@ -16,25 +16,24 @@
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
     sp = detect_features(q.cam, frame, desc; kw..., selection = :spread)
-    st = detect_features(q.cam, frame, desc; kw..., selection = :strongest)
     @test detect_features(q.cam, frame, desc; kw...).pixels == sp.pixels           # :spread and :tone the defaults
-    for f in (sp, st)
-        @test length(f.pixels) == length(f.features) == length(f.pixel_covariances)
-        @test all(i -> f.pixels[i] == FRAME_MAP(SVector{2, Float64}(f.features[i].detection.center...)), eachindex(f.pixels))
-        @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, f.pixels)
-    end
-    @test length(st.pixels) == N && round(Int, 0.9N) <= length(sp.pixels) <= round(Int, 1.1N)
-    dim(f) = count(p -> p[1] < VgtkCore.scale(FRAME_MAP) * Wf / 2, f.pixels) / length(f.pixels)
-    @info "detect_features: the dim half holds $(round(dim(sp); digits = 3)) of :spread's keypoints, $(round(dim(st); digits = 3)) of :strongest's"
-    @test dim(sp) > 0.15
-    @test dim(st) < dim(sp) / 3
-    # :strongest is the global top N by |response| of the region's detections (the oracle: ASIFT on the documented tone)
+    @test length(sp.pixels) == length(sp.features) == length(sp.pixel_covariances)
+    @test all(i -> sp.pixels[i] == FRAME_MAP(SVector{2, Float64}(sp.features[i].detection.center...)), eachindex(sp.pixels))
+    @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, sp.pixels)
+    @test round(Int, 0.9N) <= length(sp.pixels) <= round(Int, 1.1N)
+    # the oracle: the global top N by |response| of the region's detections (ASIFT on the documented tone) leaves the dim half
+    # nearly empty, the spread selection covers it
     p = quantile(vec(view(frame, :, :, 2))[vec(VgtkCore.pixel_mask(PanoramaStitching._in_frame(VgtkCore.imaged_region(q.cam), FRAME_MAP), Wf, Hf))], 0.995)
     dets = VgtkFeatures.asift_detect(Float32.(sqrt.(clamp.(Float64.(view(frame, :, :, 2)) ./ p, 0, 1))); tilts = [(1.0, 0.0)])
     kept = PanoramaStitching._imaged_less_rim(q.cam, 20.0)
     inside = filter(d -> VgtkCore.Point2(FRAME_MAP(SVector{2, Float64}(d.center...))...) ∈ kept, dets)
-    r = sort(abs.(getproperty.(inside, :response)); rev = true)
-    @test minimum(abs(f.detection.response) for f in st.features) >= r[N]
+    top = inside[sortperm(abs.(getproperty.(inside, :response)); rev = true)[1:N]]
+    dim(px) = count(u -> u[1] < VgtkCore.scale(FRAME_MAP) * Wf / 2, px) / length(px)
+    dim_top = dim([FRAME_MAP(SVector{2, Float64}(d.center...)) for d in top])
+    @info "detect_features: the dim half holds $(round(dim(sp.pixels); digits = 3)) of :spread's keypoints, $(round(dim_top; digits = 3)) of the global top N"
+    @test dim(sp.pixels) > 0.15
+    @test dim_top < dim(sp.pixels) / 3
+    @test_throws ArgumentError detect_features(q.cam, frame, desc; kw..., selection = :global)   # :spread is the one selection
 end
 
 @testitem "detect_features: :vst on the frame's LinearRaw; the refusals" setup = [SyntheticSequence, BayerMaps] begin

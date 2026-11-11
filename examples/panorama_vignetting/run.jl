@@ -290,7 +290,7 @@ end
 asift_tilts(t::AbstractString) = Symbol(t)
 asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 
-# The detector's settings of [registration]: `selection` ("spread" or "strongest"), `detection_image` ("tone" or "vst") and, with
+# The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst") and, with
 # "vst" only, the sensor's noise at the frames' ISO (`electrons_per_dn`, `read_noise_dn`) and the threshold `noise_sigmas`: a noise
 # key with "tone" is refused, never read.
 const DETECTION_NOISE_KEYS = ("electrons_per_dn", "read_noise_dn", "noise_sigmas")

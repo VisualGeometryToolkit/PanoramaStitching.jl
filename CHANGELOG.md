@@ -28,6 +28,10 @@
   VisualGeometryToolkitEval's `data_root` (Eval joins the example's environment). The README's example states its frame
   map, `SimilarityMap(LinearMap(2.0I))` (CoordinateTransformations joins its install line).
 - The quality items run Core's `test_duplication` (the stack repositories from `VGTK_STACK_PATHS`).
+- **Removed: `selection = :strongest`** (the global top `max_detections` by |response|, the private `_global_strongest`, a copy
+  of the selection Features retired): `:spread`, Features' `spread_strongest` (SSC), is the one selection, and any other is an
+  `ArgumentError`. Both configs of record select `"spread"` with `asift_tilts = "untilted"` (Features' schedule for a
+  panorama's views); their registrations and panoramas change on a rerun (measured: the cascade's report).
 
 ### Breaking: the bundle's scale from the verified pairs — SIMFIT++ per pair, one LM run
 
@@ -58,7 +62,7 @@
   `ArgumentError` before any feature is detected.
 - `detect_features`, `verify_pairs` and `register_rotations` take `selection` (`:spread`, the default: about
   `max_detections` of the strongest spread over the frame, VisualGeometryToolkitFeatures' `spread_strongest`, which the
-  LoMa descriptor applies; `:strongest`, the global top `max_detections` by |response|) and `detection_image` (`:tone`, the
+  LoMa descriptor applies; a global top-N baseline beside it, since removed) and `detection_image` (`:tone`, the
   default; `:vst`, the frame's variance-stabilized green cells, Features' `variance_stabilize`, at `noise_sigmas` noise σ,
   `detection_noise = (; electrons_per_dn, read_noise, noise_sigmas)`, the frame a Features `LinearRaw`). The kept
   keypoints are the described set's. A frame may be a `LinearRaw`.
@@ -209,7 +213,7 @@ Core 0.8); the example also VisualGeometryToolkitIO 0.8. Nothing else changes.
 - `PanoramaStitching.LOMA_SIZE` is removed: Features' `LoMaDescriptor` takes the frame at its own size (it resamples to its
   network's input, `VisualGeometryToolkitFeatures.LOMA_IMAGE_SIZE`, by the same bilinear warp), so the detections are no
   longer rescaled to 784² by hand and the described features carry them in the frame's pixels; the matcher takes each
-  frame's `(H, W)`. The strongest `max_detections` are Features' `strongest`. The registration's matches, inliers and
+  frame's `(H, W)`. The `max_detections` kept are Features' top-N selection of then. The registration's matches, inliers and
   rotations are unchanged on the synthetic sweep (rotations to 4e-14°, bundle rms to 4e-13 px).
 - A rotation bundle's track direction is Core's `Eliminable{E}` of its `SphereManifold` (the private `_TrackDirection` is
   gone); the loss width's scale is Core's `noise_sigma(norms, 2)`; the image circle in a binned frame is Core's

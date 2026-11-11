@@ -27,9 +27,9 @@ gain = 1.0                                         # linear values, 1.0 = the wh
 [registration]                                     # register_rotations (every keyword stated); the settings that worked on
 tone_percentile = 99.5                             # the 14 mm set (2026-11-04)
 detector_margin_px = 30.0
-asift_tilts = "imas25"                             # Features' tilt_schedule name ("imas25", "untilted") or [[t, φ], …]
+asift_tilts = "untilted"                           # Features' tilt_schedule ("untilted": the identity warp, its schedule for a panorama's views)
 max_detections = 2048
-selection = "strongest"                            # "spread" (SSC: about max_detections spread over the frame) or "strongest" (the global top N by |response|)
+selection = "spread"                               # Features' spread_strongest (SSC): about max_detections spread over the frame
 detection_image = "tone"                           # "tone" (sqrt(G / p), tone_percentile) or "vst" (the RAW's variance-stabilized green; then
                                                    # electrons_per_dn, read_noise_dn and noise_sigmas, the sensor's noise at the ISO and the threshold)
 descriptor = "b"

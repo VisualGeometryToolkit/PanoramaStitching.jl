@@ -494,8 +494,8 @@ end
     # the detector's settings: "vst" reads the noise keys, "tone" refuses them (never read)
     det(r) = call(:detector_settings, Dict{String, Any}(r))
     @test det(Dict("selection" => "spread", "detection_image" => "tone")) == (; selection = :spread, detection_image = :tone, detection_noise = nothing)
-    v = det(Dict("selection" => "strongest", "detection_image" => "vst", "electrons_per_dn" => 5.63, "read_noise_dn" => 0.82, "noise_sigmas" => 3))
-    @test v.selection === :strongest && v.detection_noise == (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
+    v = det(Dict("selection" => "spread", "detection_image" => "vst", "electrons_per_dn" => 5.63, "read_noise_dn" => 0.82, "noise_sigmas" => 3))
+    @test v.selection === :spread && v.detection_noise == (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
     @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3))
     @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst"))
 end

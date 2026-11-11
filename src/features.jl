@@ -4,8 +4,8 @@
 #
 # VisualGeometryToolkitFeatures' ASIFT keypoints (affine frames with their covariances) on
 # the tone-mapped or the variance-stabilized green inside the camera's imaged region, about N of the strongest spread over the
-# frame (or the global top N), described by DeDoDe at them (`LoMaDescriptor`, which resamples the frame to its network's
-# fixed input), and matched by the LoMa matcher (`LoMaMatcher`, LightGlue architecture).
+# frame (VisualGeometryToolkitFeatures' `spread_strongest`, SSC), described by DeDoDe at them (`LoMaDescriptor`, which resamples
+# the frame to its network's fixed input), and matched by the LoMa matcher (`LoMaMatcher`, LightGlue architecture).
 # =============================================================================
 
 """
@@ -27,13 +27,13 @@ struct FrameFeatures{F}
 end
 
 # The detector's variants (`detect_features`' `selection` and `detection_image`).
-const SELECTIONS = (:spread, :strongest)
+const SELECTIONS = (:spread,)
 const DETECTION_IMAGES = (:tone, :vst)
 
 # The detector's settings, checked before any feature is detected: `detection_noise` is
 # `(; electrons_per_dn, read_noise, noise_sigmas)` with `detection_image = :vst` and `nothing` (read by nothing) with `:tone`.
 function _check_detector_settings(what, selection, detection_image, detection_noise)
-    selection in SELECTIONS || throw(ArgumentError("$what: selection = :$selection is not :spread or :strongest"))
+    selection in SELECTIONS || throw(ArgumentError("$what: selection = :$selection is not :spread (Features' spread_strongest, SSC)"))
     detection_image in DETECTION_IMAGES || throw(ArgumentError("$what: detection_image = :$detection_image is not :tone or :vst"))
     if detection_image === :vst
         detection_noise isa NamedTuple && all(k -> haskey(detection_noise, k), (:electrons_per_dn, :read_noise, :noise_sigmas)) ||
@@ -66,10 +66,6 @@ _asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
 _asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
     throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
 
-# selection = :strongest: the global top `n` by |response| (ties: the earlier detection first), in detector order. The
-# ablation's baseline (VisualGeometryToolkitFeatures' former `strongest`); :spread leaves the selection to the descriptor.
-_global_strongest(dets, n) = length(dets) <= n ? dets : dets[sort!(sortperm(abs.(getproperty.(dets, :response)); rev = true)[1:n])]
-
 """
     detect_features(camera::BoundedCamera, frame, descriptor; frame_map, tone_percentile, detector_margin_px, asift_tilts,
                     max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing,
@@ -96,9 +92,9 @@ descriptor resamples the image to its network's input).
   `LinearRaw`'s own by default; `nothing` for an array frame: none).
 - The detections inside the imaged region less `detector_margin_px` at the lens
   coverage's edge (a camera whose coverage is its whole sensor: no margin).
-- `selection`: `:spread`, about `max_detections` of the strongest spread over the
-  frame (Features' `spread_strongest`, which the descriptor applies); `:strongest`,
-  the global top `max_detections` by |response|.
+- `selection`: `:spread` (the one selection), about `max_detections` of the
+  strongest spread over the frame (Features' `spread_strongest`, SSC, which the
+  descriptor applies).
 
 The kept pixels are the described set's, in Features' canonical order of the
 detections (a function of the image: the same run to run, on any number of
@@ -122,7 +118,6 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
     kept = _imaged_less_rim(camera, detector_margin_px)
     at(d) = frame_map(SVector{2, Float64}(d.center[1], d.center[2]))         # a detection's centre in the camera's pixels
     dets = filter(d -> VgtkCore.Point2(at(d)...) ∈ kept, dets)
-    selection === :strongest && (dets = _global_strongest(dets, max_detections))
     # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
     # the image to its network's input, and keeps about max_detections of them spread over it: the kept set is the described one)
     F = descriptor(permutedims(toned, (3, 1, 2)), dets)
