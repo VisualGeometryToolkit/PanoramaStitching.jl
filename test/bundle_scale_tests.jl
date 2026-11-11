@@ -1,5 +1,5 @@
 # =============================================================================
-# The bundle's scale: each verified pair's noise scale by SIMFIT++ (RANSACScoringDoneRight's `simfitpp_loss_width`, after
+# The bundle's scale: each verified pair's noise scale by SIMFIT++ (VisualGeometryToolkitEstimation's `simfitpp_loss_width`, after
 # its RANSAC, on held-out splits), pooled over the kept pairs into one σ̂ (inlier-count weighted variance), the bundle's
 # robust width `bundle_scale_multiple·σ̂` fixed for its one LM run.
 # =============================================================================

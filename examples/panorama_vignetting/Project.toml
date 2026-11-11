@@ -3,7 +3,7 @@
 # on the first LoMa session where a CUDA device is visible).
 # Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
 # Needs the VisualGeometryToolkit 0.9 stack; until it registers, TEMPORARY [sources] below take it from the monorepo snapshot
-# beside this repository (~/src/vgtk-bounded-camera-region; Estimation's version field is not bumped yet, so its compat keeps 0.8).
+# beside this repository (~/src/vgtk-simfit, branch simfitpp-estimation: bounded-camera-region with SIMFIT++ in Estimation; Estimation's version field is not bumped yet, so its compat keeps 0.8).
 # Never pushed or registered while they are here; remove before release.
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
@@ -26,10 +26,10 @@ VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
 [sources]
 PanoramaStitching = {path = "../.."}
-VisualGeometryToolkitCore = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitFeatures"}
-VisualGeometryToolkitIO = {path = "../../../vgtk-bounded-camera-region/VisualGeometryToolkitIO"}
+VisualGeometryToolkitCore = {path = "../../../vgtk-simfit/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../../../vgtk-simfit/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../../../vgtk-ssc/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitIO = {path = "../../../vgtk-simfit/VisualGeometryToolkitIO"}
 
 [compat]
 CUDA = "5"

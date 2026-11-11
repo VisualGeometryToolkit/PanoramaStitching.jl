@@ -161,9 +161,9 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; ra
     return VerifiedPairs(feats, verified, inlier_matches, stats, scales, loma)
 end
 
-# SIMFIT++ (Edstedt, CVPRW 2025; RANSACScoringDoneRight's port) on the Sampson residual of a pair's rotation: χ² of its 2
+# SIMFIT++ (Edstedt, CVPRW 2025; VisualGeometryToolkitEstimation's port) on the Sampson residual of a pair's rotation: χ² of its 2
 # degrees of freedom (the residual's codimension), the reference's coverage α = 0.99 and its width bounds (px).
-const _SIMFIT = RSDR.SimFitPP(; dg = 2)
+const _SIMFIT = VgtkEstimation.SimFitPP(; dg = 2)
 _chisq2_quantile(α) = -2 * log1p(-α)          # the χ²₂ quantile, closed form: F(x) = 1 − exp(−x/2)
 
 # A verified pair's noise scale: SIMFIT++'s loss width over its correspondences, the rotation refitted on a random train split
@@ -182,7 +182,7 @@ function _pair_scale(cs, res, local_optimization, rng)
         return VgtkCore.converged(r) ? VgtkCore.estimate(r) : nothing
     end
     residuals_sq(R, val) = abs2.(VgtkEstimation.refine_rotation(R, cs[collect(val)]; local_optimization = VgtkEstimation.NoLocalOptimization()).residuals)
-    w, ok = RSDR.simfitpp_loss_width(fit, residuals_sq, length(cs), w0, _SIMFIT; rng)
+    w, ok = VgtkEstimation.simfitpp_loss_width(fit, residuals_sq, length(cs), w0, _SIMFIT; rng)
     return (sigma = w / sqrt(q), success = ok)
 end
 
@@ -253,7 +253,7 @@ RANSAC's:
   result's `removed`; their matches make no track.
 - scale: per verified pair, after its RANSAC, its noise scale by SIMFIT++
   (Edstedt, "Less Biased Noise Scale Estimation for Threshold-Robust RANSAC",
-  CVPRW 2025; RANSACScoringDoneRight's `simfitpp_loss_width` with χ²₂, the
+  CVPRW 2025; VisualGeometryToolkitEstimation's `simfitpp_loss_width` with χ²₂, the
   rotation's Sampson residual's codimension, at coverage α = 0.99): the
   rotation refitted on random train splits (`refine_rotation`, MSAC at the
   current width, the pair's `local_optimization`), the held-out residuals'

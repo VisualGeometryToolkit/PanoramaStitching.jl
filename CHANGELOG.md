@@ -5,7 +5,7 @@
 ### Breaking: the bundle's scale from the verified pairs — SIMFIT++ per pair, one LM run
 
 - After its RANSAC each verified pair gets its noise scale by SIMFIT++ (Edstedt, "Less Biased Noise Scale Estimation for
-  Threshold-Robust RANSAC", CVPRW 2025; RANSACScoringDoneRight's `simfitpp_loss_width`, a new dependency): the rotation
+  Threshold-Robust RANSAC", CVPRW 2025; VisualGeometryToolkitEstimation's `simfitpp_loss_width`, no new dependency): the rotation
   refitted on random train splits (`refine_rotation`, MSAC at the current width, the pair's local optimization), the
   held-out Sampson residuals' truncation-debiased median, χ²₂ (the residual's codimension) at coverage 0.99, seeded with
   the RANSAC's own σ̂, the sampler the pair's `(seed, i, j)` stream. `VerifiedPairs` gains `scales` (per pair `sigma`,

@@ -12,7 +12,6 @@ KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NLLSsolver = "50b5cf9e-bf7a-4e29-8981-4280cbba70cb"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
-RANSACScoringDoneRight = "084d9f33-8b05-4903-a655-8a8c4926d033"
 Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
@@ -32,7 +31,6 @@ KernelAbstractions = "0.9.34"
 LinearAlgebra = "1"
 NLLSsolver = "5.3.2"
 PrecompileTools = "1.3"
-RANSACScoringDoneRight = "0.6"
 Rotations = "1.7"
 SparseArrays = "1"
 StableRNGs = "1.1"
@@ -45,14 +43,15 @@ VisualGeometryToolkitFeatures = "0.6.1"   # the 0.9 tree's own version field; th
 julia = "1.12"
 
 # TEMPORARY (never pushed or registered while it is here): the VisualGeometryToolkit 0.9 stack is not registered yet, so every
-# stack package resolves from the monorepo snapshot beside this repository (~/src/vgtk-bounded-camera-region, branch
-# bounded-camera-region: the 0.9 release branch, whose Features has LoMa's :auto ONNX Runtime provider).
+# stack package resolves from the monorepo worktree beside this repository (~/src/vgtk-simfit, branch
+# simfitpp-estimation: the 0.9 release branch bounded-camera-region, whose Features has LoMa's :auto ONNX Runtime
+# provider, with SIMFIT++ moved into Estimation); Features from ~/src/vgtk-ssc (branch ssc-anms, that branch's SSC
+# selection and variance-stabilized detection image, which detect_features uses).
 # Remove before release, with the compat above at the registered versions.
 [sources]
-RANSACScoringDoneRight = {path = "../rsdr-09"}   # TEMPORARY: the 0.9-stack branch (adopt-core-0.9) until its release
-VisualGeometryToolkitCore = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitCore"}
-VisualGeometryToolkitEstimation = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {path = "../vgtk-bounded-camera-region/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitCore = {path = "../vgtk-simfit/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "../vgtk-simfit/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {path = "../vgtk-ssc/VisualGeometryToolkitFeatures"}   # TEMPORARY: branch ssc-anms (spread_strongest, variance_stabilize), not yet in the 0.9 branch
 
 [workspace]
 projects = ["test", "docs"]
