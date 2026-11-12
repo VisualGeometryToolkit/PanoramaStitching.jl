@@ -60,3 +60,18 @@ the MSAC threshold key retired) and, with `scoring = nothing`, by Estimation's d
 - [x] the bundles' Irls refusal → Estimation's `bundle_loss` (b58c29d)
 - [x] the example's run directory, cache path rule and private arms key → Eval's `keyed_cell_dir`, `cached_result`'s file and `run_key(cfg; files)` (e4959a2)
 - [x] deferred by the owner's rulings (not duplicates of a stack implementation today): `_check_tolerances` (Estimation has no public validator), `level_up` vs `up_frame` (no bit-identical rewire), the tracks as Features' `CspondSet` (a public type change), `_in_frame` (one copy, no stack home)
+
+## 0.6.1 (Features 0.8, Core 0.9.3 / 0.9.4)
+
+- [x] the hard-coded ×2 from frame to camera pixels (run.jl's vignetting map image and summary points, its and
+  compare_arms.jl's camera extent `2Wf, 2Hf`, precompile.jl's frame pixel centres, registration_tests.jl's `2 .* p`,
+  vignetting_tests.jl's three `(j - 0.5) * 2` grids) → the frames' map (`frame_map`; the extent through the package's own
+  `_covered_extent`) (d210ffc)
+- [x] the precompile workload's one-cell synthetic mosaic, read only for its frame map, and the README example's
+  `SimilarityMap(LinearMap(2.0I))` → Core 0.9.4's `raw_frame_map(LinearRaw{:bin2})` (15b8e50)
+- [x] Core 0.9.3's public `require_extension`: PanoramaStitching has no extension check of its own (no
+  `_require_extension`, `_extension_loaded`, `Base.get_extension`); nothing to switch
+- [x] Core 0.9.4's `is_inside_texel_centres`: PanoramaStitching restates no texel chart (it samples through Core's
+  warping); nothing to switch
+- [x] `check_duplication(PanoramaStitching)` against vgtk 9762b9b4 (Core 0.9.4), BlobBoards bee3b43, lodr-09, rsdr-09,
+  CaliBlobs cb-release: 0 findings (Slurm 10548)
