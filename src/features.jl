@@ -132,10 +132,8 @@ function pair_bearings(camera, fa, fb, matches; frame_map)
     ub = [VgtkCore.propagate(frame_map, f.detection) for f in VgtkCore.targets(ms)]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
     bs = VgtkCore.bearing_csponds(cm, cm, VgtkCore.geom.(ua) .=> VgtkCore.geom.(ub))   # Core's: the bearings and their M₁/M₂
-    keep = [i for i in eachindex(ua) if all(isfinite, bs.first[i]) && all(isfinite, bs.second[i]) && all(isfinite, bs.M₁[i]) && all(isfinite, bs.M₂[i])]
+    f1 = VgtkCore.sources(bs); f2 = VgtkCore.targets(bs)
+    keep = [i for i in eachindex(ua) if all(isfinite, f1[i]) && all(isfinite, f2[i]) && all(isfinite, bs.M₁[i]) && all(isfinite, bs.M₂[i])]
     cs = VgtkCore.withattrs(bs[keep]; score = ms.score[keep], VgtkCore.noise_columns(ua[keep], ub[keep])...)
-    return cs, [(matches[i].first, matches[i].second) for i in keep]
-end
-    cs = VgtkCore.withattrs(VgtkCore.Csponds(f1, f2); M₁ = M1, M₂ = M2, score = ms.score[keep], VgtkCore.noise_columns(ua[keep], ub[keep])...)
     return cs, [(matches[i].first, matches[i].second) for i in keep]
 end
