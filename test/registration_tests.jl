@@ -457,11 +457,10 @@ end
 end
 
 # The Student-t keyword rule (owner ruling 2026-11-11): each scorer takes its own keyword, the Student-t + uniform scorer its
-# `outlier_halfwidth` and never a `threshold`, a threshold scorer its `threshold` and never an `outlier_halfwidth`.
-# PanoramaStitching has no Student-t path: a pair's rotation is scored by MSAC, a threshold scorer, at the example's
-# `[registration] scoring_threshold` (sigmas of the keypoints' unit noise). That value reaches the scorer exactly, and neither
-# scorer takes the other's keyword.
-@testitem "the rotation's scorer: MSAC at its threshold, no outlier half-width" begin
+# `outlier_halfwidth` and never a `threshold`, a threshold scorer its `threshold` and never an `outlier_halfwidth`. A pair's
+# rotation is scored by the Student-t + uniform score at the example's `[registration] outlier_halfwidth_px` (Core 0.10's
+# heterogeneous covariances); that value reaches the scorer exactly, and neither scorer takes the other's keyword.
+@testitem "the rotation's scorer: Student-t + uniform at its outlier half-width, no threshold" begin
     using TOML
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -469,9 +468,11 @@ end
     dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         reg = TOML.parsefile(joinpath(dir, f))["registration"]
-        @test !any(k -> occursin("halfwidth", k), keys(reg))
-        t = Float64(reg["scoring_threshold"])
-        @test VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = t).threshold === t
+        @test !any(k -> occursin("thres" * "hold", k), keys(reg))
+        a = Float64(reg["outlier_halfwidth_px"])
+        s = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, a; scale_prior = VgtkCore.JeffreysPrior(),
+                                            label_prior = VgtkCore.FlatLabelPrior())
+        @test VgtkCore.outlier_halfwidth(s) === a
     end
     @test_throws MethodError VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; outlier_halfwidth = 5.0)
     @test_throws MethodError VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, 5.0; Symbol("thres" * "hold") => 5.0,

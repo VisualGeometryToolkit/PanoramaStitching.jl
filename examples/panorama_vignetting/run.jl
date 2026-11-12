@@ -66,8 +66,9 @@ const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM 
                                    "local_optimization" => "the pairs' RANSAC strategy table is local_optimization_strategy",
                                    "bundle_camera_free" => "the bundle holds the camera's calibration",
                                    "bundle_" * "whitening" => "the bundle always whitens each observation by its keypoint's covariance (the detector's)",
-                                   "scoring_threshold" * "_px" => "the pairs' residuals are whitened by the keypoints' covariances: the MSAC threshold is " *
-                                   "scoring_threshold, in sigmas of the detection image's unit noise")
+                                   "scoring_threshold" * "_px" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (no threshold)",
+                                   "scoring_threshold" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (the MSAC threshold " *
+                                   "is retired)")
 function refuse_retired_registration(table, where)
     for (old, why) in RETIRED_REGISTRATION_KEYS
         haskey(table, old) && throw(ArgumentError("$where: the key $old is retired: $why"))
@@ -216,11 +217,13 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # covariance (VisualGeometryToolkitEstimation's uncertain_rotation): the averaging's Uncertain edges.
 # v5: no keypoint within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
 # Features' canonical order, the frames' map Features' raw_frame_map.
+# v9: the pairs scored by Student-t + uniform at outlier_halfwidth_px (Core 0.10's heterogeneous covariances; the MSAC
+# scoring_threshold retired), each pair's ŝ that scorer's.
 # v8: per pair its RANSAC scorer's own ŝ and degrees of freedom (sigma, dof); SIMFIT++ deleted.
 # v7: the features are Features' described features as detected (their covariances the detector's, no normalisation), the pairs'
 # residuals whitened by them (scoring_threshold in sigmas of the unit noise; the px threshold retired), per pair its rms and σ̂
 # in those sigmas.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v8 (per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the keypoints' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v9 (Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the keypoints' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol")
 function pairs_settings(r)
@@ -304,7 +307,8 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
                           max_detections = r["max_detections"], det..., descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
                           min_inliers = r["min_inliers"], seed = r["seed"],
-                          scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = Float64(r["scoring_threshold"])),
+                          scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, Float64(r["outlier_halfwidth_px"]);
+                                                                     scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior()),
                           local_optimization_strategy = rotation_local_optimization(r),
                           max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_optimization_strategy = averaging_strategy(r),
                           execution_provider = provider, say = m -> say(log, m))
