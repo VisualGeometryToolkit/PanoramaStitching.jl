@@ -12,12 +12,11 @@ of the
 
 ## Installation
 
-PanoramaStitching is registered in [CauRegistry](https://github.com/prittjam/CauRegistry.jl); the packages it is built
-on are in General. Julia 1.12 or later. With CauRegistry added to your depot, add the package and the packages the
-example also loads:
+PanoramaStitching and the packages it is built on are registered in General. Julia 1.12 or later. Add the package and
+the packages the example also loads:
 
 ```julia-repl
-pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays CoordinateTransformations
+pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
 ```
 
 ## Example
@@ -28,10 +27,9 @@ frames alone and renders their cylindrical panorama.
 ```julia
 using PanoramaStitching
 using VisualGeometryToolkitCore: CameraModel, BoundedCamera, Size2, KannalaBrandt, Circle, Point2, Equirectangular,
-    Cylindrical, CauchyShape, Triggs, SimilarityMap, backproject, project, bilinear_sample, exp_so3, log_so3, px
+    Cylindrical, CauchyShape, Triggs, LinearRaw, raw_frame_map, backproject, project, bilinear_sample, exp_so3, log_so3, px
 using StaticArrays: SA
-using CoordinateTransformations: LinearMap
-using LinearAlgebra: I, norm
+using LinearAlgebra: norm
 using Random: Xoshiro
 
 # The scene: random Gaussian blobs on an equirectangular texture (columns the longitude, rows the latitude).
@@ -50,17 +48,17 @@ radiance = blob_scene(Xoshiro(7))
 
 # A Kannala–Brandt fisheye (300 px focal length, 1000 × 1000 sensor, imaging to 100° off axis, its image circle of
 # radius 480 px the lens coverage: every mask reads the camera's imaged region) turned 35° between frames, each frame
-# 2 × 2 binned: frame pixel (i, j) is centred at camera pixel (2j − 1, 2i − 1), the frames' map onto the camera's pixels
-# x ↦ 2x (a RAW's :bin2 frames: VisualGeometryToolkitFeatures' raw_frame_map).
+# 2 × 2 binned as a RAW's :bin2 frames are: the frames' map onto the camera's pixels is that mode's, x ↦ 2x
+# (VisualGeometryToolkitCore's raw_frame_map), so frame pixel (i, j), centred at (j − ½, i − ½), is camera pixel (2j − 1, 2i − 1).
+frame_map = raw_frame_map(LinearRaw{:bin2})
 camera = BoundedCamera(CameraModel(300.0px, SA[500.0px, 500.0px]; lens = KannalaBrandt(-0.02)), Size2(1000, 1000);
                        lens_coverage = Circle(Point2(500.0, 500.0), 480.0))
 truth = [exp_so3(SA[0.0, deg2rad(35.0 * k), 0.0]) for k in 0:3]  # d = R_k·f, the first frame the common frame
 frames = map(truth) do R
-    rgb = [hypot(2j - 501, 2i - 501) < 480 ? radiance(R * backproject(camera, SA[2j - 1.0, 2i - 1.0])) : SA[0f0, 0f0, 0f0]
-           for i in 1:500, j in 1:500]
+    rgb = [(u = frame_map(SA[j - 0.5, i - 0.5]); hypot(u[1] - 500, u[2] - 500) < 480 ? radiance(R * backproject(camera, u)) :
+            SA[0f0, 0f0, 0f0]) for i in 1:500, j in 1:500]
     Float32[rgb[i, j][c] for i in 1:500, j in 1:500, c in 1:3]   # H × W × 3, linear
 end
-frame_map = SimilarityMap(LinearMap(2.0I))
 
 # The rotations from the frames alone, then the cylindrical panorama at 0.25° per pixel.
 reg = register_rotations(frames, camera; frame_map, tone_percentile = 99.5, detector_margin_px = 20.0,

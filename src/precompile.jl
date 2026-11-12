@@ -7,9 +7,8 @@
                                                          lens = VgtkCore.KannalaBrandt(-0.02)),
                                     VgtkCore.Size2(80, 80); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(40.0, 40.0), 38.0))
     rotations = [SMatrix{3, 3}(VgtkCore.exp_so3(SVector(0.0, deg2rad(y), 0.0))) for y in (0.0, 30.0)]
-    # the frames' map onto the camera's pixels: a Bayer cell grid's (Core's raw_frame_map, x ↦ 2x), from a synthetic 2 × 2 mosaic
-    mosaic = VgtkCore.RawMosaic(zeros(UInt16, 2, 2), UInt8[0 1; 3 2], (0.0, 0.0, 0.0, 0.0), 1.0, (0, 0), (2, 2), (; model = "synthetic"))
-    frame_map = VgtkCore.raw_frame_map(VgtkCore.LinearRaw(mosaic; mode = :bin2))
+    # the frames' map onto the camera's pixels: the :bin2 cell grid's (Core's raw_frame_map of the mode, x ↦ 2x)
+    frame_map = VgtkCore.raw_frame_map(VgtkCore.LinearRaw{:bin2})
     scene(d) = 0.05 * exp(0.6 * sin(3d[1] + 2d[2]) * cos(2d[3]))
     frames = map(rotations) do R
         img = zeros(Float32, 40, 40, 3)

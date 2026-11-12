@@ -4,8 +4,8 @@
 
 A patch: no API change, the same results.
 
-- On VisualGeometryToolkitFeatures 0.8 (`[compat]` VisualGeometryToolkitFeatures "0.8", VisualGeometryToolkitCore
-  "0.9.2"): the sensor image's names (`LinearRaw`, `RawMosaic`, `raw_frame_map`, `bayer_plane_map`) are
+- On VisualGeometryToolkitFeatures 0.8 and VisualGeometryToolkitCore 0.9.4 (`[compat]` VisualGeometryToolkitFeatures
+  "0.8", VisualGeometryToolkitCore "0.9.4"): the sensor image's names (`LinearRaw`, `RawMosaic`, `raw_frame_map`, `bayer_plane_map`) are
   VisualGeometryToolkitCore's, which Features 0.8 no longer re-exports. The package, its tests and the example call
   Core's; the docstrings and guides name Core as their owner.
 - No hard-coded ×2 from a frame's pixels to the camera's: the frames' map (`frame_map`) places every frame pixel. The
@@ -13,6 +13,11 @@ A patch: no API change, the same results.
   points and its camera extent (`W`, `H`), and the tests' frame-pixel centres go through it. For `:bin2` frames
   (x ↦ 2x) every value is the same, bit for bit (a doubling and the map's identity rotation and zero translation are
   exact).
+- Frames with no RAW behind them take the mode's map, Core 0.9.4's `raw_frame_map(LinearRaw{:bin2})`: the precompile
+  workload no longer builds a one-cell synthetic mosaic to read it, and the README's example states
+  `frame_map = raw_frame_map(LinearRaw{:bin2})` (was `SimilarityMap(LinearMap(2.0I))`) and places its frame pixels through
+  it; its install line no longer adds CoordinateTransformations. The README and the documentation's first page say
+  PanoramaStitching is registered in General (they still named CauRegistry).
 
 ## 0.6.0 (2026-11-12)
 
