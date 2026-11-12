@@ -41,8 +41,22 @@ Every scorer takes its own keyword: `StudentTUniformScoring` its `outlier_halfwi
 threshold scorers (RANSAC, MSAC, the loss-width families) `threshold`, never `outlier_halfwidth`. No number may cross between
 the two meanings. Audit: studentt-keyword-overload.md.
 
-PanoramaStitching has no Student-t path: a pair's rotation is scored by MSAC, a threshold scorer, at `[registration]
-scoring_threshold` (examples; sigmas of the keypoints' unit noise) and `MsacScoring(RotationProblem; threshold = w)` (src/registration.jl:184).
+A pair's rotation is scored by the Student-t + uniform score at `[registration] outlier_halfwidth_px` (examples, 0.6.0;
+the MSAC threshold key retired) and, with `scoring = nothing`, by Estimation's default scorer.
 
 - [x] examples/panorama_vignetting/README.md:73 "MSAC scoring with a 5 px half-width" (a threshold called a half-width) → "MSAC scoring at a 5 px threshold" (this commit)
-- [x] test/registration_tests.jl "the rotation's scorer: MSAC at its threshold, no outlier half-width": the configs' `scoring_threshold` reaches MSAC's threshold exactly (`===`), MSAC refuses `outlier_halfwidth`, the Student-t scorer refuses `threshold` (this commit)
+- [x] test/registration_tests.jl "the rotation's scorer: Student-t + uniform at its outlier half-width, no threshold": the configs' `outlier_halfwidth_px` reaches the scorer exactly (`===`), MSAC refuses `outlier_halfwidth`, the Student-t scorer refuses `threshold` (5262be4)
+
+## The 0.9 concept-level duplication audit (2026-11-12; ~/logs/dgx-agent/dup-audit-ps.md)
+
+- [x] the keypoint store split (`FrameFeatures`' pixels and covariances beside Features' described features) → Features' `StructArray{DescribedFeature}` (35fa078…be86989)
+- [x] the frame map's hand-written J Σ Jᵀ, `keypoint_covariance_scale`, `keypoint_uncertain`, `_valid_covariance` and `bundle_whitening` → deleted (covariances off in 0.6.0; Features' `propagate(map, detection)` when they return)
+- [x] the pixel → bearing loop of `pair_bearings` → Core's `bearing_csponds` (5cf699f)
+- [x] the bundle's hand-built stall check → Core's `is_stationary(blocks, variables, free)` (5cf699f)
+- [x] `_rim` and the example's `domain_radius` margin → Core's `lens_coverage(camera, rim)` (5cf699f)
+- [x] `fit_vignetting`'s P₀ + Z y increment → Core's `restrict` of V's `ParameterManifold` (bit-identical; e4959a2)
+- [x] `_autocalibration`'s Schur reduction and s²H⁻¹ → Core's `implicit_covariance` (f7682cf); its T Σ Tᵀ → Core's `propagate`
+- [x] SIMFIT++ (`_pair_scale`, `_chisq2_quantile`) and `_pooled_scale` → deleted; the scorer's ŝ pooled by Estimation's `pooled_noise_scale` (77efcd1)
+- [x] the bundles' Irls refusal → Estimation's `bundle_loss` (b58c29d)
+- [x] the example's run directory, cache path rule and private arms key → Eval's `keyed_cell_dir`, `cached_result`'s file and `run_key(cfg; files)` (e4959a2)
+- [x] deferred by the owner's rulings (not duplicates of a stack implementation today): `_check_tolerances` (Estimation has no public validator), `level_up` vs `up_frame` (no bit-identical rewire), the tracks as Features' `CspondSet` (a public type change), `_in_frame` (one copy, no stack home)
