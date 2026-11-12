@@ -187,7 +187,7 @@ end
 # by stable_seed(seed, i, j), so a v2 record's rotations are not this code's; they are recomputed. v5: PanoramaStitching 0.6's
 # bundle drops the observations not imaged at its start and counts them (`n_dropped_start`, replacing v3's start finiteness
 # count), and holds the frames left with none (`frames_unconstrained`). v6: the key holds the provider LoMa runs on, and the
-# record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's filtered_rotation_averaging at `cycle_tol_deg` and
+# record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's fit_filtered_rotation_averaging at `cycle_tol_deg` and
 # `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed. v8: the bundle is one LM
 # run at a multiple of the pairs' pooled SIMFIT++ scale (bundle_iterations retired); the record holds σ̂ and its iterations.
 # v9: the verified pairs' v5 (the clip mask, Features' canonical detection order).

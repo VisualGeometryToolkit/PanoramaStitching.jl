@@ -4,6 +4,8 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
+- The view graph's averaging calls VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` (was
+  `filtered_rotation_averaging`, renamed by the stack: a fit verb).
 - The bundles' default `optimization_strategy` is VisualGeometryToolkitEstimation's pixel bundle's, read from its
   configs/default.toml `[refine_camera_and_poses]` (compliance audit #48; was a literal of the same strategy):
   `Triggs{WelschShape}` stating no efficiency constant, its width Core's `efficiency_constant(Welsch, 2)` × `scale`, as

@@ -44,7 +44,7 @@ local_optimization_strategy = { type = "irls", loss = "tls" }   # the pairs' RAN
 max_trials = 10000
 min_trials = 100
 averaging_optimization_strategy = { type = "irls", loss = "huber", max_iter = 100 }   # the view graph's averaging (Estimation's fit_rotation_averaging strategy of record)
-cycle_tol_deg = 2.0                                # the view-graph filters (Estimation's filtered_rotation_averaging): a pair off a 3-cycle by more
+cycle_tol_deg = 2.0                                # the view-graph filters (Estimation's fit_filtered_rotation_averaging): a pair off a 3-cycle by more
 orientation_tol_deg = 5.0                          # than this removed, then a pair off the averaged rotations by more than this
 bundle_optimization_strategy = { type = "triggs", loss = "welsch", efficiency_constant = 2.5 }   # the bundle: ONE LM run, Welsch at 2.5 × σ̂ (the pairs' pooled SIMFIT++ scale)
 bundle_max_iter = 1000                             # never the reason it stops here: rotations.json records the iterations it took

@@ -1,5 +1,5 @@
 # =============================================================================
-# register_rotations' view-graph filters (VisualGeometryToolkitEstimation's filtered_rotation_averaging): a pair verified one
+# register_rotations' view-graph filters (VisualGeometryToolkitEstimation's fit_filtered_rotation_averaging): a pair verified one
 # period off, as a periodic scene verifies it, is removed by the cycle and the orientation filters, and its matches make no
 # track; the tolerances' defaults (2° and 5°) and refusals.
 # =============================================================================

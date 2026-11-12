@@ -7,7 +7,7 @@
 #              Jacobians, VisualGeometryToolkitEstimation's `find_rotation` (the RANSAC of the
 #              pure rotation on bearings, its scorer and local optimization the caller's)
 #   graph      VisualGeometryToolkitEstimation's `ViewGraph` of the verified pairs, each edge its rotation
-#              weighted by its inlier count (Core's `Attributed`), and Estimation's `filtered_rotation_averaging`
+#              weighted by its inlier count (Core's `Attributed`), and Estimation's `fit_filtered_rotation_averaging`
 #              of it: the cycle filter, the averaging, the orientation filter (a disconnected sequence refused)
 #   tracks     `chain_tracks`: the components of the kept pairs' inlier matches
 #   bundle     `refine_rotations`: the rotations and the track directions by NLLSsolver
@@ -38,7 +38,7 @@ sorted), `no_covariance` (the verified pairs whose rotation covariance is not de
 not edges, sorted), `pairs` (per verified pair
 `(i, j)`, kept or removed: matches, inliers, the rms Sampson distance of its inliers in pixels and
 its rotation angle in degrees), `averaging` (the averaging fitted on `graph`,
-VisualGeometryToolkitEstimation's `filtered_rotation_averaging`: the edges' covariances carry the scale, so it records scale 1,
+VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging`: the edges' covariances carry the scale, so it records scale 1,
 `ScaleUpstream`; the edges sharing a keypoint are treated as independent, the first-order approximation), `tracks` (of the kept pairs, as `(frame, keypoint)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 metadata's `outcome` and `n_dropped_start` say how the bundle ended and how many
@@ -289,7 +289,7 @@ RANSAC's:
   `local_optimization_strategy` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
   with at least `min_inliers` inliers.
-- graph: VisualGeometryToolkitEstimation's `filtered_rotation_averaging` of the
+- graph: VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` of the
   verified pairs' view graph, its strategy `averaging_optimization_strategy` (an `Irls{Shape}`; by default
   VisualGeometryToolkitEstimation's `[fit_rotation_averaging] optimization_strategy`): the pairs off a cycle
   by more than `cycle_tol` removed (`filter_cycles`), the averaging, then the
@@ -376,7 +376,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     no_covariance = _no_covariance_pairs(vp.verified)
     isempty(no_covariance) || say("  rotation averaging: $(length(no_covariance)) verified pair(s) with no determined rotation covariance, " *
                                   "not edges: " * join(["$(i - 1)-$(j - 1)" for (i, j) in no_covariance], ", "))
-    (; fit, graph) = VgtkEstimation.filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol,
+    (; fit, graph) = VgtkEstimation.fit_filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol,
                                                                    _averaging_kw(averaging_optimization_strategy)...)
     avg = fit
     removed = sort!([p for p in keys(vp.verified) if !haskey(graph, p...)])
@@ -411,7 +411,7 @@ function _pooled_scale(vp::VerifiedPairs, graph)
 end
 
 # The view-graph filters' tolerances (radians): positive, or nothing (that filter skipped). Checked before any feature is detected;
-# from the verified pairs, VisualGeometryToolkitEstimation's `filtered_rotation_averaging` refuses them itself.
+# from the verified pairs, VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` refuses them itself.
 function _check_tolerances(what, cycle_tol, orientation_tol)
     for (name, t) in (("cycle_tol", cycle_tol), ("orientation_tol", orientation_tol))
         t === nothing || (isfinite(t) && t > 0) || throw(ArgumentError("$what: $name = $t is not positive (radians; nothing skips the filter)"))
