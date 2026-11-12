@@ -77,10 +77,10 @@ end
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test err(VgtkCore.estimate(res)) < 0.05                       # the noise floor: 0.5 px at f = 300 px (0.19°/px), ~400 tracks
     @test VgtkCore.estimate(res)[1] ≈ R[1]
-    # the bundle's keywords are Estimation's bundle_loss: an Irls strategy is refused here (one LM), a width beside a stated
-    # constant there, and a width records no scale
+    # the bundle's keywords are Estimation's bundle_loss: an Irls strategy is refused there (a refine runs one LM), a width
+    # beside a stated constant too, and a width records no scale
     obs0 = [[k => x for (k, x) in t] for t in ts]
-    @test_throws r"runs one LM" refine_rotations(CAM, start, obs0; kw..., optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 10))
+    @test_throws r"runs ONE robustified LM" refine_rotations(CAM, start, obs0; kw..., optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 10))
     @test_throws ArgumentError refine_rotations(CAM, start, obs0; kw...,
                                                 optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0))
     @test res.metadata.loss_width == 1.5 && isnan(res.metadata.scale) && VgtkCore.scale_source(res) == VgtkCore.ScaleNone

@@ -393,14 +393,11 @@ const _RETIRED_HOLD_KEYWORDS = (:camera_free, :free, :fix, :fixed_params, :hold)
 # the camera's chart over its free parameters `free`), `what` the caller named in a message; `bundle` the loss of the
 # robust-estimation contract, VisualGeometryToolkitEstimation's `bundle_loss` of the caller's keywords (its strategy, scale
 # input and deployed loss). Its strategy is a Triggs{K} — the loss K as NLLSsolver's robustifier at the deployed width,
-# `sqrt(sq_loss_width(loss))` as every bundle of the stack — or `nothing` (plain least squares); an Irls{K} is refused: this
+# `sqrt(sq_loss_width(loss))` as every bundle of the stack — or `nothing` (plain least squares); an Irls{K} is refused by Estimation's bundle_loss: this
 # bundle runs one LM. The scale record is the input's (`scale_source`, and `noise_scale` unless ScaleNone: NaN).
 function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free_names::Tuple{Vararg{Symbol}};
                           bundle::NamedTuple, max_iter::Integer, ftol::Real, xtol::Real,
                           eliminate::Bool, what::AbstractString) where {K}
-    bundle.strategy isa VgtkCore.Irls && throw(ArgumentError(
-        "$what: the bundle runs one LM, its strategy a Triggs{K} (its loss K as NLLSsolver's robustifier at one width) or " *
-        "nothing; an Irls{K} reweights"))
     loss = bundle.strategy === nothing ? nothing : VgtkCore.strategy_loss(bundle.strategy)()
     width = bundle.loss === nothing ? NaN : sqrt(VgtkCore.sq_loss_width(bundle.loss))
     scale_source = VgtkCore.scale_source(bundle.input)
