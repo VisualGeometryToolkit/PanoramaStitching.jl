@@ -33,20 +33,8 @@ _forward_map(camera, proto) = _forward_map(Adapt.adapt(KA.get_backend(proto), Vg
 # domain are not eroded, so a camera whose coverage is its whole sensor (none stored: Core's default, the sensor's own `Rect`)
 # is unchanged. A margin that erodes the coverage away leaves nothing imaged (an empty `Rect`), not an error.
 function _imaged_less_rim(camera::VgtkCore.BoundedCamera, m)
-    e = VgtkCore.extent(camera)
-    c = _rim(VgtkCore.lens_coverage(camera), m, VgtkCore.Rect2{Float64}(0, 0, e.width, e.height))
+    c = VgtkCore.lens_coverage(camera, m)                              # Core's: the coverage less m at the lens's edge
     return c === nothing ? VgtkCore.Rect2{Float64}() : VgtkCore.imaged_region(VgtkCore.with_lens_coverage(camera, c))
-end
-# A coverage less `m` at its edge inside the `sensor`, or `nothing` when nothing is left: a `Circle` or `Ellipse` shrunk by `m`
-# along its axes; a `Rect` inset by `m` on each side that lies inside the sensor (a side on or past the sensor's edge is the
-# sensor's edge, not the lens's, and stays).
-_rim(c::VgtkCore.Circle, m, _) = c.r > m ? VgtkCore.Circle(c.center, c.r - m) : nothing
-_rim(e::VgtkCore.Ellipse, m, _) = min(e.a, e.b) > m ? VgtkCore.Ellipse(e.center, e.a - m, e.b - m, e.θ) : nothing
-function _rim(r::VgtkCore.Rect, m, sensor::VgtkCore.Rect)
-    lo, hi = r.origin, r.origin .+ r.widths; slo, shi = sensor.origin, sensor.origin .+ sensor.widths
-    x0, y0 = ntuple(i -> lo[i] > slo[i] ? lo[i] + m : lo[i], 2)
-    x1, y1 = ntuple(i -> hi[i] < shi[i] ? hi[i] - m : hi[i], 2)
-    return x1 > x0 && y1 > y0 ? VgtkCore.Rect2{Float64}(x0, y0, x1 - x0, y1 - y0) : nothing
 end
 
 # A region of the camera's pixels in a frame's pixels, `frame_map` the frame's map onto the camera's pixels (a Core

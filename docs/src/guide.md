@@ -124,15 +124,12 @@ be refined: a `SplineLens` camera is an `ArgumentError`. The tracks come from a 
 rerun [`register_rotations`](@ref) with the refined camera to verify the pairs through it.
 
 ```julia
-# Illustrative: VisualGeometryToolkitCore's Triggs strategy and its propagation of a keypoint through the frames' map
-using VisualGeometryToolkitCore: Triggs, Uncertain, CovMat, propagate
-using Statistics: cov
+# Illustrative: VisualGeometryToolkitCore's Triggs strategy; a keypoint through the frames' map (Features' propagate)
+using VisualGeometryToolkitCore: Triggs, propagate
 
 # the tracks as frame => keypoint observations: each in the camera's pixels with its covariance (the (x, y) block of the
 # detector's), and the registration's rotations as the start, keyed by frame
-observe(d, Σ = cov(d)) = propagate(frame_map, Uncertain(SVector(d.center[1], d.center[2]),
-                                                       CovMat(SMatrix{2, 2}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2]))))
-tracks = [[k => observe(reg.features[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
+tracks = [[k => propagate(frame_map, reg.features[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
 start = Dict(enumerate(reg.rotations))
 autocal = refine_camera_and_rotations(camera, start, tracks; optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.0),
                                       scale = reg.bundle_sigma, fixed = (:aspect,), max_iter = 100, ftol = 1e-10,

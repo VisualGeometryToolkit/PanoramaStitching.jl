@@ -23,7 +23,7 @@
     # every keypoint is Uncertain with the detector's positive-definite covariance, and Core's propagate takes it to the camera's
     # pixels (FRAME_MAP x ↦ 2x: the (x, y) block × 4)
     @test all(f -> f.detection isa VgtkCore.Attributed{<:VgtkCore.Uncertain} && isposdef(Symmetric(Matrix(cov(f.detection)))), sp)
-    u = PanoramaStitching._camera_keypoint(FRAME_MAP, sp[1].detection)
+    u = VgtkCore.propagate(FRAME_MAP, sp[1].detection)
     @test VgtkCore.geom(u) == px(sp)[1] && Matrix(cov(u)) ≈ 4 * Matrix(cov(sp[1].detection))[1:2, 1:2]
     @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(sp))
     @test round(Int, 0.9N) <= length(sp) <= round(Int, 1.1N)

@@ -495,14 +495,10 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     # each kept observation's rows and Jacobian scaled by √ρ′ (ρ′ its loss weight; 1 for the plain least squares), the held
     # variables' columns (the gauge frame, the tracks left out, the unconstrained frames) left out. `max_iter = 0` runs no
     # solve: the iteration cap.
-    function stationary()
+    function stationary()                                  # Core's stall postcondition on the residual blocks themselves
         kernel = robustifier()
-        blocks = [observation(nothing, j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]]
-        r, J = VgtkCore.nlls_rows_and_jacobian(blocks, vars)
-        s = repeat([sqrt(NLLSsolver.robustifydcost(kernel, r[2k - 1]^2 + r[2k]^2)[2]) for k in eachindex(blocks)]; inner = 2)
-        offsets = cumsum([0; [Int(dynamic(NLLSsolver.nvars(v))) for v in vars]])
-        solved_columns = reduce(vcat, [collect((offsets[v] + 1):offsets[v + 1]) for v in eachindex(vars) if unfixed[v]]; init = Int[])
-        return VgtkCore.is_stationary((LinearAlgebra.Diagonal(s) * J)[:, solved_columns], s .* r; tol = _STATIONARITY_TOL, ftol)
+        blocks = [observation(kernel, j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]]
+        return VgtkCore.is_stationary(blocks, vars, unfixed; tol = _STATIONARITY_TOL, ftol)
     end
     rc, rule = result === nothing ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : VgtkCore.nlls_termination(result, stationary)
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)

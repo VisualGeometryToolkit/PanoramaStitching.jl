@@ -73,7 +73,7 @@ end
     @test VgtkCore.converged(reg.bundle) && reg.bundle.iterations < 1000
     # the same bundle with that width given explicitly: one LM run, the same result (its observations the keypoints with their
     # covariances, as register_rotations builds them)
-    obs = [[k => PanoramaStitching._camera_keypoint(IDENTITY_MAP, feats[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
+    obs = [[k => VgtkCore.propagate(IDENTITY_MAP, feats[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
     direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 2.5 * pooled,
                               max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
     @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations

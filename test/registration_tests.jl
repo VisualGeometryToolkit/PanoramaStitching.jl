@@ -129,7 +129,7 @@ end
     # pixels² for unit noise of the detection image), so a pixel residual over √(tr Σ / 2) is in sigmas of that unit noise, the
     # unit of the pairs' pooled scale σ̂ (σ₀: the noise σ₀²Σ)
     whitened = filter(isfinite, [reg.bundle.metadata.residuals[j][i] /
-                                 sqrt(tr(Statistics.cov(PanoramaStitching._camera_keypoint(FRAME_MAP, reg.features[k][kp].detection))) / 2)
+                                 sqrt(tr(Statistics.cov(VgtkCore.propagate(FRAME_MAP, reg.features[k][kp].detection))) / 2)
                                  for (j, t) in enumerate(reg.tracks) for (i, (k, kp)) in enumerate(t)])
     @info "synthetic register: the bundle's whitened rms $(sqrt(mean(abs2, whitened))), the pooled pairs' σ̂ $(reg.bundle_sigma)"
     @test sqrt(mean(abs2, whitened)) < 3 * reg.bundle_sigma && reg.dropped == 0
@@ -330,7 +330,7 @@ end
     # 0.5.1's bundle: the same tracks and start through the bare model (this lens's projection is defined everywhere, so
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
-    obs = [[k => PanoramaStitching._camera_keypoint(FRAME_MAP, b.features[k][kp].detection) for (k, kp) in t] for t in b.tracks]
+    obs = [[k => VgtkCore.propagate(FRAME_MAP, b.features[k][kp].detection) for (k, kp) in t] for t in b.tracks]
     ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; merge(bkw, (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}()))..., width = b.bundle.metadata.loss_width)
     @test VgtkCore.converged(ref)
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9

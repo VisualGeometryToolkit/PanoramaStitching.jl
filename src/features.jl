@@ -110,15 +110,6 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
     return descriptor(permutedims(toned, (3, 1, 2)), dets)
 end
 
-# A keypoint (a detection of Features' described features) in the camera's pixels with its position covariance: Core's
-# `propagate` through the frame map of its position, the centre with the (x, y) block of its frame's (x, y, log σ) covariance
-# (Features' FeatureCovariance: "position-only consumers take the top-left 2 × 2 block"). The detector's covariance as it is.
-function _camera_keypoint(frame_map, d)
-    Σ = Statistics.cov(d)
-    return VgtkCore.propagate(frame_map, VgtkCore.Uncertain(SVector{2, Float64}(d.center[1], d.center[2]),
-                                                          VgtkCore.CovMat(SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2]))))
-end
-
 """
     pair_bearings(camera, fa, fb, matches; frame_map) -> (cs, kept)
 
@@ -136,16 +127,15 @@ cannot back-project is dropped).
 """
 function pair_bearings(camera, fa, fb, matches; frame_map)
     ms = VgtkCore.csponds(fa, fb, matches)          # Features' method of Core's csponds: the matched features and their score
-    ua = [_camera_keypoint(frame_map, f.detection) for f in VgtkCore.sources(ms)]
-    ub = [_camera_keypoint(frame_map, f.detection) for f in VgtkCore.targets(ms)]
-    f1 = SVector{3, Float64}[]; f2 = SVector{3, Float64}[]; M1 = SMatrix{3, 2, Float64, 6}[]; M2 = SMatrix{3, 2, Float64, 6}[]
-    keep = Int[]
+    # each keypoint in the camera's pixels with its covariance: Features' propagate of the detection through the frame map
+    ua = [VgtkCore.propagate(frame_map, f.detection) for f in VgtkCore.sources(ms)]
+    ub = [VgtkCore.propagate(frame_map, f.detection) for f in VgtkCore.targets(ms)]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
-    for i in eachindex(ua, ub)
-        ba = VgtkCore.backproject_with_jacobian(cm, VgtkCore.geom(ua[i])); bb = VgtkCore.backproject_with_jacobian(cm, VgtkCore.geom(ub[i]))
-        (all(isfinite, ba[1]) && all(isfinite, bb[1]) && all(isfinite, ba[2]) && all(isfinite, bb[2])) || continue
-        push!(f1, ba[1]); push!(f2, bb[1]); push!(M1, ba[2]); push!(M2, bb[2]); push!(keep, i)
-    end
+    bs = VgtkCore.bearing_csponds(cm, cm, VgtkCore.geom.(ua) .=> VgtkCore.geom.(ub))   # Core's: the bearings and their M₁/M₂
+    keep = [i for i in eachindex(ua) if all(isfinite, bs.first[i]) && all(isfinite, bs.second[i]) && all(isfinite, bs.M₁[i]) && all(isfinite, bs.M₂[i])]
+    cs = VgtkCore.withattrs(bs[keep]; score = ms.score[keep], VgtkCore.noise_columns(ua[keep], ub[keep])...)
+    return cs, [(matches[i].first, matches[i].second) for i in keep]
+end
     cs = VgtkCore.withattrs(VgtkCore.Csponds(f1, f2); M₁ = M1, M₂ = M2, score = ms.score[keep], VgtkCore.noise_columns(ua[keep], ub[keep])...)
     return cs, [(matches[i].first, matches[i].second) for i in keep]
 end

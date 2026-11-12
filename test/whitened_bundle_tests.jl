@@ -91,9 +91,9 @@ end
     import VisualGeometryToolkitFeatures as VgtkFeatures
     S(a, b, c) = SMatrix{2, 2, Float64, 4}(a, c, c, b)
     f = described([SVector(1.0, 2.0), SVector(3.0, 4.0)], [S(4.0, 1.0, 0.5), S(2.0, 2.0, 0.0)])
-    u = PanoramaStitching._camera_keypoint(FRAME_MAP, f[1].detection)                      # FRAME_MAP: x ↦ 2x
+    u = VgtkCore.propagate(FRAME_MAP, f[1].detection)                      # FRAME_MAP: x ↦ 2x
     @test VgtkCore.geom(u) == FRAME_MAP(SVector(1.0, 2.0)) && SMatrix{2, 2}(Statistics.cov(u)) == 4 * S(4.0, 1.0, 0.5)
-    @test SMatrix{2, 2}(Statistics.cov(PanoramaStitching._camera_keypoint(IDENTITY_MAP, f[2].detection))) == S(2.0, 2.0, 0.0)
+    @test SMatrix{2, 2}(Statistics.cov(VgtkCore.propagate(IDENTITY_MAP, f[2].detection))) == S(2.0, 2.0, 0.0)
     # an undetermined covariance is refused, not defaulted: the pairs' noise columns and the bundle read it as it is
     bad = described([SVector(600.0, 600.0)], [fill(NaN, SMatrix{2, 2, Float64, 4})])         # at the principal point: back-projected
     @test_throws ArgumentError PanoramaStitching.pair_bearings(VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200)), bad, bad,

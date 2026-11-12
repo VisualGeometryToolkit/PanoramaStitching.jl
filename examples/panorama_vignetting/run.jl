@@ -401,8 +401,8 @@ function coverage_center(lens)
 end
 # The domain's farthest radius from `center`: an image circle's less the rim margin, else the farthest corner of its box.
 function domain_radius(lens, center, W, H, rim)
-    c = VgtkCore.lens_coverage(lens)
-    c isa VgtkCore.Circle && return norm(SVector(c.center[1], c.center[2]) - center) + c.r - rim
+    c = VgtkCore.lens_coverage(lens, rim)                                 # Core's: the coverage less the rim margin
+    c isa VgtkCore.Circle && return norm(SVector(c.center[1], c.center[2]) - center) + c.r
     o, e = domain_box(lens, W, H, rim)
     return maximum(norm(SVector(x, y) - center) for x in (o[1], o[1] + e[1]), y in (o[2], o[2] + e[2]))
 end
