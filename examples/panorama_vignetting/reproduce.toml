@@ -10,7 +10,7 @@ code = ["Project.toml", "src", "examples/panorama_vignetting/Project.toml", "exa
 
 [sites.dgx01]
 data_root = "/home/jpr/data/rc-cvpr2027"
-results_root = "/raid/data/jpr/results/panorama_vignetting"
+results_root = "/raid/data/jpr/results/panorama_stitching-0.9"   # the example adds its own panorama_vignetting/<name>/
 
 [[stage]]
 name = "setup"
