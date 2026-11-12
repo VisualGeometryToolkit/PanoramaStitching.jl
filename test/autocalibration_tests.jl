@@ -52,9 +52,14 @@ end
     res = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect,))
     @test VgtkCore.converged(res)
     # the same bundle as the camera_free keyword it replaces: PanoramaStitching ce2ce59's `refine_rotations(…; camera_free =
-    # free, optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 1.0), width = 1.5)` on this scene, bit for bit
-    @test (res.rms, res.iterations, res.n) === (9.778781600849967e-14, 11, 3624)
-    @test sum(sum, values(VgtkCore.estimate(res))) === 19.8664444387427 && sum(sum, res.metadata.directions) === 231.78800370774763
+    # free, optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 1.0), width = 1.5)` on this scene. Not bit for
+    # bit: StaticArrays' `muladd` chains round as each compiled copy's LLVM contracts them (the held-calibration item below
+    # says how), and on these exact tracks the rms is that rounding alone: each residual is the difference of two roundings
+    # of a pixel coordinate below 1200 px (the observation's projection and the fit's), each within eps(1200.0), so the rms
+    # is at most 2eps(1200.0). The estimate agrees to the stop's rtol = xtol; the counts are exact.
+    @test (res.iterations, res.n) == (11, 3624) && res.rms <= 2eps(1200.0)
+    @test isapprox(sum(sum, values(VgtkCore.estimate(res))), 19.8664444387427; rtol = kw.xtol) &&
+          isapprox(sum(sum, res.metadata.directions), 231.78800370774763; rtol = kw.xtol)
     # a group holds its family: the four KB coefficients held keeps them at the start's, f, cx and cy free
     rk = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect, :k), max_iter = 3)
     @test rk.metadata.calibration.free_parameters == (:f, :cx, :cy)
@@ -153,23 +158,16 @@ end
     @test res.metadata.camera === CAM && res.metadata.calibration === nothing
     @test res.metadata.loss_width == 1.5 && VgtkCore.converged(res) && 0 < res.iterations < 1000
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:5) < 0.05
-    # the rotation-only split leaves the held bundle's numbers as they were (PanoramaStitching ce2ce59, bit for bit), pinned
-    # per LLVM: StaticArrays' small-matrix products are `muladd` chains, which LLVM may contract into FMAs as each version
-    # decides. Julia 1.12 (LLVM 18) and 1.13 (LLVM 20) round some 3 × 3 products one ulp apart (this fixture's start
-    # rotations, `RotMatrix(…) * R[k]`, already differ), and the bundle carries that into the last digits below. The
-    # fixture's draws, every libm function, exp_so3, the camera's maps and BLAS/LAPACK agree bit for bit between the two
-    # (measured on dgx01, 2026-11-12). An LLVM with no pins of its own records a skip.
-    pins = get(Dict(18 => (; held = ((109.24885291344252, 19, 1489), 8.795668643015834, 144.22098567182528),
-                             kb = ((13.626810529489514, 435, 3624), 18.48008654292037, 128.27182481038028)),
-                    20 => (; held = ((109.24885291344255, 19, 1489), 8.795668643015834, 144.22098567182522),
-                             kb = ((13.626810529489516, 435, 3624), 18.480086542920372, 128.27182481038034))),
-               Base.libllvm_version.major, nothing)
-    if pins === nothing
-        @test_skip "no bit-exact pins for LLVM $(Base.libllvm_version)"
-    else
-        @test (res.rms, res.iterations, res.n) === pins.held[1]
-        @test sum(sum, values(VgtkCore.estimate(res))) === pins.held[2] && sum(sum, res.metadata.directions) === pins.held[3]
-    end
+    # the rotation-only split leaves the held bundle's numbers as they were (PanoramaStitching ce2ce59). Not bit for bit:
+    # StaticArrays' small-matrix products are `muladd` chains, which LLVM contracts into FMAs as each compiled copy and each
+    # LLVM decides (Julia 1.12's LLVM 18 and 1.13's LLVM 20 round some 3 × 3 products one ulp apart: this fixture's start
+    # rotations already differ, while its draws, every libm function, exp_so3, the camera's maps and BLAS/LAPACK agree bit
+    # for bit; measured on dgx01, 2026-11-12). Two such roundings run the same LM iterations to the same minimum, and each
+    # stops where its relative cost decrease is below ftol and its relative step below xtol: the rms agrees to
+    # rtol = ftol, the estimate (the rotations, the directions) to rtol = xtol. The counts are exact.
+    @test (res.iterations, res.n) == (19, 1489) && isapprox(res.rms, 109.24885291344255; rtol = kw.ftol)
+    @test isapprox(sum(sum, values(VgtkCore.estimate(res))), 8.795668643015834; rtol = kw.xtol) &&
+          isapprox(sum(sum, res.metadata.directions), 144.22098567182522; rtol = kw.xtol)
     # and on the KB scene, the camera held at the wrong start camera
     rng = Xoshiro(7)
     Rk = rows_rotations()
@@ -179,9 +177,8 @@ end
     startk = Dict(k => (k == 1 ? Rk[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * Rk[k]) for k in 1:10)
     rk = refine_rotations(cam0, startk, tracks; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
                           xtol = 1.0e-12)
-    @test rk.metadata.camera === cam0
-    if pins !== nothing                                                       # bit for bit per LLVM, as above
-        @test (rk.rms, rk.iterations, rk.n) === pins.kb[1]
-        @test sum(sum, values(VgtkCore.estimate(rk))) === pins.kb[2] && sum(sum, rk.metadata.directions) === pins.kb[3]
-    end
+    @test rk.metadata.camera === cam0                                          # the bounds as above (ftol, xtol 1e-12)
+    @test (rk.iterations, rk.n) == (435, 3624) && isapprox(rk.rms, 13.626810529489516; rtol = 1.0e-12)
+    @test isapprox(sum(sum, values(VgtkCore.estimate(rk))), 18.480086542920372; rtol = 1.0e-12) &&
+          isapprox(sum(sum, rk.metadata.directions), 128.27182481038034; rtol = 1.0e-12)
 end

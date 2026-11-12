@@ -36,7 +36,7 @@ function stage_cache_check()
     inp = (; names = ["a.ARW", "b.ARW"])
     # an outermost @testset that records a failure or an error throws Test.TestSetException when it finishes (every Julia):
     # that is the check's false (Test.anynonpass, the earlier test, is not in Julia 1.12's Test)
-    passed = try
+    ok = try
     @testset "the example's stage cache" begin
         withenv("VGTK_DATA_ROOT" => root, "VGTK_RESULTS_ROOT" => results) do
             out = mktempdir(results)
@@ -79,13 +79,12 @@ function stage_cache_check()
                   key(pairs_stage_settings, cfg(; pairs = "lag_overlap"))
         end
     end
-    end
     true
     catch e
         e isa Test.TestSetException || rethrow()
         false
     end
-    return passed
+    return ok
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

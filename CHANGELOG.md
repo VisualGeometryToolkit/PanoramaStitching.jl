@@ -18,9 +18,11 @@ A patch: no API change, the same results.
   `frame_map = raw_frame_map(LinearRaw{:bin2})` (was `SimilarityMap(LinearMap(2.0I))`) and places its frame pixels through
   it; its install line no longer adds CoordinateTransformations. The README and the documentation's first page say
   PanoramaStitching is registered in General (they still named CauRegistry).
-- The suite and the example's checks pass on Julia 1.12 as on 1.13: the held bundle's bit-exact numbers are pinned per
-  LLVM version (StaticArrays' 3 × 3 products are `muladd` chains, which LLVM 18 and 20 contract into FMAs differently, one
-  ulp apart), and the example's stage-cache check no longer calls `Test.anynonpass` (not in Julia 1.12's Test).
+- The suite and the example's checks succeed on Julia 1.12 as on 1.13. The autocalibration items no longer pin the bundles'
+  numbers bit for bit: StaticArrays' 3 × 3 products are `muladd` chains, which LLVM contracts into FMAs as each compiled
+  copy and each LLVM decides (LLVM 18 and 20 one ulp apart), so the rms is checked to the LM stop's `ftol`, the estimate to
+  its `xtol`, an exact scene's rms to its rounding (2eps(1200.0)), and the counts exactly. The example's stage-cache check
+  no longer calls `Test.anynonpass` (not in Julia 1.12's Test).
 
 ## 0.6.0 (2026-11-12)
 
