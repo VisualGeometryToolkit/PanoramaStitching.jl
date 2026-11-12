@@ -11,12 +11,16 @@ include(joinpath(@__DIR__, "run.jl"))
 using Test
 
 function stage_cache_check()
-    F(px) = PanoramaStitching.FrameFeatures(px, [SMatrix{2, 2}(2.0, 0.1, 0.1, 3.0), SMatrix{2, 2}(fill(NaN, 2, 2))], nothing, 40)
+    # a frame's features as the detector gives them: Features' described features (detections of uncertain discs, their
+    # covariances over (x, y, log σ), and their descriptions)
+    Σ = VgtkCore.CovMat(SMatrix{3, 3, Float64, 9}(2.0, 0.1, 0, 0.1, 3.0, 0, 0, 0, 1.0))
+    F(px) = VgtkFeatures.described_features([VgtkFeatures.Detection(VgtkCore.Uncertain(VgtkCore.Disc(VgtkCore.Point2(p...), 2.0), Σ),
+                                                                    (; response = 1.0)) for p in px], Float32[1 2; 3 4])
     R = SMatrix{3, 3, Float64, 9}(cosd(10), 0.0, -sind(10), 0.0, 1.0, 0.0, sind(10), 0.0, cosd(10))
     vp = VerifiedPairs([F([SA[10.25, 20.5], SA[30.0, 40.125]]), F([SA[1.0 / 3, 2.0], SA[5.0, 6.0]])],
                        Dict((1, 2) => (rotation = R, inliers = 2, covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))),
                        Dict((1, 2) => [(1, 2), (2, 1)]),
-                       Dict((1, 2) => (matches = 3, inliers = 2, rms_px = 0.4, rotation_deg = 10.0)),
+                       Dict((1, 2) => (matches = 3, inliers = 2, rms = 0.4, rotation_deg = 10.0)),
                        Dict((1, 2) => (sigma = 0.35, success = true)),
                        (; descriptor = (; model = "loma_b", execution_provider = :cuda, threads = 8),
                           matcher = (; model = "loma_b128", execution_provider = :cuda, threads = 8)))
@@ -45,8 +49,7 @@ function stage_cache_check()
                   back.stats == vp.stats && back.scales == vp.scales
             prov(d, k) = string(haskey(d, k) ? d[k] : d[Symbol(k)])                  # LoMa's provenance, as recorded
             @test prov(back.loma.descriptor, "execution_provider") == "cuda" && prov(back.loma.matcher, "model") == "loma_b128"
-            @test all(k -> back.features[k].pixels == vp.features[k].pixels &&
-                           isequal(back.features[k].pixel_covariances, vp.features[k].pixel_covariances) && back.features[k].n_detected == 40, 1:2)
+            @test all(k -> back.features[k] == vp.features[k], 1:2)          # the described features as they were
             key(f, c; provider = :cuda) = VgtkEval.Experiments.run_key(f((; cfg = c, out), inp, provider))
             # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
             @test key(pairs_stage_settings, cfg(); provider = :cpu) != key(pairs_stage_settings, cfg()) &&

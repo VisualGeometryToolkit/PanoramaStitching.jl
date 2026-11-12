@@ -4,9 +4,9 @@
 # track; the tolerances' defaults (2° and 5°) and refusals.
 # =============================================================================
 
-@testitem "register_rotations: the view-graph filters remove a pair one period off, and its tracks" setup = [SweepScene] begin
+@testitem "register_rotations: the view-graph filters remove a pair one period off, and its tracks" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: register_rotations, FrameFeatures, VerifiedPairs
+    using PanoramaStitching: register_rotations, VerifiedPairs
     using VisualGeometryToolkitCore: BoundedCamera, Size2, exp_so3
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -24,10 +24,10 @@
         for (t, obs) in enumerate(ts), (k, u) in obs
             push!(pixels[k], u); index[k][t] = length(pixels[k])
         end
-        feats = [FrameFeatures(pixels[k], fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(pixels[k])), nothing, length(pixels[k])) for k in 1:K]
+        feats = [described(pixels[k]) for k in 1:K]                  # unit isotropic covariances: the pixel residuals
         verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
         matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
-        stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
+        stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
         for i in 1:K, j in (i + 1):K
             common = sort!([t for t in keys(index[i]) if haskey(index[j], t)])
             length(common) >= 25 || continue
@@ -38,14 +38,14 @@
                 m = [(m[q][1], m[mod1(q + 1, length(m))][2]) for q in eachindex(m)]
             end
             verified[(i, j)] = (rotation = Rij, inliers = length(m), covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6)); matches[(i, j)] = m
-            stats[(i, j)] = (matches = length(m), inliers = length(m), rms_px = 0.3, rotation_deg = 0.0)
+            stats[(i, j)] = (matches = length(m), inliers = length(m), rms = 0.3, rotation_deg = 0.0)
         end
         return VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = 0.3, success = true) for p in keys(verified)),
                              (; descriptor = (;), matcher = (;))), R
     end
     vp, R = aliased_pairs()
     @test haskey(vp.verified, (2, 4)) && length(vp.verified) > 8
-    bkw = (; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), 
+    bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), 
            bundle_max_iter = 1000, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     err(reg) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * R[k]))), 1:6)
     # the defaults: cycle_tol 2°, orientation_tol 5°

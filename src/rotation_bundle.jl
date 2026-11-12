@@ -563,7 +563,7 @@ function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unco
     names = VgtkCore.parameter_names(VgtkCore.model(cc)); idx = [findfirst(==(q), names) for q in free_names]
     θ(z) = VgtkCore.parameter_vector(VgtkCore.model(VgtkCore.retract(cc, z)))[idx]
     z0 = zeros(nd); T = ForwardDiff.jacobian(θ, z0)
-    Σθ = T * Σc * T'
+    Σθ = VgtkCore.propagate(T, Σc)                     # Core's propagation through the chart → parameters Jacobian
     return (; free_parameters = free_names, parameters = NamedTuple{free_names}(Tuple(θ(z0))), sigma = NamedTuple{free_names}(Tuple(sqrt.(LinearAlgebra.diag(Σθ)))),
             covariance = Σθ, s2, nu = ν,
             reduced_eigenvalues = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(H[keep_gauge, keep_gauge])))),

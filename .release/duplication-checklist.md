@@ -42,7 +42,7 @@ threshold scorers (RANSAC, MSAC, the loss-width families) `threshold`, never `ou
 the two meanings. Audit: studentt-keyword-overload.md.
 
 PanoramaStitching has no Student-t path: a pair's rotation is scored by MSAC, a threshold scorer, at `[registration]
-scoring_threshold_px` (examples) and `MsacScoring(RotationProblem; threshold = w)` (src/registration.jl:184).
+scoring_threshold` (examples; sigmas of the keypoints' unit noise) and `MsacScoring(RotationProblem; threshold = w)` (src/registration.jl:184).
 
 - [x] examples/panorama_vignetting/README.md:73 "MSAC scoring with a 5 px half-width" (a threshold called a half-width) → "MSAC scoring at a 5 px threshold" (this commit)
-- [x] test/registration_tests.jl "the rotation's scorer: MSAC at its threshold, no outlier half-width": the configs' `scoring_threshold_px` reaches MSAC's threshold exactly (`===`), MSAC refuses `outlier_halfwidth`, the Student-t scorer refuses `threshold` (this commit)
+- [x] test/registration_tests.jl "the rotation's scorer: MSAC at its threshold, no outlier half-width": the configs' `scoring_threshold` reaches MSAC's threshold exactly (`===`), MSAC refuses `outlier_halfwidth`, the Student-t scorer refuses `threshold` (this commit)

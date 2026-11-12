@@ -111,7 +111,7 @@ end
 
 @testitem "register_rotations, sample_frames: a synthetic fisheye sweep" setup = [SyntheticSequence, BayerMaps] begin
     using Test, LinearAlgebra, Statistics, StaticArrays
-    using PanoramaStitching: register_rotations, sample_frames, fibonacci_directions, keypoint_covariance_scale
+    using PanoramaStitching: PanoramaStitching, register_rotations, sample_frames, fibonacci_directions
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
     q = sequence()
@@ -125,13 +125,13 @@ end
     @info "synthetic register: rotation errors (deg) $(round.(errs; digits = 4)), bundle rms $(round(reg.bundle.rms; digits = 3)) px"
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
     @test length(reg.pairs) == K * (K - 1) ÷ 2 && all(p -> p.inliers >= 100, values(reg.pairs))
-    # The bundle's residuals in the pairs' scorer units: the pairs admit a keypoint by its covariance SHAPE (Uncertain pixels,
-    # Σ over the median trace `keypoint_covariance_scale`), so a coarse keypoint's pixel residual is larger by its shape's
-    # scale; each pixel residual over that scale is the one the pairs scored.
-    m = keypoint_covariance_scale(reg.features)
-    shaped = filter(isfinite, [reg.bundle.metadata.residuals[j][i] / sqrt(tr(reg.features[k].pixel_covariances[kp]) / 2 / m)
-                               for (j, t) in enumerate(reg.tracks) for (i, (k, kp)) in enumerate(t)])
-    @test sqrt(mean(abs2, shaped)) < 0.5 && reg.dropped == 0
+    # The bundle's residuals in the pairs' units: every observation is its keypoint with the detector's covariance Σ (camera
+    # pixels² for unit noise of the detection image), so a pixel residual over √(tr Σ / 2) is in sigmas of that unit noise, the
+    # unit of the pairs' pooled scale σ̂ (σ₀: the noise σ₀²Σ)
+    whitened = filter(isfinite, [reg.bundle.metadata.residuals[j][i] /
+                                 sqrt(tr(Statistics.cov(PanoramaStitching._camera_keypoint(FRAME_MAP, reg.features[k][kp].detection))) / 2)
+                                 for (j, t) in enumerate(reg.tracks) for (i, (k, kp)) in enumerate(t)])
+    @test sqrt(mean(abs2, whitened)) < 3 * reg.bundle_sigma && reg.dropped == 0
     @test median(filter(isfinite, reduce(vcat, reg.bundle.metadata.residuals))) < 0.15   # px
     # the view graph is VisualGeometryToolkitEstimation's, each edge the pair's rotation weighted by its inlier count
     @test reg.graph isa VgtkEstimation.ViewGraph && VgtkEstimation.nedges(reg.graph) == length(reg.pairs)
@@ -139,8 +139,9 @@ end
     # the averaging's gauge is the first frame: its rotation is the identity
     @test VgtkCore.estimate(reg.averaging)[1] ≈ one(SMatrix{3, 3, Float64, 9}) atol = 1e-12
     # every kept feature lies in the camera's imaged region eroded by the detector margin (the image circle less 20 px)
-    @test all(f -> all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, f.pixels), reg.features)
-    @test all(f -> !isempty(f.pixels), reg.features)
+    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]
+    @test all(f -> all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(f)), reg.features)
+    @test all(f -> !isempty(f), reg.features)
     # the frames sampled at directions spread uniformly over the covered sphere, the vignetting read on the ray: every frame
     # seeing a direction sees one radiance once its gain and the TRUE V are divided out; a wrong V leaves a spread
     Hf, Wf = size(q.frames[1], 1), size(q.frames[1], 2)
@@ -187,14 +188,15 @@ end
                       overlap_deg = 60.0, min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
     @test vp isa VerifiedPairs && vp.stats == reg.pairs && length(vp.features) == 3
     @test all(p -> vp.inlier_matches[p] isa Vector{Tuple{Int, Int}} && length(vp.inlier_matches[p]) == vp.verified[p].inliers, keys(vp.verified))
-    bkw = (; bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 100,
+    bkw = (; frame_map = FRAME_MAP, bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 100,
            bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     reg2 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw...)
     @test reg2.rotations == reg.rotations && reg2.tracks == reg.tracks && reg2.pairs == reg.pairs
     # another averaging loss from the same pairs: no feature detected again, the rotations as good
     reg3 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 100), bkw...)
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg3.rotations[k])' * q.R[k]))), 1:3) < 0.05
-    @test_throws ArgumentError register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., bundle_whitening = :diagonal)
+    # the bundle always whitens by the keypoints' covariances: the retired `bundle_whitening` is refused by name
+    @test_throws r"bundle_whitening. is retired" register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., bundle_whitening = :none)
 end
 
 @testitem "register_rotations: the overlap pairs of :lag_overlap, and the pairs' samplers" begin
@@ -318,15 +320,16 @@ end
                                      bundle_optimization_strategy = bkw.optimization_strategy,
                                      bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
     a, b = reg(0.0), reg(30.0)
-    @test [f.pixels for f in a.features] == [f.pixels for f in b.features]
+    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]
+    @test [px(f) for f in a.features] == [px(f) for f in b.features]
     edge(p) = min(p[1], p[2], 1000 - p[1], 1000 - p[2])
-    @test any(f -> any(p -> edge(p) < 30.0, f.pixels), b.features)                 # kept within the margin of the sensor's edge
+    @test any(f -> any(p -> edge(p) < 30.0, px(f)), b.features)                 # kept within the margin of the sensor's edge
     @test VgtkCore.converged(b.bundle) && b.bundle.metadata.n_dropped_start == 0
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(b.rotations[k])' * q.R[k]))), 1:3) < 0.05
     # 0.5.1's bundle: the same tracks and start through the bare model (this lens's projection is defined everywhere, so
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
-    obs = [[k => b.features[k].pixels[kp] for (k, kp) in t] for t in b.tracks]
+    obs = [[k => PanoramaStitching._camera_keypoint(FRAME_MAP, b.features[k][kp].detection) for (k, kp) in t] for t in b.tracks]
     ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; merge(bkw, (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}()))..., width = b.bundle.metadata.loss_width)
     @test VgtkCore.converged(ref)
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
@@ -455,7 +458,8 @@ end
 # The Student-t keyword rule (owner ruling 2026-11-11): each scorer takes its own keyword, the Student-t + uniform scorer its
 # `outlier_halfwidth` and never a `threshold`, a threshold scorer its `threshold` and never an `outlier_halfwidth`.
 # PanoramaStitching has no Student-t path: a pair's rotation is scored by MSAC, a threshold scorer, at the example's
-# `[registration] scoring_threshold_px`. That value reaches the scorer exactly, and neither scorer takes the other's keyword.
+# `[registration] scoring_threshold` (sigmas of the keypoints' unit noise). That value reaches the scorer exactly, and neither
+# scorer takes the other's keyword.
 @testitem "the rotation's scorer: MSAC at its threshold, no outlier half-width" begin
     using TOML
     import VisualGeometryToolkitCore as VgtkCore
@@ -465,7 +469,7 @@ end
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         reg = TOML.parsefile(joinpath(dir, f))["registration"]
         @test !any(k -> occursin("halfwidth", k), keys(reg))
-        t = Float64(reg["scoring_threshold_px"])
+        t = Float64(reg["scoring_threshold"])
         @test VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = t).threshold === t
     end
     @test_throws MethodError VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; outlier_halfwidth = 5.0)

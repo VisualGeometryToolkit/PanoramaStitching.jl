@@ -62,7 +62,8 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
 2. **Pairs**: `pairs = :all` matches every frame pair; `pairs = :lag_overlap` only those at most `max_lag` apart in capture
    order, plus those whose averaged optical axes are within `overlap_deg`. Matches come from the LoMa matcher
    (`matcher = :b128`) and become bearing correspondences through the camera
-   ([`PanoramaStitching.pair_bearings`](@ref)).
+   ([`PanoramaStitching.pair_bearings`](@ref)), each keypoint with its covariance, so a pair's residuals are in sigmas of
+   the detection image's unit noise.
 3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `find_rotation` (RANSAC on bearings, its sampler seeded from
    `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
 4. **Rotation averaging**: the verified pairs form VisualGeometryToolkitEstimation's `ViewGraph` (each edge the pair's rotation, weighted by its
@@ -72,15 +73,17 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two keypoints
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
-   robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
+   robust reprojection error through the camera's forward map, each observation whitened by its keypoint's covariance (the
+   detector's, taken to the camera's pixels through `frame_map`), with NLLSsolver: the strategy
    `bundle_optimization_strategy` (a `Triggs`) at `scale = σ̂`, its width the strategy's efficiency constant × σ̂, σ̂ the
-   noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`, pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
+   noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`: σ₀ of the keypoints' covariances, the
+   noise σ₀²Σ̃), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
    held, and it takes no keyword that would free a camera parameter. Refining the camera too is a refine of its own,
    [`refine_camera_and_rotations`](@ref) ([Autocalibration](#Autocalibration) below).
 
 Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold everything the rest reads;
-`register_rotations(pairs::VerifiedPairs, camera; …)` runs steps 4–6 from them, so a caller that keeps the verified pairs
-(the example caches them in `verified_pairs.json`) reruns the averaging and the bundle alone.
+`register_rotations(pairs::VerifiedPairs, camera; frame_map, …)` runs steps 4–6 from them, so a caller that keeps the verified pairs
+(the example caches them in its `verified_pairs_<key>.jld2` record) reruns the averaging and the bundle alone.
 
 The example's call states every setting: each is a keyword without a default, so a run states its whole configuration
 (`say = println` prints one line per frame, pair and step). The result, a [`Registration`](@ref), holds the rotations, the
@@ -89,7 +92,7 @@ view graph, per-pair statistics, the tracks and the bundle's result:
 ```julia
 import VisualGeometryToolkitCore as VgtkCore
 
-reg.pairs[(1, 2)]               # matches, inliers, rms_px (the inliers' rms Sampson distance) and rotation_deg
+reg.pairs[(1, 2)]               # matches, inliers, rms (the inliers' rms whitened residual, sigmas) and rotation_deg
 length(reg.tracks), reg.dropped # the tracks, and the inconsistent ones dropped
 reg.bundle.rms                  # the bundle's rms reprojection error, pixels
 VgtkCore.retcode(reg.bundle)     # how the bundle ended: Core's ReturnCode (and stop_rule, the rule that fired)
@@ -110,8 +113,9 @@ It is a refine of the stack's robust-estimation contract, so it never estimates 
 
 - `optimization_strategy` is the robust strategy: a `Triggs` strategy on a loss shape (its loss as NLLSsolver's robustifier at
   one width; the default `Triggs{WelschShape}` at the shape's efficiency constant). Another strategy is an `ArgumentError`.
-- A robust strategy needs exactly one of `scale = σ` (the noise scale, pixels) or `width = w` (the loss width). Here the
-  scale is the registration's pooled noise scale. Neither, or both, is an `ArgumentError`.
+- A robust strategy needs exactly one of `scale = σ` (the noise scale: pixels, or sigmas of observations that carry their
+  covariances) or `width = w` (the loss width). Here the scale is the registration's pooled noise scale, σ₀ of the keypoints'
+  covariances, and the observations carry them. Neither, or both, is an `ArgumentError`.
 - `fixed` names the camera parameters to hold, by name or by group (`:k` for every lens coefficient; VisualGeometryToolkitCore's
   `free_parameter_names`). The default `()` frees every parameter but the skew, which is held by construction.
 
@@ -120,11 +124,15 @@ be refined: a `SplineLens` camera is an `ArgumentError`. The tracks come from a 
 rerun [`register_rotations`](@ref) with the refined camera to verify the pairs through it.
 
 ```julia
-# Illustrative: VisualGeometryToolkitCore's Triggs strategy
-using VisualGeometryToolkitCore: Triggs
+# Illustrative: VisualGeometryToolkitCore's Triggs strategy and its propagation of a keypoint through the frames' map
+using VisualGeometryToolkitCore: Triggs, Uncertain, CovMat, propagate
+using Statistics: cov
 
-# the tracks as frame => pixel observations, and the registration's rotations as the start, keyed by frame
-tracks = [[k => reg.features[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
+# the tracks as frame => keypoint observations: each in the camera's pixels with its covariance (the (x, y) block of the
+# detector's), and the registration's rotations as the start, keyed by frame
+observe(d, Σ = cov(d)) = propagate(frame_map, Uncertain(SVector(d.center[1], d.center[2]),
+                                                       CovMat(SMatrix{2, 2}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2]))))
+tracks = [[k => observe(reg.features[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
 start = Dict(enumerate(reg.rotations))
 autocal = refine_camera_and_rotations(camera, start, tracks; optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.0),
                                       scale = reg.bundle_sigma, fixed = (:aspect,), max_iter = 100, ftol = 1e-10,

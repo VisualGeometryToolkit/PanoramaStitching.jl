@@ -4,6 +4,23 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
+- Keypoints are Uncertain points (the owner's ruling): the feature store is VisualGeometryToolkitFeatures'
+  `StructArray{DescribedFeature}` as the descriptor returns it (`detect_features`' result; `VerifiedPairs.features`,
+  `Registration.features`), each detection's frame Core's `Uncertain(frame, Σ̃)`, the detector's covariance. `FrameFeatures`
+  (its `pixels`, `pixel_covariances` and `n_detected` beside the store), `keypoint_covariance_scale` (the median
+  normalisation), `keypoint_uncertain` (its identity fallback for a covariance not positive definite) and `bundle_whitening`
+  are gone: a keypoint reaches the camera's pixels with its covariance by Core's `propagate` through the frames'
+  `frame_map`, the pairs' residuals and the bundle's are always whitened by it (in sigmas of the detection image's unit
+  noise), and a covariance that is not finite and positive definite is refused where it is read (Core's `noise_columns`,
+  the bundle), never replaced. `pair_bearings(camera, fa, fb, matches; frame_map)` takes the two frames' described features
+  and Features' `NNMatch`es (Features' `csponds`); `register_rotations(::VerifiedPairs, camera; frame_map, …)` takes the
+  frames' map; the retired `bundle_whitening` keyword is refused by name. The scale is the variance factor σ₀ of the
+  keypoints' covariances (noise σ₀²Σ̃): the pairs' σ̂, their pooled `bundle_sigma` and the bundle's scale and width carry no
+  pixel unit, and a pair's `rms_px` statistic is `rms` (whitened). The example's `[registration] scoring_threshold_px` is
+  `scoring_threshold` (sigmas of that unit noise; the old key refused by name; 0.21 for the 14 mm set, 0.28 for the
+  rooftop: the 5 px over the old median normalisation), its records are verified_pairs v7 (the described features held as
+  they are) and rotations v12 (`bundle_scale`, `bundle_sigma`, `bundle_loss_width`), and its `intensity_and_position`
+  measurement noise is refused for want of a pixel σ (the bundle's scale is no longer one). Numbers move.
 - The termination record (the contract's §14): `RotationBundleMetadata`'s `outcome` is gone; the bundles' and
   `fit_vignetting`'s results carry VisualGeometryToolkitCore's termination record (the `FitResult`'s `ReturnCode.T` and
   `StopRule`, read by `retcode`/`stop_rule`; the legacy Symbol `retcode_symbol(result)`). NLLSsolver's step-size or rejection stop is `Success` only where the robust cost is stationary

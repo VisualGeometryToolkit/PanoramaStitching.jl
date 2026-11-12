@@ -8,24 +8,6 @@
 # the frame to its network's fixed input), and matched by the LoMa matcher (`LoMaMatcher`, LightGlue architecture).
 # =============================================================================
 
-"""
-    FrameFeatures
-
-One frame's features: `pixels` (the kept detections' centres in the camera's
-pixel frame, full resolution), `pixel_covariances` (each centre's 2 × 2
-position covariance in camera pixels², VisualGeometryToolkitFeatures'
-`FeatureCovariance` for unit iid noise of the detection image,
-scaled as the centres are; all `NaN` for a detection the detector did not
-refine), `features` (their DeDoDe descriptions), `n_detected` (ASIFT's count
-before the imaged region and the selection).
-"""
-struct FrameFeatures{F}
-    pixels::Vector{SVector{2, Float64}}
-    pixel_covariances::Vector{SMatrix{2, 2, Float64, 4}}
-    features::F
-    n_detected::Int
-end
-
 # The detector's variants (`detect_features`' `selection` and `detection_image`).
 const SELECTIONS = (:spread,)
 const DETECTION_IMAGES = (:tone, :vst)
@@ -69,7 +51,7 @@ _asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
 """
     detect_features(camera::BoundedCamera, frame, descriptor; frame_map, tone_percentile, detector_margin_px, asift_tilts,
                     max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing,
-                    saturated = nothing) -> FrameFeatures
+                    saturated = nothing) -> StructArray{DescribedFeature}
 
 The features of one frame (`H × W × 3` linear, or a VisualGeometryToolkitFeatures
 `LinearRaw` of mode `:bin2`; `frame_map` its map onto the camera's pixels,
@@ -96,9 +78,15 @@ descriptor resamples the image to its network's input).
   strongest spread over the frame (Features' `spread_strongest`, SSC, which the
   descriptor applies).
 
-The kept pixels are the described set's, in Features' canonical order of the
-detections (a function of the image: the same run to run, on any number of
-threads).
+The result is the descriptor's own: VisualGeometryToolkitFeatures' described
+features (`StructArray{DescribedFeature}`), each a `Detection` in the frame's
+pixels whose frame is VisualGeometryToolkitCore's `Uncertain(frame, Σ̃)` (Features'
+`FeatureCovariance`: the detector's covariance over `(x, y, log σ)` for unit iid
+noise of the detection image) and its DeDoDe description — the one feature store,
+in Features' canonical order of the detections (a function of the image: the same
+run to run, on any number of threads). `frame_map` takes a keypoint to the camera's
+pixels with its covariance (Core's `propagate`: [`pair_bearings`](@ref), the
+bundle of [`register_rotations`](@ref)).
 """
 function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; frame_map,
                          tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
@@ -114,76 +102,50 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
     # the detections in Features' canonical order (a function of the image), so the kept set, its order and every
     # index-sampled RANSAC downstream are the same run to run
     dets = _asift(frame, toned, Val(detection_image), detection_noise, asift_tilts, _clip_mask(frame, saturated))
-    n = length(dets)
     kept = _imaged_less_rim(camera, detector_margin_px)
     at(d) = frame_map(SVector{2, Float64}(d.center[1], d.center[2]))         # a detection's centre in the camera's pixels
     dets = filter(d -> VgtkCore.Point2(at(d)...) ∈ kept, dets)
     # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
     # the image to its network's input, and keeps about max_detections of them spread over it: the kept set is the described one)
-    F = descriptor(permutedims(toned, (3, 1, 2)), dets)
-    described = [f.detection for f in F]
-    pixels = [SVector{2, Float64}(at(d)) for d in described]
-    # the centres' position covariance (the top-left 2 × 2 of the (x, y, log σ) covariance, detection-image pixels²), in camera
-    # pixels² as the centres are mapped: J Σ Jᵀ, J the frame map's Jacobian (s·I for a Bayer cell grid's)
-    covs = map(described) do d
-        Σ = Statistics.cov(d); J = VgtkCore.transform_deriv(frame_map, SVector{2, Float64}(d.center[1], d.center[2]))
-        SMatrix{2, 2, Float64, 4}(J * SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2]) * J')
-    end
-    return FrameFeatures(pixels, covs, F, n)
+    return descriptor(permutedims(toned, (3, 1, 2)), dets)
+end
+
+# A keypoint (a detection of Features' described features) in the camera's pixels with its position covariance: Core's
+# `propagate` through the frame map of its position, the centre with the (x, y) block of its frame's (x, y, log σ) covariance
+# (Features' FeatureCovariance: "position-only consumers take the top-left 2 × 2 block"). The detector's covariance as it is.
+function _camera_keypoint(frame_map, d)
+    Σ = Statistics.cov(d)
+    return VgtkCore.propagate(frame_map, VgtkCore.Uncertain(SVector{2, Float64}(d.center[1], d.center[2]),
+                                                          VgtkCore.CovMat(SMatrix{2, 2, Float64, 4}(Σ[1, 1], Σ[2, 1], Σ[1, 2], Σ[2, 2]))))
 end
 
 """
-    pair_bearings(camera, fa, fb, matches; covariance_scale = nothing) -> (cs, kept)
+    pair_bearings(camera, fa, fb, matches; frame_map) -> (cs, kept)
 
-The matches of two frames as unit-bearing correspondences with their
-back-projection Jacobians as the `M₁`/`M₂` columns and the match score as the
-`:score` column (VisualGeometryToolkitCore's `backproject_with_jacobian` through
-the calibrated `camera`: the whole field, past 90°), and the keypoint index pairs
-kept (a pixel the camera cannot back-project is dropped). With a
-`covariance_scale` m ([`keypoint_covariance_scale`](@ref)) each keypoint's
-position covariance, as a SHAPE `Σ / m`, is the measurement noise of its endpoint
-(VisualGeometryToolkitCore's `noise_columns`: the `Σ₁`/`Σ₂` columns), so the pair's
-residuals, its scorer's scale and its rotation's covariance are whitened by it.
+The `matches` of two frames' described features `fa`, `fb` ([`detect_features`](@ref))
+as unit-bearing correspondences: VisualGeometryToolkitFeatures' `csponds` of the
+matched features (their `:score` column kept), each keypoint taken to the camera's
+pixels with its covariance by the frames' `frame_map` (VisualGeometryToolkitCore's
+`propagate`), back-projected with its Jacobian as the `M₁`/`M₂` columns
+(VisualGeometryToolkitCore's `backproject_with_jacobian` through the calibrated
+`camera`: the whole field, past 90°) and its covariance the measurement noise of its
+endpoint (VisualGeometryToolkitCore's `noise_columns`: the `Σ₁`/`Σ₂` columns, camera
+pixels² for unit noise of the detection image), so the pair's residuals are in
+sigmas of that unit noise; and the keypoint index pairs kept (a pixel the camera
+cannot back-project is dropped).
 """
-function pair_bearings(camera, fa::FrameFeatures, fb::FrameFeatures, matches; covariance_scale = nothing)
+function pair_bearings(camera, fa, fb, matches; frame_map)
+    ms = VgtkCore.csponds(fa, fb, matches)          # Features' method of Core's csponds: the matched features and their score
+    ua = [_camera_keypoint(frame_map, f.detection) for f in VgtkCore.sources(ms)]
+    ub = [_camera_keypoint(frame_map, f.detection) for f in VgtkCore.targets(ms)]
     f1 = SVector{3, Float64}[]; f2 = SVector{3, Float64}[]; M1 = SMatrix{3, 2, Float64, 6}[]; M2 = SMatrix{3, 2, Float64, 6}[]
-    score = Float64[]; kept = Tuple{Int, Int}[]
+    keep = Int[]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
-    for m in matches
-        a, b = m.first, m.second
-        ba = VgtkCore.backproject_with_jacobian(cm, fa.pixels[a]); bb = VgtkCore.backproject_with_jacobian(cm, fb.pixels[b])
+    for i in eachindex(ua, ub)
+        ba = VgtkCore.backproject_with_jacobian(cm, VgtkCore.geom(ua[i])); bb = VgtkCore.backproject_with_jacobian(cm, VgtkCore.geom(ub[i]))
         (all(isfinite, ba[1]) && all(isfinite, bb[1]) && all(isfinite, ba[2]) && all(isfinite, bb[2])) || continue
-        push!(f1, ba[1]); push!(f2, bb[1]); push!(M1, ba[2]); push!(M2, bb[2]); push!(score, m.score); push!(kept, (a, b))
+        push!(f1, ba[1]); push!(f2, bb[1]); push!(M1, ba[2]); push!(M2, bb[2]); push!(keep, i)
     end
-    cs = VgtkCore.withattrs(VgtkCore.Csponds(f1, f2); M₁ = M1, M₂ = M2, score)
-    covariance_scale === nothing && return cs, kept
-    noise = VgtkCore.noise_columns([keypoint_uncertain(fa, a, covariance_scale) for (a, _) in kept],
-                                   [keypoint_uncertain(fb, b, covariance_scale) for (_, b) in kept])
-    return VgtkCore.withattrs(cs; noise...), kept
+    cs = VgtkCore.withattrs(VgtkCore.Csponds(f1, f2); M₁ = M1, M₂ = M2, score = ms.score[keep], VgtkCore.noise_columns(ua[keep], ub[keep])...)
+    return cs, [(matches[i].first, matches[i].second) for i in keep]
 end
-
-"""
-    keypoint_covariance_scale(features) -> Union{Nothing, Float64}
-
-The ONE normalisation of the keypoints' position covariances, shared by the pairs ([`pair_bearings`](@ref)) and the
-bundle's whitening: the median over every frame's refined keypoints of `tr Σ / 2` (camera pixels²), so a keypoint's
-covariance divided by it is a SHAPE, the median keypoint's of unit trace per axis: the noise's scale is then the
-estimators' own (the pairs' scorers' `noise_scale`). `nothing` when no keypoint has a covariance (finite and positive
-definite).
-"""
-function keypoint_covariance_scale(features::AbstractVector{<:FrameFeatures})
-    traces = [(Σ[1, 1] + Σ[2, 2]) / 2 for f in features for Σ in f.pixel_covariances if _valid_covariance(Σ)]
-    return isempty(traces) ? nothing : Float64(Statistics.median(traces))
-end
-
-"""
-    keypoint_uncertain(features, keypoint, covariance_scale) -> Uncertain
-
-Keypoint `keypoint` of a frame's [`FrameFeatures`](@ref) as VisualGeometryToolkitCore's `Uncertain(pixel, CovMat(Σ / m))`,
-`m` the [`keypoint_covariance_scale`](@ref); a keypoint the detector did not refine (Σ NaN), or whose Σ is not positive
-definite, takes the identity shape.
-"""
-keypoint_uncertain(f::FrameFeatures, kp::Integer, m::Real) =
-    VgtkCore.Uncertain(f.pixels[kp], VgtkCore.CovMat(_valid_covariance(f.pixel_covariances[kp]) ? f.pixel_covariances[kp] / m :
-                                                                                                SMatrix{2, 2, Float64, 4}(LinearAlgebra.I)))
-_valid_covariance(Σ) = all(isfinite, Σ) && Σ[1, 1] > 0 && Σ[1, 1] * Σ[2, 2] - Σ[1, 2] * Σ[2, 1] > 0

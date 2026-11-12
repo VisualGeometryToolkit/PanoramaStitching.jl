@@ -95,11 +95,8 @@ spline and V) at the previous solve; the first solve is
 [`IntensityNoise`](@ref)'s.
 
 - `point_covariance`: `Σ_u`, VisualGeometryToolkitCore's `CovMat{2}` of a
-  pixel's sensor point in camera pixels² — the registration's: a rotation
-  bundle's robust core scale `σ_u` is its scale record, `noise_scale(bundle)`
-  ([`RotationBundleMetadata`](@ref)), and `CovMat{2}(σ = σ_u)` its isotropic
-  covariance `σ_u²·I`. A full or diagonal `CovMat` must be symmetric positive
-  definite.
+  pixel's sensor point in camera pixels² (`CovMat{2}(σ = σ_u)` the isotropic
+  `σ_u²·I`). A full or diagonal `CovMat` must be symmetric positive definite.
 - `log_intensity_scale`: `σ`, the standard deviation of log I (a constant
   floor: 0.01 is 1 % of the value).
 - `iterations`: the reweight-and-solve cycles after the `IntensityNoise`
@@ -577,7 +574,8 @@ V and the gains.
   across that axis (a field `exp(α·f_y)` is unchanged by a pure yaw, so L
   absorbs it): use a tensor surface for frames with pitch and roll diversity.
 - `free_directions`: the matrix `Z` (`n_control_points × m`) V's control
-  points move along, `vec(P) = vec(P₀) + Z y`: Core's
+  points move along, `vec(P) = vec(P₀) + Z y` (Core's `restrict` of V's
+  `ParameterManifold` to `Z`): Core's
   `pole_regular_basis(v)` for a radial profile (smooth at its centre), the
   identity for a tensor surface, `zeros(n, 0)` to hold the given V fixed —
   then the fit is gain compensation under that V (a calibration's), the same
@@ -841,9 +839,10 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         xh = Array(x)
         cL = xh[1:nL]
         if fits_v
-            # log V is linear in its control points: the solve's increment is exact, P₀ + δ; then its gauge exact (mean log V = 0
-            # over the domain: the scale moves into L)
-            vn = VgtkCore.with_control_points(v, P0 .+ Z * xh[(nL + 1):(nL + mV)])
+            # log V is linear in its control points: the solve's increment is exact, P₀ + Z y — Core's parameter manifold of V
+            # restricted to the free directions (`restrict`, a LinearSubspaceManifold), retracted at y; then its gauge exact
+            # (mean log V = 0 over the domain: the scale moves into L)
+            vn = VgtkCore.retract(VgtkCore.restrict(VgtkCore.ParameterManifold(v), Z), xh[(nL + 1):(nL + mV)])
             VgtkCore.pointwise!(_LogV(vn), LV, upix, rays; exec)
             c = Statistics.mean(Array(LV))
             v = VgtkCore.with_control_points(vn, vec(Matrix{Float64}(VgtkCore.control_points(vn))) .- c)

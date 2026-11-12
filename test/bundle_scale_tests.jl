@@ -4,9 +4,10 @@
 # robust width the bundle strategy's efficiency constant × σ̂, fixed for its one LM run (its `scale = σ̂`).
 # =============================================================================
 
-@testitem "_pair_scale: SIMFIT++ recovers a rotation pair's pixel noise σ" setup = [SweepScene] begin
+@testitem "_pair_scale: SIMFIT++ recovers a rotation pair's pixel noise σ" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: PanoramaStitching, FrameFeatures
+    using PanoramaStitching: PanoramaStitching
+    import VisualGeometryToolkitFeatures as VgtkFeatures
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
     rng = MersenneTwister(5)
@@ -21,9 +22,9 @@
             push!(u2, rand(rng) < 0.2 ? SVector(600 + 500 * (2rand(rng) - 1), 600 + 500 * (2rand(rng) - 1)) :
                                          VgtkCore.project(CAM, g) + σ * randn(rng, SVector{2, Float64}))
         end
-        fa = FrameFeatures(u1, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u1)), nothing, length(u1))
-        fb = FrameFeatures(u2, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u2)), nothing, length(u2))
-        cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [(first = i, second = i, score = 1.0) for i in eachindex(u1)])
+        fa = described(u1); fb = described(u2)                     # unit isotropic covariances: whitened residuals in pixels
+        cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)];
+                                                frame_map = IDENTITY_MAP)
         lo = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
         res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
                                            scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization_strategy = lo)
@@ -34,9 +35,9 @@
     end
 end
 
-@testitem "register_rotations: the bundle's width is its strategy's efficiency constant × the pooled pair scale, one LM run" setup = [SweepScene] begin
+@testitem "register_rotations: the bundle's width is its strategy's efficiency constant × the pooled pair scale, one LM run" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: register_rotations, refine_rotations, chain_tracks, FrameFeatures, VerifiedPairs
+    using PanoramaStitching: PanoramaStitching, register_rotations, refine_rotations, chain_tracks, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
     rng = MersenneTwister(3)
     R = sweep_rotations(rng, 4)
@@ -46,15 +47,15 @@ end
     for (t, obs) in enumerate(ts), (k, u) in obs
         push!(pixels[k], u); index[k][t] = length(pixels[k])
     end
-    feats = [FrameFeatures(pixels[k], fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(pixels[k])), nothing, length(pixels[k])) for k in 1:K]
+    feats = [described(pixels[k]) for k in 1:K]
     verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
     matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
-    stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
+    stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
     for i in 1:K, j in (i + 1):K
         common = sort!([t for t in keys(index[i]) if haskey(index[j], t)]); length(common) >= 25 || continue
         verified[(i, j)] = (rotation = SMatrix{3, 3, Float64, 9}(R[j]' * R[i]), inliers = length(common), covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))
         matches[(i, j)] = [(index[i][t], index[j][t]) for t in common]
-        stats[(i, j)] = (matches = length(common), inliers = length(common), rms_px = 0.4, rotation_deg = 0.0)
+        stats[(i, j)] = (matches = length(common), inliers = length(common), rms = 0.4, rotation_deg = 0.0)
     end
     ps = sort(collect(keys(verified)))
     # per pair a scale: 0.3 px, but 0.6 px on the first pair and a failed estimate on the last (not pooled)
@@ -62,7 +63,7 @@ end
     vp = VerifiedPairs(feats, verified, matches, stats, scales, (; descriptor = (;), matcher = (;)))
     pooled = (n = [verified[p].inliers for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
               sqrt(sum(n .* σ .^ 2) / sum(n)))
-    bkw = (; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
+    bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
            bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
     reg = register_rotations(vp, bcam; bkw...)
     @test reg.bundle_sigma ≈ pooled
@@ -70,8 +71,9 @@ end
     # the scale record of the robust-estimation contract: the pooled scale, given
     @test VgtkCore.noise_scale(reg.bundle) == reg.bundle_sigma && VgtkCore.scale_source(reg.bundle) == VgtkCore.ScaleGiven
     @test VgtkCore.converged(reg.bundle) && reg.bundle.iterations < 1000
-    # the same bundle with that width given explicitly: one LM run, the same result
-    obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
+    # the same bundle with that width given explicitly: one LM run, the same result (its observations the keypoints with their
+    # covariances, as register_rotations builds them)
+    obs = [[k => PanoramaStitching._camera_keypoint(IDENTITY_MAP, feats[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
     direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 2.5 * pooled,
                               max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
     @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations
@@ -109,9 +111,10 @@ end
     @test dflt.iterations == stated.iterations
 end
 
-@testitem "_pair_scale: SIMFIT++ on the default strategy runs no refine with a scorer (the rotation class's local optimization)" setup = [SweepScene] begin
+@testitem "_pair_scale: SIMFIT++ on the default strategy runs no refine with a scorer (the rotation class's local optimization)" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: PanoramaStitching, FrameFeatures
+    using PanoramaStitching: PanoramaStitching
+    import VisualGeometryToolkitFeatures as VgtkFeatures
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
     rng = MersenneTwister(6)
@@ -126,9 +129,9 @@ end
         push!(u2, rand(rng) < 0.2 ? SVector(600 + 500 * (2rand(rng) - 1), 600 + 500 * (2rand(rng) - 1)) :
                                      VgtkCore.project(CAM, g) + σ * randn(rng, SVector{2, Float64}))
     end
-    fa = FrameFeatures(u1, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u1)), nothing, length(u1))
-    fb = FrameFeatures(u2, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u2)), nothing, length(u2))
-    cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [(first = i, second = i, score = 1.0) for i in eachindex(u1)])
+    fa = described(u1); fb = described(u2)                         # unit isotropic covariances: whitened residuals in pixels
+    cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)];
+                                            frame_map = IDENTITY_MAP)
     res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
                                        scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0))
     # the default (`nothing`) is the strategy find_rotation ran: Estimation's [pipelines.rotation]

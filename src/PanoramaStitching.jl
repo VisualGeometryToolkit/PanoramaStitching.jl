@@ -53,7 +53,7 @@ export true_up, up_frame, PanoramaView, panorama_view, render_panorama, render_c
 export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, IntensityNoise, IntensityAndPositionNoise
 export IntensityGains, ChannelGains
 export score_seams
-public FrameFeatures, detect_features, pair_bearings, keypoint_covariance_scale, keypoint_uncertain, frame_region, CUBE_FACES, GAIN_CORRECTIONS, MEASUREMENT_NOISES
+public detect_features, pair_bearings, frame_region, CUBE_FACES, GAIN_CORRECTIONS, MEASUREMENT_NOISES
 
 include("tracks.jl")
 include("sampling.jl")

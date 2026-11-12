@@ -61,4 +61,5 @@ before changing code here; this file carries no copy. Where the folder is:
 
 How they land here: `register_rotations` is a task verb on images (it composes the estimators — `find_rotation`,
 `fit_rotation_averaging`, `refine_rotations` — and does no estimation of its own); every residual is in the camera's pixels
-(bearings carry their back-projection Jacobians); the common frame is the first frame's camera frame.
+(bearings carry their back-projection Jacobians), whitened by the keypoints' covariances (the detector's, Features'
+described features the one feature store); the common frame is the first frame's camera frame.

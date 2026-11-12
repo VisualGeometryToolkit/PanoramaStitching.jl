@@ -1,8 +1,10 @@
 # =============================================================================
-# The whitened rotation bundle (src/rotation_bundle.jl, register_rotations' bundle_whitening): observations that carry their
+# The whitened rotation bundle (src/rotation_bundle.jl; register_rotations' observations always carry their keypoints'
+# covariances): observations that carry their
 # keypoints' pixel covariances (`frame => Uncertain(pixel, CovMat(Σ))`) are whitened by L⁻¹ (Σ = LLᵀ). On a synthetic fisheye
 # sweep with known anisotropic, heteroscedastic keypoint noise the whitened bundle recovers the rotations better than the
-# unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; the covariances over their median, an unrefined keypoint's identity.
+# unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; register_rotations' observations the detector's
+# covariances, with no consumer default.
 # =============================================================================
 
 @testitem "refine_rotations whitened by known anisotropic keypoint covariances beats the unweighted bundle" setup = [SweepScene] begin
@@ -78,26 +80,31 @@ end
     @test_throws ArgumentError refine_rotations(CAM, R, [[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]]; kw...)
 end
 
-@testitem "bundle_whitening = :keypoint_covariance: the observations over their median scale, an unrefined keypoint's identity" begin
+@testitem "the bundle's observations: each keypoint with the detector's covariance, no consumer default" setup = [SweepScene, BayerMaps] begin
+    # Keypoints are Uncertain points: their covariances are the detector's (Features' FeatureCovariance), taken to the camera's
+    # pixels by Core's propagate through the frame map; PanoramaStitching normalises none and substitutes none. A covariance
+    # that is not finite and positive definite is refused where it is read (Core's noise_columns, the bundle's whitening), never
+    # replaced.
     using Test, StaticArrays, Statistics
     import PanoramaStitching
-    using PanoramaStitching: FrameFeatures
     import VisualGeometryToolkitCore as VgtkCore
-
+    import VisualGeometryToolkitFeatures as VgtkFeatures
     S(a, b, c) = SMatrix{2, 2, Float64, 4}(a, c, c, b)
-    nanS = fill(NaN, SMatrix{2, 2, Float64, 4})
-    f1 = FrameFeatures([SVector(1.0, 2.0), SVector(3.0, 4.0)], [S(4.0, 1.0, 0.5), nanS], nothing, 2)
-    f2 = FrameFeatures([SVector(5.0, 6.0), SVector(7.0, 8.0)], [S(2.0, 2.0, 0.0), S(9.0, 1.0, 0.0)], nothing, 2)
-    obs = PanoramaStitching._uncertain_observations([f1, f2], [[(1, 1), (2, 1)], [(1, 2), (2, 2)]])
-    @test VgtkCore.geom(last(obs[1][1])) == SVector(1.0, 2.0)
-    # every covariance over m, the median of tr Σ / 2 over the refined ones (2.5, 2, 5) = 2.5: the whitened residual in pixels
-    # of the median keypoint
-    @test SMatrix{2, 2}(Statistics.cov(last(obs[1][1]))) ≈ S(4.0, 1.0, 0.5) / 2.5
-    # frame 1's keypoint 2 is unrefined: the identity (the median keypoint's)
-    @test SMatrix{2, 2}(Statistics.cov(last(obs[2][1]))) == S(1.0, 1.0, 0.0)
-    # the median is over EVERY frame's refined keypoints (the one rule the pairs use, keypoint_covariance_scale), so only a
-    # set with no refined keypoint at all is refused
-    @test PanoramaStitching.keypoint_covariance_scale([f1]) == 2.5
-    f0 = FrameFeatures([SVector(1.0, 2.0), SVector(3.0, 4.0)], [nanS, nanS], nothing, 2)
-    @test_throws ArgumentError PanoramaStitching._uncertain_observations([f0], [[(1, 1), (1, 2)]])
+    f = described([SVector(1.0, 2.0), SVector(3.0, 4.0)], [S(4.0, 1.0, 0.5), S(2.0, 2.0, 0.0)])
+    u = PanoramaStitching._camera_keypoint(FRAME_MAP, f[1].detection)                      # FRAME_MAP: x ↦ 2x
+    @test VgtkCore.geom(u) == FRAME_MAP(SVector(1.0, 2.0)) && SMatrix{2, 2}(Statistics.cov(u)) == 4 * S(4.0, 1.0, 0.5)
+    @test SMatrix{2, 2}(Statistics.cov(PanoramaStitching._camera_keypoint(IDENTITY_MAP, f[2].detection))) == S(2.0, 2.0, 0.0)
+    # an undetermined covariance is refused, not defaulted: the pairs' noise columns and the bundle read it as it is
+    bad = described([SVector(600.0, 600.0)], [fill(NaN, SMatrix{2, 2, Float64, 4})])         # at the principal point: back-projected
+    @test_throws ArgumentError PanoramaStitching.pair_bearings(VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200)), bad, bad,
+                                                              [VgtkFeatures.NNMatch(1, 1, 1.0f0, 0.5f0)]; frame_map = IDENTITY_MAP)
+    # the retired consumer-side policy is gone by name: no normalisation, no identity fallback, no whitening switch
+    for retired in (:FrameFeatures, :keypoint_covariance_scale, :keypoint_uncertain, :_valid_covariance, :_uncertain_observations,
+                    :_check_whitening)
+        @test !isdefined(PanoramaStitching, retired)
+    end
+    src = join(read.(filter(endswith(".jl"), readdir(joinpath(pkgdir(PanoramaStitching), "src"); join = true)), String))
+    for policy in ("bundle_whitening = :", "covariance_scale", "pixel_covariances", "LinearAlgebra.I)", "_valid_covariance")
+        @test !occursin(policy, src)
+    end
 end

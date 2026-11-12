@@ -10,9 +10,6 @@
 
 include(joinpath(@__DIR__, "run.jl"))
 
-# The run key: this comparison's config, the set's config and the set's registration record, byte for byte.
-arms_key(arms_path, set_path, rotations_path) =
-    VgtkCore.sha256_hex(join([read(arms_path, String), read(set_path, String), read(rotations_path, String)], "\0"))[1:16]
 
 # V's mean in 100 px rings about the lens circle's centre (camera pixels), relative to the first ring: the profile summary.
 function ring_profile(v, center, rmax)
@@ -48,7 +45,8 @@ function compare_arms(arms_path)
         Hf, Wf, _ = size(inp.frames[1]); W, H = 2Wf, 2Hf
         lens = load_lens(C; raw_width = W, raw_height = H)
         reg = registration(C, inp, lens; log = devnull)
-        key = arms_key(arms_path, set_path, reg.record)
+        # the run key: Eval's of this comparison's config, the set's config and its registration record folded in by content
+        key = VgtkEval.Experiments.run_key(A; files = Dict("set" => set_path, "registration" => reg.record))
         dir = joinpath(C.out, A["output"], key); mkpath(dir)
         isfile(joinpath(dir, "results.json")) && (println("$(C.cfg["name"]): reused $dir"); continue)
         device = get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])
@@ -74,7 +72,7 @@ function compare_arms(arms_path)
             v["gain_correction"] = a["gain_correction"]; v["measurement_noise"] = a["measurement_noise"]
             v["log_intensity_scale"] = A["log_intensity_scale"]; v["measurement_noise_iterations"] = A["measurement_noise_iterations"]
             Ca = (; cfg, C.out, run = dir, C.path)
-            fkw = (; point_scale_px = reg.point_scale_px, vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
+            fkw = (; vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
             fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
             t = time(); r = fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...); dt = time() - t
             V = VgtkCore.estimate(r); m = r.metadata
@@ -98,12 +96,12 @@ function compare_arms(arms_path)
                     "$(round(row["seam_mad_all"]; digits = 4)); $(round(dt; digits = 2)) s"); flush(stdout)
         end
         rec = Dict("set" => C.cfg["name"], "key" => key, "arms_config" => abspath(arms_path), "set_config" => set_path,
-                   "point_scale_px" => reg.point_scale_px, "fixed_from" => A["fixed_from"], "kind" => A["kind"],
+                   "fixed_from" => A["fixed_from"], "kind" => A["kind"],
                    "date" => string(Dates.now()), "arms" => rows)
         open(io -> JSON.print(io, rec, 2), joinpath(dir, "results.json"), "w")
         open(joinpath(dir, "results.md"), "w") do io
             println(io, "# fit_vignetting settings: $(C.cfg["name"])\n")
-            println(io, "Key $key; the V of record (fixed arms): $(A["fixed_from"]); the sensor point's σ_u = $(reg.point_scale_px) px (intensity_and_position); seams 1.4826·MAD of the log ratio.\n")
+            println(io, "Key $key; the V of record (fixed arms): $(A["fixed_from"]); seams 1.4826·MAD of the log ratio.\n")
             println(io, "| arm | V | gains | measurement noise | seam MAD R | G | B | all | seam rms all | V_min | V asym % | gain range (G) | s |")
             println(io, "|---|---|---|---|---|---|---|---|---|---|---|---|---|")
             f4(x) = @sprintf("%.4f", x)
