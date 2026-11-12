@@ -1,4 +1,4 @@
-docs-pass: 5e1f10fff8c919208fba5552e46e0f16a7f04968
+docs-pass: ab6d9f8c7a158b4b48539ab14a9e35076bc56ec1
 
 PanoramaStitching 0.6.1 (2026-11-12), on d4376f7 (0.6.0, the registered tree = GitHub main). PanoramaStitching has no landing site outside the repository.
 
@@ -15,3 +15,6 @@ PanoramaStitching 0.6.1 (2026-11-12), on d4376f7 (0.6.0, the registered tree = G
   B200): the docs build (checkdocs = :public, doctest, linkcheck, no warnonly) exit 0; Pkg.test 476/476 including the
   README item (fresh environment, the sourced stack developed), the docs, naming, quality and duplication items. The
   release tree's README item runs from General in the fresh-clone gate once Core 0.9.4 / Features 0.8.1 are registered.
+- Re-checked at ab6d9f8c7a158b4b48539ab14a9e35076bc56ec1: after the bump only tests, the example's stage-cache check and one CHANGELOG line changed
+  (Julia 1.12: the bundle pins per LLVM, Test.anynonpass); no docstring, guide or README text. The README and guide examples
+  ran from General on Julia 1.13.3 and 1.12.7 in the fresh-clone gate (Slurm 10660), on the registered Core 0.9.4.
