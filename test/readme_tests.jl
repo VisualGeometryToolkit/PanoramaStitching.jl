@@ -59,10 +59,11 @@
     using Test
     Base.include(readme, $(repr(joinpath(env, "example.jl"))))
     @testset "README example" begin
-        # the comments' claims: the rotations within 0.05°, the bundle below a pixel, the panorama's size and NaN where
+        # the comments' claims: the rotations within 0.05°, the bundle below half a pixel (0.24 px, every kept observation a
+        # true inlier of the scene's truth, 2026-11-12), the panorama's size and NaN where
         # no frame sees the pixel
         @test length(readme.reg.rotations) == 4 && maximum(readme.errors) < 0.05
-        @test readme.reg.bundle.rms < 1.0
+        @test readme.reg.bundle.rms < 0.5
         @test size(readme.pano.image) == (458, 1220, 3)
         @test size(readme.pano.owner) == size(readme.pano.coverage) == size(readme.pano.image)[1:2]
         @test eltype(readme.frames[1]) == Float32

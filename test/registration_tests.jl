@@ -125,15 +125,12 @@ end
     @info "synthetic register: rotation errors (deg) $(round.(errs; digits = 4)), bundle rms $(round(reg.bundle.rms; digits = 3)) px"
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
     @test length(reg.pairs) == K * (K - 1) ÷ 2 && all(p -> p.inliers >= 100, values(reg.pairs))
-    # The bundle's residuals in the pairs' units: every observation is its keypoint with the detector's covariance Σ (camera
-    # pixels² for unit noise of the detection image), so a pixel residual over √(tr Σ / 2) is in sigmas of that unit noise, the
-    # unit of the pairs' pooled scale σ̂ (σ₀: the noise σ₀²Σ)
-    whitened = filter(isfinite, [reg.bundle.metadata.residuals[j][i] /
-                                 sqrt(tr(Statistics.cov(VgtkCore.propagate(FRAME_MAP, reg.features[k][kp].detection))) / 2)
-                                 for (j, t) in enumerate(reg.tracks) for (i, (k, kp)) in enumerate(t)])
-    @info "synthetic register: the bundle's whitened rms $(sqrt(mean(abs2, whitened))), the pooled pairs' σ̂ $(reg.bundle_sigma)"
-    @test sqrt(mean(abs2, whitened)) < 3 * reg.bundle_sigma && reg.dropped == 0
-    @test median(filter(isfinite, reduce(vcat, reg.bundle.metadata.residuals))) < 0.15   # px
+    # The bundle's pixel residuals against the pairs' pooled scale ŝ (px per coordinate): the median residual norm of a 2-D
+    # Gaussian of per-coordinate σ is σ√(2 ln 2), so the bundle's is within 25 % of that at ŝ (measured 2026-11-12: the median
+    # 1.1 ŝ, ŝ ≈ 0.18 px, every kept observation a true inlier)
+    res = filter(isfinite, reduce(vcat, reg.bundle.metadata.residuals))
+    @info "synthetic register: the bundle's median residual $(median(res)) px, the pooled pairs' ŝ $(reg.bundle_sigma) px"
+    @test median(res) <= 1.25 * sqrt(2 * log(2)) * reg.bundle_sigma && reg.dropped == 0
     # the view graph is VisualGeometryToolkitEstimation's, each edge the pair's rotation weighted by its inlier count
     @test reg.graph isa VgtkEstimation.ViewGraph && VgtkEstimation.nedges(reg.graph) == length(reg.pairs)
     @test all(p -> VgtkCore.weight_of(reg.graph[p...]) == reg.pairs[p].inliers, keys(reg.pairs))

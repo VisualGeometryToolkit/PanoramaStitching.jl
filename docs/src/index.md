@@ -81,7 +81,7 @@ reg = register_rotations(frames, camera; frame_map, tone_percentile = 99.5, dete
                          bundle_optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.5), bundle_max_iter = 1000,
                          bundle_ftol = 1e-10, bundle_xtol = 1e-10)
 errors = [rad2deg(norm(log_so3(reg.rotations[k]' * truth[k]))) for k in 1:4]   # degrees, each below 0.05
-reg.bundle.rms                                                   # the bundle's rms reprojection error, below 1 px
+reg.bundle.rms                                                   # the bundle's rms reprojection error: 0.24 px here, below 0.5 px
 cyl = panorama_view(Cylindrical(), (-100.0, 205.0, -45.0, 45.0), 0.25)
 pano = render_panorama(camera, frames, reg.rotations, cyl; vignetting = (u, f) -> 1.0, frame_map, rim_margin_px = 12.0,
                        fov_deg = 89.0)
