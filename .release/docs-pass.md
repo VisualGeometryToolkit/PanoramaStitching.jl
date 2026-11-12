@@ -1,4 +1,4 @@
-docs-pass: ab6d9f8c7a158b4b48539ab14a9e35076bc56ec1
+docs-pass: 7382002d6a13378e0d1a99831440ffa98e8750c4
 
 PanoramaStitching 0.6.1 (2026-11-12), on d4376f7 (0.6.0, the registered tree = GitHub main). PanoramaStitching has no landing site outside the repository.
 
@@ -18,3 +18,4 @@ PanoramaStitching 0.6.1 (2026-11-12), on d4376f7 (0.6.0, the registered tree = G
 - Re-checked at ab6d9f8c7a158b4b48539ab14a9e35076bc56ec1: after the bump only tests, the example's stage-cache check and one CHANGELOG line changed
   (Julia 1.12: the bundle pins per LLVM, Test.anynonpass); no docstring, guide or README text. The README and guide examples
   ran from General on Julia 1.13.3 and 1.12.7 in the fresh-clone gate (Slurm 10660), on the registered Core 0.9.4.
+- Re-checked at 7382002d6a13378e0d1a99831440ffa98e8750c4: tests, the example's stage-cache check and the CHANGELOG line only; no docs change.
