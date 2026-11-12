@@ -95,7 +95,7 @@ reg.bundle.rms                  # the bundle's rms reprojection error, pixels
 VgtkCore.retcode(reg.bundle)     # how the bundle ended: Core's ReturnCode (and stop_rule, the rule that fired)
 ```
 
-On the example's sweep the rotations come back well within 0.05° and the bundle's rms is below a pixel.
+On the example's sweep the rotations come back well within 0.05° and the bundle's rms is below half a pixel.
 
 ### Autocalibration
 

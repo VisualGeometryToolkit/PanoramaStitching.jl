@@ -2,9 +2,6 @@
 # CUDA_Runtime_jll and CUDNN_jll, whose CUDA 12 builds ONNX Runtime's CUDA provider takes for LoMa: lazy artifacts, downloaded
 # on the first LoMa session where a CUDA device is visible).
 # Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
-# Needs the VisualGeometryToolkit 0.9 stack; until it registers, TEMPORARY [sources] below take it from the monorepo snapshot
-# /home/jpr/src/vgtk-pin-9c74e264 (a pinned snapshot of robust-core, the robust-estimation contract branch).
-# Never pushed or registered while they are here; remove before release.
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
@@ -30,11 +27,6 @@ VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
 [sources]
 PanoramaStitching = {path = "../.."}
-VisualGeometryToolkitCore = {path = "/home/jpr/src/vgtk-pin-c867b4f4/VisualGeometryToolkitCore"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
-VisualGeometryToolkitEstimation = {path = "/home/jpr/src/vgtk-pin-c867b4f4/VisualGeometryToolkitEstimation"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
-VisualGeometryToolkitEval = {path = "/home/jpr/src/vgtk-pin-c867b4f4/VisualGeometryToolkitEval"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
-VisualGeometryToolkitFeatures = {path = "/home/jpr/src/vgtk-pin-c867b4f4/VisualGeometryToolkitFeatures"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
-VisualGeometryToolkitIO = {path = "/home/jpr/src/vgtk-pin-c867b4f4/VisualGeometryToolkitIO"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
 
 [compat]
 CUDA = "5"
