@@ -34,7 +34,10 @@ function stage_cache_check()
                                                                                "bundle_optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0)),
                                                              Dict{String, Any}(string(k) => v for (k, v) in kw)))
     inp = (; names = ["a.ARW", "b.ARW"])
-    ts = @testset "the example's stage cache" begin
+    # an outermost @testset that records a failure or an error throws Test.TestSetException when it finishes (every Julia):
+    # that is the check's false (Test.anynonpass, the earlier test, is not in Julia 1.12's Test)
+    passed = try
+    @testset "the example's stage cache" begin
         withenv("VGTK_DATA_ROOT" => root, "VGTK_RESULTS_ROOT" => results) do
             out = mktempdir(results)
             matched = Ref(0)                                                  # how often the matching ran
@@ -76,7 +79,13 @@ function stage_cache_check()
                   key(pairs_stage_settings, cfg(; pairs = "lag_overlap"))
         end
     end
-    return !Test.anynonpass(ts)
+    end
+    true
+    catch e
+        e isa Test.TestSetException || rethrow()
+        false
+    end
+    return passed
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
