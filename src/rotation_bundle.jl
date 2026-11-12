@@ -401,7 +401,12 @@ function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::Ab
     isempty(names) && throw(ArgumentError(
         "refine_camera_and_rotations: `fixed` holds every camera parameter: nothing to calibrate (refine_rotations is the bundle " *
         "with the calibration held)"))
-    chc = _camera_chart(camera, names)
+    # the camera's variable: Core's ParameterManifold of its model restricted to the free parameters (names checked by
+    # `free_parameter_names`); a SplineLens camera (a gauge K: its parameters are its lattice's controls, Estimation's own
+    # spline route) is refused
+    (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
+        throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
+    chc = VgtkCore.restrict(VgtkCore.ParameterManifold(m), names)
     return _rotation_bundle(camera, rotations, tracks, chc, names; rb..., max_iter, ftol, xtol, eliminate,
                             what = "refine_camera_and_rotations")
 end
@@ -518,15 +523,6 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
                               RotationBundleMetadata(dirs, rn, width, scale, scale_source, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
 end
 
-# The camera's variable for `refine_camera_and_rotations`: Core's ParameterManifold of its model restricted to the free
-# parameters (`free_parameter_names`: names checked there). A SplineLens camera (a gauge K: its parameters are its lattice's
-# controls, Estimation's own spline route) is refused.
-function _camera_chart(camera, free_names::Tuple{Vararg{Symbol}})
-    m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
-    (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
-        throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
-    return VgtkCore.restrict(VgtkCore.ParameterManifold(m), free_names)
-end
 _with_camera_model(camera::VgtkCore.BoundedCamera, m) = VgtkCore.with_model(camera, m)
 _with_camera_model(::VgtkCore.CameraModel, m) = m
 
