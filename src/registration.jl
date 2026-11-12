@@ -186,7 +186,7 @@ end
 # The detector's settings and, with detection_image = :vst, every frame a LinearRaw: before any feature is detected.
 function _check_frames(what, frames, selection, detection_image, detection_noise)
     _check_detector_settings(what, selection, detection_image, detection_noise)
-    detection_image === :vst && !all(f -> f isa VgtkFeatures.LinearRaw, frames) &&
+    detection_image === :vst && !all(f -> f isa VgtkCore.LinearRaw, frames) &&
         throw(ArgumentError("$what: detection_image = :vst needs every frame a LinearRaw (its green cells' code spans)"))
     return nothing
 end
@@ -224,7 +224,7 @@ end
                        bundle_max_iter, bundle_ftol, bundle_xtol, say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
-capture order, `frame_map` their map onto the camera's pixels: VisualGeometryToolkitFeatures' `raw_frame_map`) seen by the calibrated
+capture order, `frame_map` their map onto the camera's pixels: VisualGeometryToolkitCore's `raw_frame_map`) seen by the calibrated
 `camera` (fixed; a VisualGeometryToolkitCore `BoundedCamera`, whose `imaged_region` bounds the features,
 projected in the bundle through its model's `imaging_transform` — a grid lens's `SplineLens` through its forward spline; see
 [`refine_rotations`](@ref)), with the view graph, the tracks and the bundle's

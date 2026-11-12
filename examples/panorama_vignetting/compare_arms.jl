@@ -42,7 +42,7 @@ function compare_arms(arms_path)
         set_path = joinpath(dirname(abspath(arms_path)), s)
         C = load_config(set_path)
         inp = decoded_frames(C; masks = true)
-        Hf, Wf, _ = size(inp.frames[1]); W, H = 2Wf, 2Hf
+        Hf, Wf, _ = size(inp.frames[1]); W, H = Int.(PanoramaStitching._covered_extent(inp.frame_map, Wf, Hf))   # the frames' map: (2Wf, 2Hf) for :bin2
         lens = load_lens(C; raw_width = W, raw_height = H)
         reg = registration(C, inp, lens; log = devnull)
         # the run key: Eval's of this comparison's config, the set's config and its registration record folded in by content
@@ -80,7 +80,7 @@ function compare_arms(arms_path)
             G = fit_gains(Ca, r)
             seams = [score_seams(lens, dev.frames, reg.rotations, sview; vignetting = V, gains = G, plane = p, skw...) for p in 1:3]
             pooled = vcat([filter(!isnan, vec(Array(s.ratio))) for s in seams]...)
-            summ = vignetting_summary(V, lens, pp, W, H, rim, in_domain)
+            summ = vignetting_summary(V, lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)
             row = Dict{String, Any}("arm" => a["name"], "vignetting" => a["vignetting"], "gain_correction" => a["gain_correction"],
                                     "measurement_noise" => a["measurement_noise"], "seconds" => dt,
                                     "solves" => m.measurement_noise isa IntensityAndPositionNoise ? 1 + m.measurement_noise.iterations : 1,

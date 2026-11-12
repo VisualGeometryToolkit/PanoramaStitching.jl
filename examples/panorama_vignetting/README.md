@@ -68,7 +68,7 @@ Under `$VGTK_DATA_ROOT`:
 1. **Decode** (`decoded_frames`). Each RAW file is read by VisualGeometryToolkitFeatures' `load_raw` (LibRaw through
    LibRaw_jll; the two steps `load_raw_mosaic` then `LinearRaw(mosaic; mode = :bin2, gain)`): 2 × 2 Bayer quads become one
    pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (the frames' map onto the
-   camera's pixels is Features' `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
+   camera's pixels is VisualGeometryToolkitCore's `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
    centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Decoding is done once and cached (below).
 2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1 (unreleased)
+
+A patch: no API change, the same results.
+
+- On VisualGeometryToolkitFeatures 0.8 (`[compat]` VisualGeometryToolkitFeatures "0.8", VisualGeometryToolkitCore
+  "0.9.2"): the sensor image's names (`LinearRaw`, `RawMosaic`, `raw_frame_map`, `bayer_plane_map`) are
+  VisualGeometryToolkitCore's, which Features 0.8 no longer re-exports. The package, its tests and the example call
+  Core's; the docstrings and guides name Core as their owner.
+- No hard-coded ×2 from a frame's pixels to the camera's: the frames' map (`frame_map`) places every frame pixel. The
+  precompile workload's synthetic frames, the example's vignetting map image (`vignetting_map.png`), its summary's sample
+  points and its camera extent (`W`, `H`), and the tests' frame-pixel centres go through it. For `:bin2` frames
+  (x ↦ 2x) every value is the same, bit for bit (a doubling and the map's identity rotation and zero translation are
+  exact).
+
 ## 0.6.0 (2026-11-12)
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)

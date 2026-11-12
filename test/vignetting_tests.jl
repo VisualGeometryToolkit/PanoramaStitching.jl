@@ -49,7 +49,7 @@ end
     logv(s) = LogVignetting(with_control_points(s, zeros(n_control_points(s))))      # log V ≡ 0: the start
     # the domain's pixel centres (camera pixels) and the error of a fit against the truth, both in the gauge mean log V = 0
     function error_vs(v, logV, q; margin = 8.0)
-        us = [SVector((j - 0.5) * 2, (i - 0.5) * 2) for j in 1:400, i in 1:400]
+        us = [FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]
         us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 390 - margin, vec(us))
         a = [log(v(u)) for u in us]; b = [logV(u) for u in us]
         a .-= mean(a); b .-= mean(b)
@@ -185,7 +185,7 @@ end
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
     function v_error(v)
-        us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([SVector((j - 0.5) * 2, (i - 0.5) * 2) for j in 1:400, i in 1:400]))
+        us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
         a = [log(v(u)) for u in us]; b = [radial(u) for u in us]
         return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
     end
@@ -296,7 +296,7 @@ end
     kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
     function v_error(v)
-        us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([SVector((j - 0.5) * 2, (i - 0.5) * 2) for j in 1:400, i in 1:400]))
+        us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
         a = [log(v(u, nothing)) for u in us]; b = [radial(u) for u in us]
         return maximum(abs, exp.((a .- mean(a)) .- (b .- mean(b))) .- 1)
     end

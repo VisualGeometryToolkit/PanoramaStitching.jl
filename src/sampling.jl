@@ -38,7 +38,7 @@ function _imaged_less_rim(camera::VgtkCore.BoundedCamera, m)
 end
 
 # A region of the camera's pixels in a frame's pixels, `frame_map` the frame's map onto the camera's pixels (a Core
-# `SimilarityMap` without rotation: VisualGeometryToolkitFeatures' `raw_frame_map`), by its parts: an `Ellipse` by Core's
+# `SimilarityMap` without rotation: VisualGeometryToolkitCore's `raw_frame_map`), by its parts: an `Ellipse` by Core's
 # similarity image under the map's inverse, a `Rect` by its corners (axis-aligned under a scale and a translation).
 _in_frame(e::VgtkCore.Ellipse, frame_map) = inv(frame_map)(e)
 function _in_frame(r::VgtkCore.Rect, frame_map)
@@ -134,7 +134,7 @@ less `rim_margin_px` at its lens coverage's edge, and at least 2 px inside the f
 and no `saturated` pixel among those any plane's value blends (the four at
 each plane's own sample position). `frames` are
 `H × W × 3` linear images, `saturated` their `H × W` masks. `frame_map` is the
-frames' map onto the camera's pixels (VisualGeometryToolkitFeatures'
+frames' map onto the camera's pixels (VisualGeometryToolkitCore's
 `raw_frame_map(L)`), and `plane_maps` each plane's (`bayer_plane_map(L, c)`;
 by default every plane's is the frame's): plane `c` is read at
 `inv(plane_maps[c])(u)`.

@@ -27,14 +27,14 @@ function _check_detector_settings(what, selection, detection_image, detection_no
     return nothing
 end
 
-# A frame's linear `H × W × 3` image: the frame itself, or a VisualGeometryToolkitFeatures `LinearRaw`'s (`:bin2`) image.
+# A frame's linear `H × W × 3` image: the frame itself, or a VisualGeometryToolkitCore `LinearRaw`'s (`:bin2`) image.
 _frame_image(frame::AbstractArray{<:Real, 3}) = frame
-_frame_image(frame::VgtkFeatures.LinearRaw) = frame.image
+_frame_image(frame::VgtkCore.LinearRaw) = frame.image
 
 # A frame's clip mask (`true` where a value is clipped: Features' detection `exclusion_mask`): the caller's, else a `LinearRaw`'s own
 # saturation, else none.
 _clip_mask(frame, saturated::AbstractMatrix{Bool}) = saturated
-_clip_mask(frame::VgtkFeatures.LinearRaw, ::Nothing) = frame.saturated
+_clip_mask(frame::VgtkCore.LinearRaw, ::Nothing) = frame.saturated
 _clip_mask(frame, ::Nothing) = nothing
 
 # ASIFT on the detection image: the tone-mapped green (`toned`'s plane 2) at Features' default contrast threshold, or the
@@ -42,7 +42,7 @@ _clip_mask(frame, ::Nothing) = nothing
 # `noise_sigmas` noise σ; no detection reads a clipped pixel (Features' `exclusion_mask`: within three scales of one, dropped).
 _asift(frame, toned, ::Val{:tone}, noise, tilts, mask) =
     VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, exclusion_mask = mask)
-_asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
+_asift(frame::VgtkCore.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
     VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame; noise.electrons_per_dn, noise.read_noise);
                               noise.noise_sigmas, tilts, exclusion_mask = mask)
 _asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
@@ -53,9 +53,9 @@ _asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
                     max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing,
                     saturated = nothing) -> StructArray{DescribedFeature}
 
-The features of one frame (`H × W × 3` linear, or a VisualGeometryToolkitFeatures
+The features of one frame (`H × W × 3` linear, or a VisualGeometryToolkitCore
 `LinearRaw` of mode `:bin2`; `frame_map` its map onto the camera's pixels,
-Features' `raw_frame_map(L)`) of
+Core's `raw_frame_map(L)`) of
 `camera`, described by `descriptor` (a `LoMaDescriptor`) on the frame's tone
 `sqrt(G / p)` clamped to `[0, 1]` (`p` the `tone_percentile`-th percentile of the
 green channel inside the camera's `imaged_region` — its sensor ∩ its lens

@@ -54,8 +54,8 @@ end
         raw[2i - 1, 2j - 1] = code(frame[i, j, 1]); raw[2i - 1, 2j] = code(frame[i, j, 2])
         raw[2i, 2j - 1] = code(frame[i, j, 2]); raw[2i, 2j] = code(frame[i, j, 3])
     end
-    L = VgtkFeatures.LinearRaw(VgtkFeatures.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf),
-                                                      (; model = "synthetic")); mode = :bin2)
+    L = VgtkCore.LinearRaw(VgtkCore.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf),
+                                              (; model = "synthetic")); mode = :bin2)
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)

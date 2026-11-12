@@ -599,7 +599,7 @@ V and the gains.
   `saturated` mask is false and its value positive. `plane` is the plane fitted
   (2: green), read at its own sample position. `frame_map`/`plane_maps`: the
   frames' and the planes' maps onto the camera's pixels
-  (VisualGeometryToolkitFeatures' `raw_frame_map`, `bayer_plane_map`; by
+  (VisualGeometryToolkitCore's `raw_frame_map`, `bayer_plane_map`; by
   default every plane's is the frame's).
 - The model: `log I = log g + log L(d) + log V(u)`, linear in log L's
   controls, log V's control points and the log gains: one weighted linear

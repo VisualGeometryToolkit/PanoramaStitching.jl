@@ -7,20 +7,20 @@
                                                          lens = VgtkCore.KannalaBrandt(-0.02)),
                                     VgtkCore.Size2(80, 80); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(40.0, 40.0), 38.0))
     rotations = [SMatrix{3, 3}(VgtkCore.exp_so3(SVector(0.0, deg2rad(y), 0.0))) for y in (0.0, 30.0)]
+    # the frames' map onto the camera's pixels: a Bayer cell grid's (Core's raw_frame_map, x ↦ 2x), from a synthetic 2 × 2 mosaic
+    mosaic = VgtkCore.RawMosaic(zeros(UInt16, 2, 2), UInt8[0 1; 3 2], (0.0, 0.0, 0.0, 0.0), 1.0, (0, 0), (2, 2), (; model = "synthetic"))
+    frame_map = VgtkCore.raw_frame_map(VgtkCore.LinearRaw(mosaic; mode = :bin2))
     scene(d) = 0.05 * exp(0.6 * sin(3d[1] + 2d[2]) * cos(2d[3]))
     frames = map(rotations) do R
         img = zeros(Float32, 40, 40, 3)
         for j in 1:40, i in 1:40
-            u = SVector((j - 0.5) * 2, (i - 0.5) * 2)
+            u = frame_map(SVector(j - 0.5, i - 0.5))                    # the frame pixel's centre in the camera's pixels
             hypot(u[1] - 40.0, u[2] - 40.0) < 38.0 || continue
             img[i, j, :] .= Float32(scene(R * VgtkCore.backproject(camera, u)) * exp(-0.3 * (hypot(u[1] - 40.0, u[2] - 40.0) / 40)^2))
         end
         img
     end
     saturated = [falses(40, 40) for _ in rotations]
-    # the frames' map onto the camera's pixels: a Bayer cell grid's (Features' raw_frame_map, x ↦ 2x), from a synthetic 2 × 2 mosaic
-    mosaic = VgtkFeatures.RawMosaic(zeros(UInt16, 2, 2), UInt8[0 1; 3 2], (0.0, 0.0, 0.0, 0.0), 1.0, (0, 0), (2, 2), (; model = "synthetic"))
-    frame_map = VgtkFeatures.raw_frame_map(VgtkFeatures.LinearRaw(mosaic; mode = :bin2))
     @compile_workload begin
         kw = (; frame_map, rim_margin_px = 2.0, fov_deg = 100.0)
         fit = (; saturated, kw..., plane = 2, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,

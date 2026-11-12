@@ -130,7 +130,7 @@ and at least 2 px inside the frame — the geometric masks of [`sample_frames`](
 sensor points. The render shows the frames as they are: a saturated pixel is rendered with its clipped value (a window that
 clips in every frame comes out bright, not empty); saturation masks measurements only ([`sample_frames`](@ref),
 [`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images. `frame_map` is the frames' map
-onto the camera's pixels (VisualGeometryToolkitFeatures' `raw_frame_map(L)`), and `plane_maps` each plane's
+onto the camera's pixels (VisualGeometryToolkitCore's `raw_frame_map(L)`), and `plane_maps` each plane's
 (`bayer_plane_map(L, c)`; by default every plane's is the frame's); plane c is read through
 `inv(plane_maps[c]) ∘ camera ∘ R_kᵀ ∘ rays`, all three planes in one Core `image_warp!`. The masks and the vignetting are at
 the pixel centre's sensor point.

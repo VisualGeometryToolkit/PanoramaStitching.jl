@@ -93,7 +93,7 @@ end
     frame = ones(Float32, Hf, Wf, 3); sat = falses(Hf, Wf)
     frame[25, 25, :] .= 1.0f6; sat[25, 25] = true                                    # clipped, its centre at (24.5, 24.5)
     pts = vec([SVector(x, y) for x in 22.5:0.05:26.5, y in 22.5:0.05:26.5])          # frame COLMAP points around it
-    D = [normalize(SVector{3, Float64}(backproject(cam, 2 .* p))) for p in pts]
+    D = [normalize(SVector{3, Float64}(backproject(cam, FRAME_MAP(p)))) for p in pts]
     centred = ntuple(_ -> FRAME_MAP, 3)                                            # every plane at the cell centre
     samples(P) = sample_frames(cam, [frame], [SMatrix{3, 3}(1.0I)], D; saturated = [sat], frame_map = FRAME_MAP,
                                rim_margin_px = 0.0, fov_deg = 89.0, vignetting = (u, f) -> 1.0, plane_maps = P)

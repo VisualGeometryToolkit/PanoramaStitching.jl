@@ -107,7 +107,7 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 # Each RAW frame is decoded once per content and decode settings by Features' `load_raw` into its one persistent cache (a
 # FileCache, <output>/decoded/linear_raws.jld2; the entry is keyed by the RAW file's SHA-256, the mode, the gain and the
 # decoder), and read back as decoded, value for value. The frames' and the planes' maps onto the camera's pixels are
-# Features' (`raw_frame_map`, `bayer_plane_map`) of the set's first frame (all the set's frames share the Bayer phase).
+# Core's (`raw_frame_map`, `bayer_plane_map`) of the set's first frame (all the set's frames share the Bayer phase).
 
 "The frames as linear images (H × W × 3 Float32), their saturation masks with `masks = true`, their maps and the daylight white balance; each RAW decoded once, cached."
 function decoded_frames(C; masks::Bool, log = devnull)
@@ -128,7 +128,7 @@ function decoded_frames(C; masks::Bool, log = devnull)
     end
     lin1 = first(lins)
     return (; names = raws, frames = [Float32.(l.image) for l in lins], saturated = masks ? [l.saturated for l in lins] : BitMatrix[],
-            frame_map = VgtkFeatures.raw_frame_map(lin1), plane_maps = ntuple(c -> VgtkFeatures.bayer_plane_map(lin1, c), 3),
+            frame_map = VgtkCore.raw_frame_map(lin1), plane_maps = ntuple(c -> VgtkCore.bayer_plane_map(lin1, c), 3),
             daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)))
 end
 
@@ -285,7 +285,7 @@ function detector_settings(r)
     return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), detection_noise = noise)
 end
 
-# The frames as VisualGeometryToolkitFeatures' LinearRaw (load_raw at the decode settings, the one RAW path): detection_image = "vst"
+# The frames as VisualGeometryToolkitCore's LinearRaw (Features' load_raw at the decode settings, the one RAW path): detection_image = "vst"
 # reads their green cells' code spans, which the decode cache does not keep.
 linear_raws(C, inp) = [VgtkFeatures.load_raw(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n); mode = Symbol(C.cfg["decode"]["mode"]),
                                              gain = Float64(C.cfg["decode"]["gain"])) for n in inp.names]
@@ -496,7 +496,7 @@ end
 
 # ----------------------------------------------------------------------------- the record of V
 
-function write_vignetting(C, stem, res, W, H)
+function write_vignetting(C, stem, res, W, H, frame_map, (Hf, Wf))
     v = VgtkCore.estimate(res)
     kx = VgtkCore.knot_vectors(v)
     # a LogVignetting's control points are log V's (V = exp(s)); a V-form spline's (held fixed) are V's
@@ -520,21 +520,23 @@ function write_vignetting(C, stem, res, W, H)
                             "spline" => "VisualGeometryToolkitCore TensorProductVignetting: a tensor-product B-spline on clamped knots, x fastest")
     end
     open(io -> JSON.print(io, rec, 2), joinpath(C.run, stem * ".json"), "w")
-    # the map over the sensor, every 32 px (x, y, V), and as an image normalized to its maximum
+    # the map over the sensor, every 32 px (x, y, V), and as an image normalized to its maximum (one value per frame pixel, at
+    # its centre in the camera's pixels: the frames' map)
     open(joinpath(C.run, stem * "_map.csv"), "w") do io
         println(io, "x_px,y_px,V")
         for y in 16.0:32.0:H, x in 16.0:32.0:W
             println(io, @sprintf("%.1f,%.1f,%.6f", x, y, v(SVector(x, y))))
         end
     end
-    M = [v(SVector(2j - 1.0, 2i - 1.0)) for i in 1:(H ÷ 2), j in 1:(W ÷ 2)]
+    M = [v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
     PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
     return M
 end
 
-# V's summary on the domain: its range, where its maximum is, and its largest antipodal asymmetry about `center`.
-function vignetting_summary(v, lens, center, W, H, rim, fov_mask)
-    pts = [SVector(2j - 1.0, 2i - 1.0) for i in 1:2:(H ÷ 2), j in 1:2:(W ÷ 2)]
+# V's summary on the domain: its range, where its maximum is, and its largest antipodal asymmetry about `center`, over every
+# other frame pixel's centre in the camera's pixels (the frames' map).
+function vignetting_summary(v, lens, center, frame_map, (Hf, Wf), rim, fov_mask)
+    pts = [frame_map(SVector(j - 0.5, i - 0.5)) for i in 1:2:Hf, j in 1:2:Wf]
     pts = filter(fov_mask, vec(pts))
     lv = [log(v(u)) for u in pts]
     imax = argmax(lv)
@@ -557,7 +559,7 @@ function run_example(config_path)
     T = Dict{String, Float64}()
     say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path)), output $(C.run)")
     t = time(); inp = decoded_frames(C; masks = true, log); T["decode (or cache)"] = time() - t
-    K = length(inp.frames); Hf, Wf, _ = size(inp.frames[1]); W, H = 2Wf, 2Hf
+    K = length(inp.frames); Hf, Wf, _ = size(inp.frames[1]); W, H = Int.(PanoramaStitching._covered_extent(inp.frame_map, Wf, Hf))   # the frames' map: (2Wf, 2Hf) for :bin2
     say(log, "frames: $K, $(Wf) × $(Hf) bin2 ($(W) × $(H) camera pixels), saturated quads $(sum(count, inp.saturated))")
     lens = load_lens(C; raw_width = W, raw_height = H)
     reg = registration(C, inp, lens; log)
@@ -585,7 +587,7 @@ function run_example(config_path)
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
-    M = write_vignetting(C, "vignetting", res, W, H)
+    M = write_vignetting(C, "vignetting", res, W, H, inp.frame_map, (Hf, Wf))
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
@@ -634,12 +636,12 @@ function run_example(config_path)
     domain = PanoramaStitching.frame_region(lens, W, H, rim)
     in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
     pp = SVector{2, Float64}(principal_point(lens))
-    rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, W, H, rim, in_domain))]
+    rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
         s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
-        write_vignetting(C, "vignetting_compare_$k", r2, W, H)
-        push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, W, H, rim, in_domain)))
+        write_vignetting(C, "vignetting_compare_$k", r2, W, H, inp.frame_map, (Hf, Wf))
+        push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
     write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
@@ -652,7 +654,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
     open(joinpath(C.run, "summary.md"), "w") do io
         println(io, "# $(C.cfg["name"]): panorama vignetting\n")
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
-        println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
+        println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
                "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the keypoints' covariances)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *

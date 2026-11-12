@@ -29,7 +29,7 @@ used below, and every block runs after it, in order, as the test suite runs them
 
 - **Frames**: a `Vector` of `H × W × 3` linear (not gamma-encoded) images in capture order. They may be binned relative to the
   calibration: `frame_map` is their map onto the camera's pixels (a Core `SimilarityMap`; a RAW's `:bin2` frames',
-  VisualGeometryToolkitFeatures' `raw_frame_map(L)`), and `plane_maps` each colour plane's (`bayer_plane_map(L, c)`: a
+  VisualGeometryToolkitCore's `raw_frame_map(L)`), and `plane_maps` each colour plane's (`bayer_plane_map(L, c)`: a
   Bayer binning's R and B sit ¼ px off the cell centre; by default every plane's is the frame's).
 - **Camera**: a VisualGeometryToolkitCore `BoundedCamera` (a camera model and its sensor). A parametric `CameraModel` serves
   every step. A grid lens is a `CameraModel` with a `SplineLens`; it projects through its forward spline, fitted by
