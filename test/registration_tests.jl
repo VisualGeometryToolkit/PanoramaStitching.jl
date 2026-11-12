@@ -131,6 +131,7 @@ end
     whitened = filter(isfinite, [reg.bundle.metadata.residuals[j][i] /
                                  sqrt(tr(Statistics.cov(PanoramaStitching._camera_keypoint(FRAME_MAP, reg.features[k][kp].detection))) / 2)
                                  for (j, t) in enumerate(reg.tracks) for (i, (k, kp)) in enumerate(t)])
+    @info "synthetic register: the bundle's whitened rms $(sqrt(mean(abs2, whitened))), the pooled pairs' σ̂ $(reg.bundle_sigma)"
     @test sqrt(mean(abs2, whitened)) < 3 * reg.bundle_sigma && reg.dropped == 0
     @test median(filter(isfinite, reduce(vcat, reg.bundle.metadata.residuals))) < 0.15   # px
     # the view graph is VisualGeometryToolkitEstimation's, each edge the pair's rotation weighted by its inlier count
