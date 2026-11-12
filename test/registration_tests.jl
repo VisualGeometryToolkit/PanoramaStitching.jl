@@ -327,7 +327,7 @@ end
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
     obs = [[k => b.features[k].pixels[kp] for (k, kp) in t] for t in b.tracks]
-    ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; bkw..., width = b.bundle.metadata.loss_width)
+    ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; merge(bkw, (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}()))..., width = b.bundle.metadata.loss_width)
     @test ref.metadata.outcome === :converged
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
 end

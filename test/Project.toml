@@ -24,9 +24,9 @@ VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
 
 [sources]
 PanoramaStitching = {path = ".."}
-VisualGeometryToolkitCore = {path = "/home/jpr/src/vgtk-pin-01e54733/VisualGeometryToolkitCore"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
-VisualGeometryToolkitEstimation = {path = "/home/jpr/src/vgtk-pin-01e54733/VisualGeometryToolkitEstimation"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
-VisualGeometryToolkitFeatures = {path = "/home/jpr/src/vgtk-pin-01e54733/VisualGeometryToolkitFeatures"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitCore = {path = "/home/jpr/src/vgtk-pin-1079f0c1/VisualGeometryToolkitCore"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitEstimation = {path = "/home/jpr/src/vgtk-pin-1079f0c1/VisualGeometryToolkitEstimation"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
+VisualGeometryToolkitFeatures = {path = "/home/jpr/src/vgtk-pin-1079f0c1/VisualGeometryToolkitFeatures"}   # TEMPORARY: the 0.9 stack is not registered yet; replace by [compat] 0.9 from the registry before any push or registration
 [compat]
 Adapt = "4"
 Aqua = "0.8.18"

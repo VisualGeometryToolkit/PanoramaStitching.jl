@@ -64,10 +64,17 @@ end
     start[1] = R[1]
     err(Rs) = maximum(k -> rad2deg(Rotations.rotation_angle(Rotations.RotMatrix{3}(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
     @test err(start) > 0.5
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test err(VgtkCore.estimate(res)) < 0.05                       # the noise floor: 0.5 px at f = 300 px (0.19°/px), ~400 tracks
     @test VgtkCore.estimate(res)[1] ≈ R[1]
+    # the bundle's keywords are Estimation's bundle_loss: an Irls strategy is refused here (one LM), a width beside a stated
+    # constant there, and a width records no scale
+    obs0 = [[k => x for (k, x) in t] for t in ts]
+    @test_throws r"runs one LM" refine_rotations(CAM, start, obs0; kw..., optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 10))
+    @test_throws ArgumentError refine_rotations(CAM, start, obs0; kw...,
+                                                optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0))
+    @test res.metadata.loss_width == 1.5 && isnan(res.metadata.scale) && VgtkCore.scale_source(res) == VgtkCore.ScaleNone
     good = [maximum(norm.(r)) < 5 for r in res.metadata.residuals]
     @test count(good) > 300
     derr = [rad2deg(acos(clamp(dot(res.metadata.directions[j], dirs[j]), -1, 1))) for j in findall(good)]
@@ -129,7 +136,7 @@ end
     tracks = [gaining; others]
     with_extra = [j <= 5 ? [tracks[j]; extra[j]] : tracks[j] for j in eachindex(tracks)]   # the first 5 tracks gain one each
     start = Dict(k => (k == 1 ? R[1] : rot(0.003 .* randn(rng, 3)) * R[k]) for k in 1:K)
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     res = refine_rotations(grid, start, with_extra; kw...)
     ref = refine_rotations(grid, start, tracks; kw...)
     @test res.metadata.outcome === :converged && res.metadata.n_dropped_start == 5
@@ -227,7 +234,7 @@ end
         length(t) >= 2 && push!(tracks, t)
     end
     start = Dict(k => (k == 1 ? R[1] : rot(0.01 .* randn(rng, 3)) * R[k]) for k in 1:K)
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     err(Rs) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
 
     res = refine_rotations(grid, start, tracks; kw...)

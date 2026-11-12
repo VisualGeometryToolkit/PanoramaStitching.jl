@@ -4,6 +4,10 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
+- The rotation bundles take their loss from VisualGeometryToolkitEstimation's `bundle_loss` (the one implementation the
+  stack's bundles share; PanoramaStitching's own copy is gone): its refusals are theirs, so a `width` beside a strategy
+  that states an efficiency constant is an `ArgumentError` (give `Triggs{Shape}()` with a width), and the width is the
+  deployed loss's (`sqrt(sq_loss_width(loss))`). An `Irls` strategy is refused by the bundles (one LM run).
 - The view graph's averaging calls VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` (was
   `filtered_rotation_averaging`, renamed by the stack: a fit verb).
 - The bundles' default `optimization_strategy` is VisualGeometryToolkitEstimation's pixel bundle's, read from its

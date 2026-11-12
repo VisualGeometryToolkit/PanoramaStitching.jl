@@ -72,14 +72,14 @@ end
     @test reg.bundle.retcode === :converged && reg.bundle.iterations < 1000
     # the same bundle with that width given explicitly: one LM run, the same result
     obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
-    direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 1.0), width = 2.5 * pooled,
+    direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 2.5 * pooled,
                               max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
     @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations
     @test direct.iterations == reg.bundle.iterations
     # no pair with a scale: refused; a width that is not positive: refused
     none = VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = NaN, success = false) for p in ps), vp.loma)
     @test_throws ArgumentError register_rotations(none, bcam; bkw...)
-    @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 1.0), width = 0.0,
+    @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 0.0,
                                                 max_iter = 10, ftol = 1.0e-12, xtol = 1.0e-6)
 end
 
@@ -101,7 +101,10 @@ end
     dflt = refine_rotations(bcam, R, ts; kw...)
     c = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2)
     stated = refine_rotations(bcam, R, ts; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = c), kw...)
-    @test dflt.metadata.loss_width == c * 0.4
+    # one loss everywhere: the width is Estimation's bundle_loss of the same keywords (c × scale, deployed), the scale given
+    bl = VgtkEstimation.bundle_loss(PanoramaStitching._DEFAULT_BUNDLE_STRATEGY; scale = 0.4)
+    @test dflt.metadata.loss_width == sqrt(VgtkCore.sq_loss_width(bl.loss)) && dflt.metadata.loss_width ≈ c * 0.4
+    @test VgtkCore.noise_scale(dflt) == 0.4 && VgtkCore.scale_source(dflt) == VgtkCore.ScaleGiven
     @test [VgtkCore.estimate(dflt)[k] for k in 1:3] == [VgtkCore.estimate(stated)[k] for k in 1:3]
     @test dflt.iterations == stated.iterations
 end

@@ -314,8 +314,8 @@ function refine_rotations(camera, rotations::AbstractDict, tracks::AbstractVecto
             "and exactly one of `scale` or `width` (the robust-estimation contract)"))
         throw(ArgumentError("refine_rotations: unknown keyword `$k`"))
     end
-    rb = _rotation_bundle_loss("refine_rotations", optimization_strategy, scale, width)
-    return _rotation_bundle(camera, rotations, tracks, nothing, (); rb..., max_iter, ftol, xtol, eliminate,
+    bundle = VgtkEstimation.bundle_loss(optimization_strategy; scale, width, caller = "refine_rotations")
+    return _rotation_bundle(camera, rotations, tracks, nothing, (); bundle, max_iter, ftol, xtol, eliminate,
                             what = "refine_rotations")
 end
 
@@ -330,31 +330,6 @@ _estimation_strategy(table::AbstractString, key::AbstractString, class::Symbol) 
 # `optimization_strategy` (Triggs{Welsch} stating no efficiency constant: its width is Core's efficiency constant for a 2-D
 # residual, a pixel reprojection error, times the caller's `scale`).
 const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("refine_camera_and_poses", "optimization_strategy", :refine_camera_and_poses)
-
-# The bundle's loss, width and scale record from its strategy and scale input (the robust-estimation contract): a Triggs{K}
-# at exactly one of `scale` (its width the strategy's efficiency constant × σ) or `width`; `nothing` the plain least squares,
-# which takes neither.
-# The efficiency constant a bundle strategy multiplies `scale` by: the one stated on it, or (none stated) Core's
-# `efficiency_constant(K, 2)` for the 2-D pixel residual, as every refine reads it.
-function _bundle_constant(strategy::VgtkCore.Triggs)
-    w = VgtkCore.lo_width(strategy)
-    K = VgtkCore.strategy_loss(strategy)
-    w === nothing && return Float64(VgtkCore.efficiency_constant(K, 2))
-    return Float64(VgtkCore.lo_width_value(w).value)
-end
-function _rotation_bundle_loss(what, strategy, scale, width)
-    if strategy === nothing
-        (scale === nothing && width === nothing) || throw(ArgumentError(
-            "$what: the plain least squares (optimization_strategy = nothing) takes no `scale` or `width`; one given would be ignored"))
-        return (; loss = nothing, width = NaN, scale = NaN, scale_source = VgtkCore.ScaleNone)
-    end
-    strategy isa VgtkCore.Triggs || throw(ArgumentError(
-        "$what: the bundle's strategy is a Triggs{K} (its loss K as NLLSsolver's robustifier at one width) or nothing, " *
-        "got $(nameof(typeof(strategy)))"))
-    input = VgtkCore.scale_input(scale, width)
-    w = isfinite(input.width) ? Float64(input.width) : _bundle_constant(strategy) * Float64(input.scale)
-    return (; loss = VgtkCore.strategy_loss(strategy)(), width = w, scale = Float64(input.scale), scale_source = input.source)
-end
 
 """
     refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
@@ -395,7 +370,7 @@ function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::Ab
             "(every other parameter but the skew is free)"))
         throw(ArgumentError("refine_camera_and_rotations: unknown keyword `$k`"))
     end
-    rb = _rotation_bundle_loss("refine_camera_and_rotations", optimization_strategy, scale, width)
+    bundle = VgtkEstimation.bundle_loss(optimization_strategy; scale, width, caller = "refine_camera_and_rotations")
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
     names = VgtkCore.free_parameter_names(m, fixed)
     isempty(names) && throw(ArgumentError(
@@ -407,7 +382,7 @@ function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::Ab
     (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
         throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
     chc = VgtkCore.restrict(VgtkCore.ParameterManifold(m), names)
-    return _rotation_bundle(camera, rotations, tracks, chc, names; rb..., max_iter, ftol, xtol, eliminate,
+    return _rotation_bundle(camera, rotations, tracks, chc, names; bundle, max_iter, ftol, xtol, eliminate,
                             what = "refine_camera_and_rotations")
 end
 
@@ -417,12 +392,21 @@ struct _NotGiven end
 const _RETIRED_HOLD_KEYWORDS = (:camera_free, :free, :fix, :fixed_params, :hold)
 
 # The one rotation bundle of `refine_rotations` (`chc === nothing`: the camera held) and `refine_camera_and_rotations` (`chc`
-# the camera's chart over its free parameters `free`), `what` the caller named in a message; `loss` the shape (`nothing`: the
-# plain least squares) at `width`, checked, and the scale record `scale`/`scale_source` (`_rotation_bundle_loss`).
+# the camera's chart over its free parameters `free`), `what` the caller named in a message; `bundle` the loss of the
+# robust-estimation contract, VisualGeometryToolkitEstimation's `bundle_loss` of the caller's keywords (its strategy, scale
+# input and deployed loss). Its strategy is a Triggs{K} — the loss K as NLLSsolver's robustifier at the deployed width,
+# `sqrt(sq_loss_width(loss))` as every bundle of the stack — or `nothing` (plain least squares); an Irls{K} is refused: this
+# bundle runs one LM. The scale record is the input's (`scale_source`, and `noise_scale` unless ScaleNone: NaN).
 function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free_names::Tuple{Vararg{Symbol}};
-                          loss::Union{Nothing, VgtkCore.AbstractLossShape}, width::Float64, scale::Float64,
-                          scale_source::VgtkCore.ScaleSource, max_iter::Integer, ftol::Real, xtol::Real,
+                          bundle::NamedTuple, max_iter::Integer, ftol::Real, xtol::Real,
                           eliminate::Bool, what::AbstractString) where {K}
+    bundle.strategy isa VgtkCore.Irls && throw(ArgumentError(
+        "$what: the bundle runs one LM, its strategy a Triggs{K} (its loss K as NLLSsolver's robustifier at one width) or " *
+        "nothing; an Irls{K} reweights"))
+    loss = bundle.strategy === nothing ? nothing : VgtkCore.strategy_loss(bundle.strategy)()
+    width = bundle.loss === nothing ? NaN : sqrt(VgtkCore.sq_loss_width(bundle.loss))
+    scale_source = VgtkCore.scale_source(bundle.input)
+    scale = scale_source == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(bundle.input))
     loss === nothing || isfinite(width) && width > 0 ||
         throw(ArgumentError("$what: the loss width must be positive and finite, got $width"))
     robustifier() = loss === nothing ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width)

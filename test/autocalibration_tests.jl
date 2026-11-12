@@ -47,7 +47,7 @@ end
                                                        lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
     start = Dict(k => (k == 1 ? R[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * R[k]) for k in 1:10)
     free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)                                   # every parameter but the aspect (held) and the skew
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
           xtol = 1.0e-12)
     res = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect,))
     @test res.retcode === :converged
@@ -103,7 +103,7 @@ end
     end
     kw = (; max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     tr = [[1 => SVector(600.0, 600.0), 2 => SVector(500.0, 600.0)]]
-    ac = (; kw..., optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.CauchyShape(), 2)), width = 1.5)
+    ac = (; kw..., optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5)
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., fixed = (:focal,))      # no such parameter
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., fixed = (:f, :f))       # named twice
     @test_throws r"holds every camera parameter" refine_camera_and_rotations(TRUE_CAM, R, tr; ac...,
@@ -148,7 +148,7 @@ end
     ts, _, _ = sweep_tracks(rng, R, 400; outl = 0.05)
     start = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.02 .* randn(rng, 3))...))) * R[k] for k in 1:5)
     start[1] = R[1]
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test res.metadata.camera === CAM && res.metadata.calibration === nothing
     @test res.metadata.loss_width == 1.5 && res.retcode === :converged && 0 < res.iterations < 1000
@@ -163,7 +163,7 @@ end
     cam0 = VgtkCore.BoundedCamera(VgtkCore.CameraModel(282.0VgtkCore.px, SA[600.0VgtkCore.px, 600.0VgtkCore.px];
                                                        lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
     startk = Dict(k => (k == 1 ? Rk[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * Rk[k]) for k in 1:10)
-    rk = refine_rotations(cam0, startk, tracks; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
+    rk = refine_rotations(cam0, startk, tracks; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
                           xtol = 1.0e-12)
     @test (rk.rms, rk.iterations, rk.n) === (13.626810529489516, 435, 3624) && rk.metadata.camera === cam0
     @test sum(sum, values(VgtkCore.estimate(rk))) === 18.480086542920372 && sum(sum, rk.metadata.directions) === 128.27182481038034
