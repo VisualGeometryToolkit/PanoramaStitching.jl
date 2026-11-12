@@ -48,7 +48,8 @@
 on the frames' backend (VisualGeometryToolkitCore's `normal_cg` on the applied
 normal equations), to the relative residual `tolerance` (`‖g − N x‖ ≤
 tolerance·‖g‖`, `g` the right-hand side) within `max_iter` iterations
-(`retcode = :max_iterations` when the budget ends first).
+(its termination `MaxIters` with `IterationCap` when the budget ends first,
+`Success` with `ToleranceMet` otherwise: VisualGeometryToolkitCore's `ReturnCode`).
 """
 struct ConjugateGradient
     tolerance::Float64
@@ -60,7 +61,8 @@ ConjugateGradient(; tolerance::Real, max_iter::Integer) = ConjugateGradient(Floa
     SparseCholesky()
 
 [`fit_vignetting`](@ref)'s solve by a sparse Cholesky factorization (CHOLMOD)
-of the same system, assembled on the host (`retcode = :solved`).
+of the same system, assembled on the host (its termination `Success` with
+`ClosedForm`).
 """
 struct SparseCholesky end
 
@@ -230,7 +232,11 @@ plane's linear solves are 1, or 1 + `iterations` for
 `log_change` (the largest change of the model's log I over the domain's rows
 between the last two solves; 0 for one solve), `n_pixels` (the domain's
 pixels), `n_active` (scene controls with data) and `seconds` (the stages' wall
-times, summed over the solves).
+times, summed over the solves). The fit's termination record is its result's
+(VisualGeometryToolkitCore's `retcode`, a `ReturnCode.T`, and `stop_rule`): the worst
+over every linear solve of every plane fitted (Core's `worst_retcode`) — a Cholesky
+solve `Success` with `ClosedForm`, a CG `Success` with `ToleranceMet` or, at its
+budget, `MaxIters` with `IterationCap`.
 """
 struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityNoise, IntensityAndPositionNoise}, C <: AzimuthalChart}
     chart::C
@@ -247,6 +253,10 @@ struct VignettingMetadata{T <: NamedTuple, W <: Union{IntensityNoise, IntensityA
     n_active::Int
     seconds::T
 end
+# One linear solve's termination: Cholesky closed form; the CG at its relative-residual tolerance, or its iteration budget.
+_cg_termination(converged::Bool) =
+    converged ? (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet) : (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap)
+const _CHOLESKY_TERMINATION = (VgtkCore.ReturnCode.Success, VgtkCore.ClosedForm)
 
 # ----------------------------------------------------------------------------- device helpers
 
@@ -621,10 +631,11 @@ kernels and atomic scatter-add; host arrays, the same kernels on the CPU). The
 Returns a `FitResult` whose estimate is the fitted Core vignetting model
 (isbits: the `vignetting` keyword of [`render_panorama`](@ref),
 [`sample_frames`](@ref) and [`score_seams`](@ref), on the host or a device;
-the given model when V is held fixed), `retcode` `:converged` or
-`:max_iterations` (a CG that ended at its budget: the last solve of any plane
-solved, the other planes' of [`ChannelGains`](@ref) included) or `:solved`
-(Cholesky), `iterations` the CG's summed over every solve of every plane (0 for
+the given model when V is held fixed), its termination record
+(VisualGeometryToolkitCore's `retcode`, a `ReturnCode.T`, and `stop_rule`; `converged(result)`
+its success) the worst over every linear solve of every plane, the other planes' of
+[`ChannelGains`](@ref) included (Core's `worst_retcode`: a CG that ended at its
+budget in any solve is `MaxIters`), `iterations` the CG's summed over every solve of every plane (0 for
 Cholesky),
 `rms` the rms of the log residual over `n` rows weighted by the last solve's
 weights, and
@@ -639,21 +650,21 @@ function fit_vignetting(vignetting, camera::VgtkCore.BoundedCamera, frames::Abst
         # each other plane's gains under the fitted V (held fixed: its log V(u) the fixed numbers), its own scene, into its
         # column of the K × C gains (the fit's own plane's in every column until then)
         held = merge(NamedTuple(kw), (; free_directions = zeros(0, 0)))
-        retcode = VgtkCore.retcode(r); iters = r.iterations
+        term = (VgtkCore.retcode(r), VgtkCore.stop_rule(r)); iters = r.iterations
         for c in axes(r.metadata.gains, 2)
             c == plane && continue
-            g, rc, it = _fit_plane(VgtkCore.estimate(r), camera, frames, rotations; gains = true, plane = c, gains_only = true,
-                                   held...)::Tuple{Vector{Float64}, Symbol, Int}
+            g, tc, it = _fit_plane(VgtkCore.estimate(r), camera, frames, rotations; gains = true, plane = c, gains_only = true,
+                                   held...)::Tuple{Vector{Float64}, Tuple{VgtkCore.ReturnCode.T, VgtkCore.StopRule}, Int}
             r.metadata.gains[:, c] .= g; iters += it
-            rc === :max_iterations && (retcode = rc)                      # an unconverged plane's gains are not hidden
+            term = VgtkCore.worst_retcode(term, tc)                        # an unconverged plane's gains are not hidden
         end
-        return VgtkCore.FitResult(VgtkCore.estimate(r), retcode, iters, r.rms, r.n, r.metadata)
+        return VgtkCore.FitResult(VgtkCore.estimate(r), term..., iters, r.rms, r.n, r.metadata)
     end
     return r
 end
 
 # One plane's fit (`fit_vignetting`'s system), its gains in every column of the K × C metadata gains (`gains`: K − 1 free,
-# g₁ = 1; else all 1). `gains_only`: the K gains, the last solve's retcode and the CG iterations alone, without the residuals'
+# g₁ = 1; else all 1). `gains_only`: the K gains, the worst termination of its solves and the CG iterations alone, without the residuals'
 # statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
                     free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, frame_map,
@@ -745,7 +756,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     end
     VgtkCore.pointwise!(_LogV(v), LV, upix, rays; exec)
     fits_v || all(isfinite, Array(LV)) || throw(ArgumentError("fit_vignetting: the given V is not positive at every domain pixel"))
-    xh = Float64[]; cL = Float64[]; active = falses(nL); rel = NaN; retcode = :solved
+    xh = Float64[]; cL = Float64[]; active = falses(nL); rel = NaN; term = _CHOLESKY_TERMINATION
     iters = 0; change = 0.0
     nsolves = position_noise ? 1 + measurement_noise.iterations : 1
     Σx = position_noise ? _noise_covariance(measurement_noise) : nothing
@@ -816,14 +827,15 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             # Core's conjugate gradients on the applied normal operator (Jacobi, cgls's stopping rule ‖g − N x‖ ≤ tolerance·‖g‖)
             sol = VgtkCore.normal_cg(N, rhs; diagonal, x0, rtol = solver.tolerance, max_iter = solver.max_iter)
             x = sol.x; rel = sol.relres; iters += sol.iterations
-            retcode = sol.converged ? :converged : :max_iterations
+            t = _cg_termination(sol.converged)
+            term = it == 1 ? t : VgtkCore.worst_retcode(term, t)            # every solve's, not the last one's alone
         else
             xh = _cholesky_solve(Array(S), Pen, Array(BVz), AVVz, Array(rhs), ch.n)
             x = xh
             # its relative residual through the same operator as the CG arm's, on the fit's backend
             Nx = LinearAlgebra.mul!(similar(rhs), _NormalOperator(be, S, Pen, BVz, AVVz, ch.n), VgtkCore.ka_upload(Float64, be, xh))
             rel = norm(Array(Nx) .- Array(rhs)) / norm(Array(rhs))
-            retcode = :solved
+            term = it == 1 ? _CHOLESKY_TERMINATION : VgtkCore.worst_retcode(term, _CHOLESKY_TERMINATION)
         end
         seconds[:solve] += _elapsed(be, t0)
         xh = Array(x)
@@ -847,13 +859,13 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             KA.synchronize(be)
             it > 1 && (change = max(change, maximum(abs, Array(LMs[k]) .- old)))
         end
-        @debug "fit_vignetting: solve $it, $retcode; the model's log I moved by $change at most"
+        @debug "fit_vignetting: solve $it, $(term[1]) ($(term[2])) so far; the model's log I moved by $change at most"
         it == nsolves && break
         models = [_LogIntensityModel(v, ch, cLm, Rs[k], lg[k]) for k in 1:K]
         weight_of = k -> _IntensityAndPositionWeight(models[k], upix, rays, rayJ, Σx)
     end
     log_gains = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG))
-    gains_only && return exp.(log_gains), retcode, iters
+    gains_only && return exp.(log_gains), term, iters
     cLd = VgtkCore.ka_upload(Float64, be, reshape(cL, ch.n, ch.n))
 
     # the residuals
@@ -873,7 +885,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), StatsBase.mad(Float64.(R_all); normalize = true),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               measurement_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
-    return VgtkCore.FitResult(v, retcode, iters, sqrt(swr / sw), length(R_all), meta)
+    return VgtkCore.FitResult(v, term..., iters, sqrt(swr / sw), length(R_all), meta)
 end
 
 const _STAGES = (:backproject, :chart, :accumulate, :vignetting_block, :penalty, :solve, :residuals, :total)

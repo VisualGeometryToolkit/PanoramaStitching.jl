@@ -41,7 +41,7 @@ its rotation angle in degrees), `averaging` (the averaging fitted on `graph`,
 VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging`: the edges' covariances carry the scale, so it records scale 1,
 `ScaleUpstream`; the edges sharing a keypoint are treated as independent, the first-order approximation), `tracks` (of the kept pairs, as `(frame, keypoint)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
-metadata's `outcome` and `n_dropped_start` say how the bundle ended and how many
+its `retcode`/`stop_rule` (Core's termination record) and its metadata's `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `bundle_sigma` (the
 pooled noise scale σ̂ of the kept pairs, px, the bundle's `scale`), `features` (the
 frames' [`FrameFeatures`](@ref)) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
@@ -391,7 +391,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; a
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; optimization_strategy = bundle_optimization_strategy, scale = σ,
                               max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, $(bundle.iterations) iterations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
-        "$(bundle.retcode), outcome $(bundle.metadata.outcome) ($(bundle.metadata.n_dropped_start) observations dropped at the start: not imaged there)")
+        "$(VgtkCore.retcode(bundle)) ($(VgtkCore.stop_rule(bundle))), $(bundle.metadata.n_dropped_start) observations dropped at the start (not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
     return Registration(Rs, graph, removed, no_covariance, vp.stats, avg, ts, dropped, bundle, σ, feats, vp.loma)
 end

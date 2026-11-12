@@ -36,7 +36,7 @@
         err(Rs) = sqrt(mean(k -> rad2deg(Rotations.rotation_angle(Rotations.RotMatrix{3}(SMatrix{3, 3}(Rs[k])' * R[k])))^2, 2:K))
         plain = refine_rotations(CAM, start, [[k => VgtkCore.geom(x) for (k, x) in t] for t in tracks]; kw...)
         white = refine_rotations(CAM, start, tracks; kw...)
-        @test plain.metadata.outcome === :converged && white.metadata.outcome === :converged
+        @test VgtkCore.converged(plain) && VgtkCore.converged(white)
         push!(eu, err(VgtkCore.estimate(plain))); push!(ew, err(VgtkCore.estimate(white)))
         # the residuals the metadata reports are pixels in both; the whitened loss width is in units of the covariances'
         @test length(white.metadata.residuals) == length(tracks)

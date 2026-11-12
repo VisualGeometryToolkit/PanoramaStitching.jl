@@ -69,7 +69,7 @@ end
     @test reg.bundle.metadata.loss_width ≈ 2.5 * pooled
     # the scale record of the robust-estimation contract: the pooled scale, given
     @test VgtkCore.noise_scale(reg.bundle) == reg.bundle_sigma && VgtkCore.scale_source(reg.bundle) == VgtkCore.ScaleGiven
-    @test reg.bundle.retcode === :converged && reg.bundle.iterations < 1000
+    @test VgtkCore.converged(reg.bundle) && reg.bundle.iterations < 1000
     # the same bundle with that width given explicitly: one LM run, the same result
     obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
     direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 2.5 * pooled,

@@ -194,7 +194,9 @@ end
 # v10: the robust-estimation contract: the averaging's and the bundle's strategies are tables (averaging_optimization_strategy,
 # bundle_optimization_strategy, read by Estimation's reader), the record holds the bundle's strategy and its scale
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v10 (the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+# v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
+# PanoramaStitching's outcome Symbol (bundle_outcome retired).
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v11 (the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -329,10 +331,11 @@ function registration(C, inp, lens; log)
                           "averaging_scale_source" => string(VgtkCore.scale_source(reg.averaging)),
                           "cycle_tol_deg" => Float64(r["cycle_tol_deg"]), "orientation_tol_deg" => Float64(r["orientation_tol_deg"]),
                           "bundle_rms_px" => reg.bundle.rms, "seconds" => vp.seconds + time() - t0,
-                          # the bundle's outcome (RotationBundleMetadata): converged, not_run, or another retcode; the observations it
+                          # the bundle's termination record (Core's ReturnCode and StopRule, and the legacy retcode Symbol); the observations it
                           # dropped at its start (a start prediction off the camera model's valid domain); the frames it held at their
                           # start rotation (left with no kept observation: their 0-based indices)
-                          "bundle_retcode" => string(reg.bundle.retcode), "bundle_outcome" => string(reg.bundle.metadata.outcome),
+                          "bundle_retcode" => string(VgtkCore.retcode_symbol(reg.bundle)), "bundle_return_code" => string(VgtkCore.retcode(reg.bundle)),
+                          "bundle_stop_rule" => string(VgtkCore.stop_rule(reg.bundle)),
                           "bundle_dropped_start" => reg.bundle.metadata.n_dropped_start,
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                           # the bundle's robust loss width (camera px), its strategy and its scale (the residual core scale, the
@@ -352,7 +355,7 @@ function registration(C, inp, lens; log)
             pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], pairs_no_covariance = rec["pairs_no_covariance"],
             bundle_rms_px = rec["bundle_rms_px"],
             bundle_sigma_px = rec["bundle_sigma_px"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
-            bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
+            bundle_retcode = rec["bundle_retcode"], bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
             loma = rec["loma"], point_scale_px = get(rec, "bundle_scale_px", nothing), record = file)
 end
@@ -646,7 +649,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                     "covariance, not averaged$(isempty(reg.pairs_no_covariance) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_no_covariance], ", "))" *
                     "; $(length(reg.pairs_removed)) removed by the view-graph filters" *
                     "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
-                    "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
+                    "bundle termination $(reg.bundle_return_code) ($(reg.bundle_stop_rule); retcode $(reg.bundle_retcode)), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
                     "rotation: no observation kept).")
         lm = reg.loma["descriptor"]

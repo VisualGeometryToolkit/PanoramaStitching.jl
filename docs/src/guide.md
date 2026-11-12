@@ -92,7 +92,7 @@ import VisualGeometryToolkitCore as VgtkCore
 reg.pairs[(1, 2)]               # matches, inliers, rms_px (the inliers' rms Sampson distance) and rotation_deg
 length(reg.tracks), reg.dropped # the tracks, and the inconsistent ones dropped
 reg.bundle.rms                  # the bundle's rms reprojection error, pixels
-reg.bundle.metadata.outcome     # how the bundle ended (RotationBundleMetadata)
+VgtkCore.retcode(reg.bundle)     # how the bundle ended: Core's ReturnCode (and stop_rule, the rule that fired)
 ```
 
 On the example's sweep the rotations come back well within 0.05° and the bundle's rms is below a pixel.

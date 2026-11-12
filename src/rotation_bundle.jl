@@ -193,12 +193,7 @@ corners from a start a fraction of a degree off, the Tamron 20 mm of
 2026-10-29 — and the rest of a track left in fewer than two frames; a
 dropped observation's residual is NaN, and a track left out keeps its start
 direction), `frames_unconstrained` (the frames other than the gauge left with
-no kept observation: each is held at its start rotation), `outcome`, the
-bundle's outcome:
-
-- `:not_run` — `max_iter = 0` (the start's rotations are the result);
-- `:converged` — the retcode is `:converged`;
-- otherwise the retcode itself (`:max_iterations`, `:stalled`, `:solve_failed`, …);
+no kept observation: each is held at its start rotation),
 
 `camera` (the camera at the result: the one given by `refine_rotations`, which
 holds it, else the refined one, of the given camera's type and, for a
@@ -234,7 +229,6 @@ struct RotationBundleMetadata{K, C, I}
     n_observations::Int
     n_dropped_start::Int
     frames_unconstrained::Vector{K}
-    outcome::Symbol
     camera::C
     calibration::I
 end
@@ -293,9 +287,11 @@ result's `n` is the number of observations kept; its metadata's
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
   together. Both reach the same optimum.
 
-A refine ends in the local minimum its start leads to; the result's `retcode`
-and its metadata's `outcome` ([`RotationBundleMetadata`](@ref)) say how the
-bundle ended. A track observed in fewer than two frames, or naming a frame
+A refine ends in the local minimum its start leads to; the result's termination
+record (Core's `retcode` and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `converged(result)` its success) says how
+the bundle ended: NLLSsolver's stop, a step-size or rejection stop `Success` only where the robust cost is stationary at the
+result (Core's `is_stationary` at Estimation's `[chart_lm] stationarity_tol`), `Stalled` otherwise; `max_iter = 0` (no
+solve: the start's rotations are the result) `MaxIters` with `IterationCap`. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
 without, a covariance that is not finite and positive definite, and a start
 that keeps no observation (every track left in fewer than two imaged frames)
@@ -330,6 +326,9 @@ _estimation_strategy(table::AbstractString, key::AbstractString, class::Symbol) 
 # `optimization_strategy` (Triggs{Welsch} stating no efficiency constant: its width is Core's efficiency constant for a 2-D
 # residual, a pixel reprojection error, times the caller's `scale`).
 const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("refine_camera_and_poses", "optimization_strategy", :refine_camera_and_poses)
+# The bundles' stall postcondition (Core's `is_stationary`): Estimation's chart-LM tolerance of record, [chart_lm]
+# `stationarity_tol`, shared by every LM of the stack.
+const _STATIONARITY_TOL = Float64(VgtkCore.toml_default(_ESTIMATION_DEFAULTS, "chart_lm", "stationarity_tol"))
 
 """
     refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
@@ -492,19 +491,32 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         result = NLLSsolver.optimize!(problem, VgtkCore.nlls_options(; max_iter, ftol, xtol), unfixed)
         vars = problem.variables
     end
-    code = result === nothing ? :max_iterations : VgtkCore.lm_retcode(VgtkCore.nlls_stop_code(result.termination))   # NLLSsolver's stop, decoded (no stall test here)
+    # The termination record (§14): NLLSsolver's stop as Core's ReturnCode and StopRule, a step-size or rejection stop a
+    # success only where the stall postcondition holds at the returned point — the robust cost's stationarity, Σ ρ′ Jᵀr = 0:
+    # each kept observation's rows and Jacobian scaled by √ρ′ (ρ′ its loss weight; 1 for the plain least squares), the held
+    # variables' columns (the gauge frame, the tracks left out, the unconstrained frames) left out. `max_iter = 0` runs no
+    # solve: the iteration cap.
+    function stationary()
+        kernel = robustifier()
+        blocks = [observation(nothing, j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]]
+        r, J = VgtkCore.nlls_rows_and_jacobian(blocks, vars)
+        s = repeat([sqrt(NLLSsolver.robustifydcost(kernel, r[2k - 1]^2 + r[2k]^2)[2]) for k in eachindex(blocks)]; inner = 2)
+        offsets = cumsum([0; [Int(dynamic(NLLSsolver.nvars(v))) for v in vars]])
+        solved_columns = reduce(vcat, [collect((offsets[v] + 1):offsets[v + 1]) for v in eachindex(vars) if unfixed[v]]; init = Int[])
+        return VgtkCore.is_stationary((LinearAlgebra.Diagonal(s) * J)[:, solved_columns], s .* r; tol = _STATIONARITY_TOL, ftol)
+    end
+    rc, rule = result === nothing ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : VgtkCore.nlls_termination(result, stationary)
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]
     rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
-    outcome = max_iter == 0 ? :not_run : code
     niter = result === nothing ? 0 : result.niterations
     cam_out = chc === nothing ? camera : _with_camera_model(camera, VgtkCore.model(vars[ic]))
     calib = chc === nothing ? nothing :
         _autocalibration(vars[ic], free_names, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
                           (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : robustifier(), j, i, o),
                           vars, fid, nf, unconstrained)
-    return VgtkCore.FitResult(out, code, niter, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
-                              RotationBundleMetadata(dirs, rn, width, scale, scale_source, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
+    return VgtkCore.FitResult(out, rc, rule, niter, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
+                              RotationBundleMetadata(dirs, rn, width, scale, scale_source, nobs, nobs - nkept, unconstrained, cam_out, calib))
 end
 
 _with_camera_model(camera::VgtkCore.BoundedCamera, m) = VgtkCore.with_model(camera, m)

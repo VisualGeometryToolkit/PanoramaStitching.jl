@@ -321,14 +321,14 @@ end
     @test [f.pixels for f in a.features] == [f.pixels for f in b.features]
     edge(p) = min(p[1], p[2], 1000 - p[1], 1000 - p[2])
     @test any(f -> any(p -> edge(p) < 30.0, f.pixels), b.features)                 # kept within the margin of the sensor's edge
-    @test b.bundle.metadata.outcome === :converged && b.bundle.metadata.n_dropped_start == 0
+    @test VgtkCore.converged(b.bundle) && b.bundle.metadata.n_dropped_start == 0
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(b.rotations[k])' * q.R[k]))), 1:3) < 0.05
     # 0.5.1's bundle: the same tracks and start through the bare model (this lens's projection is defined everywhere, so
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
     obs = [[k => b.features[k].pixels[kp] for (k, kp) in t] for t in b.tracks]
     ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; merge(bkw, (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}()))..., width = b.bundle.metadata.loss_width)
-    @test ref.metadata.outcome === :converged
+    @test VgtkCore.converged(ref)
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
 end
 

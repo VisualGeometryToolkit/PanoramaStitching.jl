@@ -73,7 +73,8 @@ end
     ch = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, saturated = q.saturated, solver = SparseCholesky(), kw...)
     e_cg = error_vs(VgtkCore.estimate(cg), radial, q); e_ch = error_vs(VgtkCore.estimate(ch), radial, q)
     @info "fit_vignetting radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.iterations) CG iterations, rms $(cg.rms)"
-    @test VgtkCore.retcode(cg) === :converged && VgtkCore.retcode(ch) === :solved
+    @test VgtkCore.converged(cg) && VgtkCore.stop_rule(cg) == VgtkCore.ToleranceMet && VgtkCore.retcode_symbol(cg) === :converged
+    @test VgtkCore.converged(ch) && VgtkCore.stop_rule(ch) == VgtkCore.ClosedForm && VgtkCore.retcode_symbol(ch) === :solved
     @test cg.metadata.log_change == 0 && cg.metadata.measurement_noise === PanoramaStitching.IntensityNoise()
     @test e_cg[1] < 2.0e-3 && e_ch[1] < 2.0e-3
     @test maximum(abs.(control_points(VgtkCore.estimate(cg)) .- control_points(VgtkCore.estimate(ch)))) < 1.0e-5
@@ -133,7 +134,7 @@ end
         h = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, kw...)
         df, ds = CuArray.(q.frames), CuArray.(q.saturated)
         d = fit_vignetting(v0, q.camera, df, q.R; saturated = ds, kw...)
-        @test VgtkCore.retcode(d) === :converged
+        @test VgtkCore.converged(d)
         # the atomic sums run in another order on each backend (and from run to run): V agrees to the solve's precision
         @test maximum(abs.(control_points(VgtkCore.estimate(d)) .- control_points(VgtkCore.estimate(h)))) < 1.0e-6
         @test abs(d.rms - h.rms) < 1.0e-8
@@ -195,7 +196,7 @@ end
     G = with.metadata.gains; gw = G[:, 2]
     @test size(G) == (6, 3) && G[:, 1] == G[:, 2] == G[:, 3]          # IntensityGains: one per frame, every plane
     @info "frame gains: recovered $(round.(gw; digits = 5)) (true $g); V error with $(v_error(VgtkCore.estimate(with))), without $(v_error(VgtkCore.estimate(without)))"
-    @test VgtkCore.retcode(with) === :converged
+    @test VgtkCore.converged(with)
     @test gw[1] === 1.0 && length(gw) == length(g)                    # the gauge: the first frame's gain is 1 exactly
     @test maximum(abs.(gw ./ g .- 1)) < 1.0e-3
     @test maximum(abs.(chol.metadata.gains .- G)) < 1.0e-5            # CG and Cholesky solve the same system
@@ -218,6 +219,17 @@ end
                          measurement_noise = sw, kw...)
     @test sam.metadata.measurement_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
+    # the termination is every solve's (Core's worst_retcode), not the last one's: the cold first solve capped by the CG
+    # budget, the warm-started reweighted solves after it within it — the fit is MaxIters (its legacy Symbol :max_iterations)
+    cg(n) = ConjugateGradient(; tolerance = 1.0e-10, max_iter = n)
+    single = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), (; kw..., solver = cg(100_000))...)
+    @test VgtkCore.converged(single) && VgtkCore.stop_rule(single) == VgtkCore.ToleranceMet
+    budget = single.iterations ÷ 2                           # the cold solve capped well short (its CG count varies by an iteration or so: threaded scatter-adds)
+    capped = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(),
+                            (; kw..., solver = cg(budget), measurement_noise = sw)...)
+    @test capped.iterations < 3 * budget                     # a later solve met the tolerance within the budget
+    @test VgtkCore.retcode(capped) == VgtkCore.ReturnCode.MaxIters && VgtkCore.stop_rule(capped) == VgtkCore.IterationCap
+    @test VgtkCore.retcode_symbol(capped) === :max_iterations && !VgtkCore.converged(capped)
     sf = fit_vignetting(VgtkCore.estimate(with), q.camera, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                         gain_correction = IntensityGains(), solver = SparseCholesky(),
                         measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)), kw...)
@@ -329,7 +341,7 @@ end
     # an other plane's unconverged solve is not hidden: its CG budget's end is the result's retcode, its iterations summed
     short = (; kw..., solver = ConjugateGradient(; tolerance = 1.0e-14, max_iter = 3))
     rc = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), short...)
-    @test VgtkCore.retcode(rc) === :max_iterations && rc.iterations == 3 * 3
+    @test VgtkCore.retcode(rc) == VgtkCore.ReturnCode.MaxIters && VgtkCore.stop_rule(rc) == VgtkCore.IterationCap && rc.iterations == 3 * 3
     # a V held fixed that is not positive somewhere in the domain is refused by name (not Base's DomainError of the log)
     dark(u, f) = u[1] < 100 ? -0.5 : truth(u, f)
     @test_throws ArgumentError fit_vignetting(dark, q.camera, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = IntensityGains(), kw...)

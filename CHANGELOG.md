@@ -4,6 +4,16 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
+- The termination record (the contract's §14): `RotationBundleMetadata`'s `outcome` is gone; the bundles' and
+  `fit_vignetting`'s results carry VisualGeometryToolkitCore's termination record (the `FitResult`'s `ReturnCode.T` and
+  `StopRule`, read by `retcode`/`stop_rule`; the legacy Symbol `retcode_symbol(result)`). NLLSsolver's step-size or rejection stop is `Success` only where the robust cost is stationary
+  at the result (Core's `is_stationary` at Estimation's `[chart_lm] stationarity_tol`), `Stalled` (retcode `:stalled`)
+  otherwise (`:stalled`), where it read `:converged` before; `max_iter = 0` (was outcome `:not_run`) is `MaxIters` with `IterationCap`.
+  `fit_vignetting` records the worst termination over every linear solve of every plane (Core's `worst_retcode`) instead
+  of the last solve's: a CG capped in an earlier reweighted solve now reads `MaxIters` (`:max_iterations`). A pair's
+  RANSAC, and its SIMFIT++ refits, are kept when they found a model (Core's `found_model`), Core's `converged` being
+  strict now. The example's rotations.json is format v11 (`bundle_return_code`, `bundle_stop_rule`; `bundle_outcome`
+  retired).
 - The rotation bundles take their loss from VisualGeometryToolkitEstimation's `bundle_loss` (the one implementation the
   stack's bundles share; PanoramaStitching's own copy is gone): its refusals are theirs, so a `width` beside a strategy
   that states an efficiency constant is an `ArgumentError` (give `Triggs{Shape}()` with a width), and the width is the

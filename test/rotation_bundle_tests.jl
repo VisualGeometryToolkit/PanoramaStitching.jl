@@ -75,6 +75,13 @@ end
     @test_throws ArgumentError refine_rotations(CAM, start, obs0; kw...,
                                                 optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0))
     @test res.metadata.loss_width == 1.5 && isnan(res.metadata.scale) && VgtkCore.scale_source(res) == VgtkCore.ScaleNone
+    # the termination record (§14): a step-size stop where the robust cost is not stationary is a stall, not a convergence.
+    # One step from the start (an xtol above any step) stops by the step size short of the minimum; the full run's stop
+    # holds the postcondition.
+    stopped = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., xtol = 1.0e3)
+    @test VgtkCore.stop_rule(stopped) == VgtkCore.IncrementSize && stopped.iterations == 1
+    @test VgtkCore.retcode(stopped) == VgtkCore.ReturnCode.Stalled && VgtkCore.retcode_symbol(stopped) === :stalled && !VgtkCore.converged(stopped)
+    @test VgtkCore.converged(res) && VgtkCore.retcode(res) == VgtkCore.ReturnCode.Success
     good = [maximum(norm.(r)) < 5 for r in res.metadata.residuals]
     @test count(good) > 300
     derr = [rad2deg(acos(clamp(dot(res.metadata.directions[j], dirs[j]), -1, 1))) for j in findall(good)]
@@ -139,8 +146,8 @@ end
     kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
     res = refine_rotations(grid, start, with_extra; kw...)
     ref = refine_rotations(grid, start, tracks; kw...)
-    @test res.metadata.outcome === :converged && res.metadata.n_dropped_start == 5
-    @test ref.metadata.outcome === :converged && ref.metadata.n_dropped_start == 0
+    @test VgtkCore.converged(res) && res.metadata.n_dropped_start == 5
+    @test VgtkCore.converged(ref) && ref.metadata.n_dropped_start == 0
     @test all(j -> isnan(res.metadata.residuals[j][end]), 1:5)                         # a dropped observation has no residual
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:K) < 0.05
@@ -181,7 +188,7 @@ end
     end
     @test length(twice) == 2
     res2 = refine_rotations(grid, start, [tracks; twice]; kw...)
-    @test res2.metadata.outcome === :converged && res2.metadata.n_dropped_start == sum(length, twice)
+    @test VgtkCore.converged(res2) && res2.metadata.n_dropped_start == sum(length, twice)
     @test all(j -> res2.metadata.directions[length(tracks) + j] ≈ mean_bearing(twice[j]), eachindex(twice))
     @test all(j -> all(isnan, res2.metadata.residuals[length(tracks) + j]), eachindex(twice))
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res2)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
@@ -190,7 +197,7 @@ end
     # whose start prediction there is off the lattice
     start5 = merge(start, Dict(5 => rot(SVector(0.0, π / 2, 0.0)) * start[4]))
     res5 = refine_rotations(grid, start5, [tracks; [[first(tracks[6]), 5 => SVector(500.0, 400.0)]]]; kw...)
-    @test res5.metadata.outcome === :converged && res5.metadata.frames_unconstrained == [5]
+    @test VgtkCore.converged(res5) && res5.metadata.frames_unconstrained == [5]
     @test SMatrix{3, 3}(VgtkCore.estimate(res5)[5]) == start5[5]
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res5)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
     # every track a pair whose second observation is not imaged at the start: nothing is left to solve
@@ -199,14 +206,14 @@ end
     @test_throws ArgumentError refine_rotations(grid, start, lone; kw...)
 end
 
-# The bundle's outcome: the Tamron 20 mm sequence's mechanism on a synthetic sequence — a rectilinear grid lens calibrated over
+# How the bundle ends: the Tamron 20 mm sequence's mechanism on a synthetic sequence — a rectilinear grid lens calibrated over
 # the sensor (a SplineLens camera, its forward spline over the same region), observations up to the frame's border, a start
 # ~0.6° off (an averaging's rotations). A start prediction near the border falls outside the grid's domain, where the grid
 # has no back-projection Jacobian; until plan 2 that made the whole start non-finite and NLLSsolver stopped at once
 # ("nonfinite_start", the rotations the start's). Now those observations are dropped and counted, and the bundle converges.
 # Controls: the same data and start through the parametric camera converge with none dropped, as does the grid from the true
-# rotations, and no iteration is "not_run".
-@testitem "refine_rotations' outcome: a grid lens's border observations from an imperfect start converge (their misses dropped)" begin
+# rotations; a run with no iteration (max_iter = 0) reads the iteration cap.
+@testitem "refine_rotations' termination: a grid lens's border observations from an imperfect start converge (their misses dropped)" begin
     using Test, Random, LinearAlgebra, StaticArrays
     import NLLSsolver, PanoramaStitching
     using PanoramaStitching: refine_rotations
@@ -239,15 +246,15 @@ end
 
     res = refine_rotations(grid, start, tracks; kw...)
     @info "the grid from an imperfect start: $(res.metadata.n_dropped_start) of $(res.metadata.n_observations) observations dropped"
-    @test res.metadata.outcome === :converged && res.metadata.n_dropped_start > 0 && err(VgtkCore.estimate(res)) < 0.05
+    @test VgtkCore.converged(res) && res.metadata.n_dropped_start > 0 && err(VgtkCore.estimate(res)) < 0.05
     resp = refine_rotations(pinhole, start, tracks; kw...)
-    @test resp.metadata.outcome === :converged && resp.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(resp)) < 0.05
+    @test VgtkCore.converged(resp) && resp.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(resp)) < 0.05
     # The grid from the TRUE rotations (a finite start) converges. Until 2026-11-04 it never returned: the grid's forward map
     # (then a separate spline) extrapolated past the grid's imaged region, so an iterate there had a finite residual but a NaN Jacobian, NLLSsolver
     # accepted it and its Levenberg–Marquardt trial loop spun on the NaN system. The residual is now NaN off the imaged region
     # too (`_project`): such a step is a rejected one.
     rest = refine_rotations(grid, R, tracks; kw...)
-    @test rest.metadata.outcome === :converged && rest.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(rest)) < 0.05
+    @test VgtkCore.converged(rest) && rest.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(rest)) < 0.05
     # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
     fwd = sp
     bc = PanoramaStitching._BundleCamera(grid)
@@ -256,5 +263,6 @@ end
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
     @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
     @test all(isnan, sp(SVector(0.9, 0.0, 0.3)))                      # (the forward spline is NaN off its fitted chart too)
-    @test refine_rotations(pinhole, start, tracks; kw..., max_iter = 0).metadata.outcome === :not_run
+    unrun = refine_rotations(pinhole, start, tracks; kw..., max_iter = 0)   # no solve: the iteration cap, the start returned
+    @test VgtkCore.retcode(unrun) == VgtkCore.ReturnCode.MaxIters && VgtkCore.stop_rule(unrun) == VgtkCore.IterationCap && unrun.iterations == 0
 end

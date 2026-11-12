@@ -50,7 +50,7 @@ end
     kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
           xtol = 1.0e-12)
     res = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect,))
-    @test res.retcode === :converged
+    @test VgtkCore.converged(res)
     # the same bundle as the camera_free keyword it replaces: PanoramaStitching ce2ce59's `refine_rotations(…; camera_free =
     # free, optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 1.0), width = 1.5)` on this scene, bit for bit
     @test (res.rms, res.iterations, res.n) === (9.778781600849967e-14, 11, 3624)
@@ -151,7 +151,7 @@ end
     kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test res.metadata.camera === CAM && res.metadata.calibration === nothing
-    @test res.metadata.loss_width == 1.5 && res.retcode === :converged && 0 < res.iterations < 1000
+    @test res.metadata.loss_width == 1.5 && VgtkCore.converged(res) && 0 < res.iterations < 1000
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:5) < 0.05
     # the rotation-only split leaves the held bundle's numbers as they were (PanoramaStitching ce2ce59, bit for bit)
     @test (res.rms, res.iterations, res.n) === (109.24885291344255, 19, 1489)
