@@ -40,7 +40,7 @@
             verified[(i, j)] = (rotation = Rij, inliers = length(m), covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6)); matches[(i, j)] = m
             stats[(i, j)] = (matches = length(m), inliers = length(m), rms = 0.3, rotation_deg = 0.0)
         end
-        return VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = 0.3, success = true) for p in keys(verified)),
+        return VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = 0.3, dof = 2 * verified[p].inliers - 3) for p in keys(verified)),
                              (; descriptor = (;), matcher = (;))), R
     end
     vp, R = aliased_pairs()

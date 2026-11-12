@@ -1,10 +1,10 @@
 # =============================================================================
-# The bundle's scale: each verified pair's noise scale by SIMFIT++ (VisualGeometryToolkitEstimation's `simfitpp_loss_width`, after
-# its RANSAC, on held-out splits), pooled over the kept pairs into one σ̂ (inlier-count weighted variance), the bundle's
-# robust width the bundle strategy's efficiency constant × σ̂, fixed for its one LM run (its `scale = σ̂`).
+# The bundle's scale: each verified pair's RANSAC scorer's own ŝ (no second estimate), pooled over the kept pairs by
+# VisualGeometryToolkitEstimation's `pooled_noise_scale` (degrees-of-freedom weighted variance, ScaleUpstream), the bundle's
+# robust width the bundle strategy's efficiency constant × σ̂, fixed for its one LM run.
 # =============================================================================
 
-@testitem "_pair_scale: SIMFIT++ recovers a rotation pair's pixel noise σ" setup = [SweepScene, BayerMaps] begin
+@testitem "a pair's scale is its RANSAC scorer's own ŝ: it recovers the pixel noise σ" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
     using PanoramaStitching: PanoramaStitching
     import VisualGeometryToolkitFeatures as VgtkFeatures
@@ -28,10 +28,10 @@
         lo = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
         res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
                                            scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization_strategy = lo)
-        s = PanoramaStitching._pair_scale(cs, res, lo, MersenneTwister(2))
-        @info "SIMFIT++ on a synthetic pair: true σ $σ px, estimated $(round(s.sigma; digits = 3)) px, success $(s.success)"
-        @test s.success
-        @test isapprox(s.sigma, σ; rtol = 0.15)
+        s = VgtkCore.noise_scale(res)                              # the scorer's own scale: no second estimate
+        @info "a synthetic pair's RANSAC ŝ: true σ $σ px, ŝ $(round(s; digits = 3)) px ($(res.dof) dof)"
+        @test VgtkCore.scale_source(res) != VgtkCore.ScaleNone && res.dof > 0
+        @test isapprox(s, σ; rtol = 0.2)
     end
 end
 
@@ -58,18 +58,18 @@ end
         stats[(i, j)] = (matches = length(common), inliers = length(common), rms = 0.4, rotation_deg = 0.0)
     end
     ps = sort(collect(keys(verified)))
-    # per pair a scale: 0.3 px, but 0.6 px on the first pair and a failed estimate on the last (not pooled)
-    scales = Dict(p => (sigma = p == ps[1] ? 0.6 : 0.3, success = p != ps[end]) for p in ps)
+    # per pair a scale and its degrees of freedom: 0.3 px, but 0.6 px on the first pair and none recorded on the last (not pooled)
+    scales = Dict(p => (sigma = p == ps[end] ? NaN : p == ps[1] ? 0.6 : 0.3, dof = 2 * verified[p].inliers - 3) for p in ps)
     vp = VerifiedPairs(feats, verified, matches, stats, scales, (; descriptor = (;), matcher = (;)))
-    pooled = (n = [verified[p].inliers for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
-              sqrt(sum(n .* σ .^ 2) / sum(n)))
+    pooled = (ν = [scales[p].dof for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
+              sqrt(sum(ν .* σ .^ 2) / sum(ν)))
     bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
            bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
     reg = register_rotations(vp, bcam; bkw...)
     @test reg.bundle_sigma ≈ pooled
     @test reg.bundle.metadata.loss_width ≈ 2.5 * pooled
-    # the scale record of the robust-estimation contract: the pooled scale, given
-    @test VgtkCore.noise_scale(reg.bundle) == reg.bundle_sigma && VgtkCore.scale_source(reg.bundle) == VgtkCore.ScaleGiven
+    # the scale record of the robust-estimation contract: Estimation's pooled_noise_scale of the pairs, upstream
+    @test VgtkCore.noise_scale(reg.bundle) == reg.bundle_sigma && VgtkCore.scale_source(reg.bundle) == VgtkCore.ScaleUpstream
     @test VgtkCore.converged(reg.bundle) && reg.bundle.iterations < 1000
     # the same bundle with that width given explicitly: one LM run, the same result (its observations the keypoints with their
     # covariances, as register_rotations builds them)
@@ -79,7 +79,7 @@ end
     @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations
     @test direct.iterations == reg.bundle.iterations
     # no pair with a scale: refused; a width that is not positive: refused
-    none = VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = NaN, success = false) for p in ps), vp.loma)
+    none = VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = NaN, dof = 0) for p in ps), vp.loma)
     @test_throws ArgumentError register_rotations(none, bcam; bkw...)
     @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 0.0,
                                                 max_iter = 10, ftol = 1.0e-12, xtol = 1.0e-6)
@@ -111,37 +111,3 @@ end
     @test dflt.iterations == stated.iterations
 end
 
-@testitem "_pair_scale: SIMFIT++ on the default strategy runs no refine with a scorer (the rotation class's local optimization)" setup = [SweepScene, BayerMaps] begin
-    using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: PanoramaStitching
-    import VisualGeometryToolkitFeatures as VgtkFeatures
-    import VisualGeometryToolkitCore as VgtkCore
-    import VisualGeometryToolkitEstimation as VgtkEstimation
-    rng = MersenneTwister(6)
-    bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
-    R = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.01, deg2rad(15.0), 0.02)))
-    σ = 0.8
-    u1 = SVector{2, Float64}[]; u2 = SVector{2, Float64}[]
-    while length(u1) < 1200
-        f = normalize(randn(rng, SVector{3, Float64})); acos(f[3]) < deg2rad(70) || continue
-        g = R * f; acos(clamp(g[3], -1, 1)) < deg2rad(70) || continue
-        push!(u1, VgtkCore.project(CAM, f) + σ * randn(rng, SVector{2, Float64}))
-        push!(u2, rand(rng) < 0.2 ? SVector(600 + 500 * (2rand(rng) - 1), 600 + 500 * (2rand(rng) - 1)) :
-                                     VgtkCore.project(CAM, g) + σ * randn(rng, SVector{2, Float64}))
-    end
-    fa = described(u1); fb = described(u2)                         # unit isotropic covariances: whitened residuals in pixels
-    cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)];
-                                            frame_map = IDENTITY_MAP)
-    res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
-                                       scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0))
-    # the default (`nothing`) is the strategy find_rotation ran: Estimation's [pipelines.rotation]
-    @test PanoramaStitching._ROTATION_LOCAL_OPTIMIZATION ==
-          VgtkEstimation.optimization_strategy_from_toml(VgtkCore.toml_default(PanoramaStitching._ESTIMATION_DEFAULTS, "pipelines.rotation",
-                                                                                "local_optimization_strategy"); class = :rotation)
-    s = PanoramaStitching._pair_scale(cs, res, nothing, MersenneTwister(2))
-    @test s.success
-    @test isapprox(s.sigma, σ; rtol = 0.15)
-    # a refine_* refuses a scorer: the SIMFIT++ refits are the seeded local optimization, not a refine
-    @test_throws ArgumentError VgtkEstimation.refine_rotation(VgtkCore.estimate(res), cs;
-                                                              scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 1.0))
-end

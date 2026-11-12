@@ -21,7 +21,7 @@ function stage_cache_check()
                        Dict((1, 2) => (rotation = R, inliers = 2, covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))),
                        Dict((1, 2) => [(1, 2), (2, 1)]),
                        Dict((1, 2) => (matches = 3, inliers = 2, rms = 0.4, rotation_deg = 10.0)),
-                       Dict((1, 2) => (sigma = 0.35, success = true)),
+                       Dict((1, 2) => (sigma = 0.35, dof = 4)),
                        (; descriptor = (; model = "loma_b", execution_provider = :cuda, threads = 8),
                           matcher = (; model = "loma_b128", execution_provider = :cuda, threads = 8)))
     root = mktempdir(); mkpath(joinpath(root, "raw")); results = mktempdir()

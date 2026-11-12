@@ -78,7 +78,8 @@ inliers as keypoint index pairs `(a, b)`, keypoint `a` of frame `i` ↔ keypoint
 of frame `j`: what the tracks consume) and `stats` (per verified pair: matches,
 inliers, the rms whitened residual of its inliers in sigmas of the keypoints' unit
 noise and its rotation angle in degrees), `scales` (per verified pair its noise scale: `sigma`, the variance factor σ₀
-of its keypoints' covariances (the noise σ₀²Σ̃) per coordinate of its whitened residual, and `success`, whether SIMFIT++ found one —
+of its keypoints' covariances (the noise σ₀²Σ̃) per coordinate of its whitened residual, its RANSAC scorer's own (`NaN` when
+the result recorded none), and `dof`, the result's degrees of freedom —
 see [`register_rotations`](@ref)) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
 `loma_provenance` of the descriptor and of the matcher, `(; descriptor,
 matcher)`). Everything a registration needs after the features, the
@@ -90,7 +91,7 @@ struct VerifiedPairs{F}
     verified::Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}
     inlier_matches::Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}
     stats::Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}
-    scales::Dict{Tuple{Int, Int}, NamedTuple{(:sigma, :success), Tuple{Float64, Bool}}}
+    scales::Dict{Tuple{Int, Int}, NamedTuple{(:sigma, :dof), Tuple{Float64, Int}}}
     loma::NamedTuple    # (; descriptor, matcher): loma_provenance of each
 end
 # A verified pair's entry; a `verified` Dict of any compatible entry type (a covariance of every pair) converts to it.
@@ -142,7 +143,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
     verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
     inlier_matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
     stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
-    scales = Dict{Tuple{Int, Int}, NamedTuple{(:sigma, :success), Tuple{Float64, Bool}}}()
+    scales = Dict{Tuple{Int, Int}, NamedTuple{(:sigma, :dof), Tuple{Float64, Int}}}()
     function verify(i, j)
         ms = match(feats[i], feats[j], sz(i), sz(j); min_score)
         if length(ms) < min_inliers
@@ -163,9 +164,11 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         verified[(i, j)] = (rotation = R, inliers = n, covariance = _verified_rotation_covariance(cs, res))
         inlier_matches[(i, j)] = kept[VgtkCore.inlier_mask(res)]
         stats[(i, j)] = (matches = length(ms), inliers = n, rms, rotation_deg = ang)
-        scales[(i, j)] = _pair_scale(cs, res, local_optimization_strategy, _pair_rng(seed, i, j))
+        # the pair's scale: its RANSAC scorer's own ŝ (Core's noise_scale: the consensus set's Student-t posterior scale) and the
+        # result's degrees of freedom, what the bundle's pool reads; NaN when the result recorded none
+        scales[(i, j)] = (sigma = VgtkCore.scale_source(res) == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(res)), dof = Int(res.dof))
         say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches, $n inliers, rms $(round(rms; sigdigits = 3)), rotation $(round(ang; digits = 2))°, " *
-            "σ̂ $(round(scales[(i, j)].sigma; sigdigits = 3))$(scales[(i, j)].success ? "" : " (SIMFIT++ found none)")")
+            "ŝ $(round(scales[(i, j)].sigma; sigdigits = 3)) ($(scales[(i, j)].dof) dof)")
         return nothing
     end
     for i in 1:K, j in (i + 1):K
@@ -174,42 +177,6 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
     pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag, overlap_deg, averaging_optimization_strategy)
     loma = (; descriptor = VgtkFeatures.loma_provenance(desc), matcher = VgtkFeatures.loma_provenance(match))
     return VerifiedPairs(feats, verified, inlier_matches, stats, scales, loma)
-end
-
-# SIMFIT++ (Edstedt, CVPRW 2025; VisualGeometryToolkitEstimation's port) on the Sampson residual of a pair's rotation: χ² of its 2
-# degrees of freedom (the residual's codimension), the reference's coverage α = 0.99 and its width bounds (px).
-const _SIMFIT = VgtkEstimation.SimFitPP(; dg = 2)
-# The rotation class's RANSAC local optimization (Estimation's [pipelines.rotation]), the strategy `find_rotation` runs when
-# the pairs take the default: their SIMFIT++ refits run the same one.
-const _ROTATION_LOCAL_OPTIMIZATION = _estimation_strategy("pipelines.rotation", "local_optimization_strategy", :rotation)
-_chisq2_quantile(α) = -2 * log1p(-α)          # the χ²₂ quantile, closed form: F(x) = 1 − exp(−x/2)
-
-# A verified pair's noise scale: SIMFIT++'s loss width over its correspondences, the rotation refitted on a random train split
-# at the current width (Estimation's seeded RANSAC local optimization, `locally_optimize`, from the RANSAC estimate: MSAC at
-# that width and the pair's local optimization strategy, the rotation class's when the pair takes the default) and the
-# held-out split's squared residuals at it (its Mahalanobis distances, no refit), seeded with the RANSAC's own σ̂ (its consensus Student-t
-# scale) as a width; σ̂ = width / √χ²₂(α). `rng` the pair's own stream. `success` false when SIMFIT++ found no width in its
-# bounds (the RANSAC σ̂ is then the pair's sigma, and the pair is not pooled).
-function _pair_scale(cs, res, local_optimization_strategy, rng)
-    q = _chisq2_quantile(_SIMFIT.alpha)
-    # the RANSAC's own scale, read through the hand-off accessor (a result that recorded none has no seed width)
-    s = VgtkCore.scale_source(res) == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(res))
-    w0 = sqrt(q) * s
-    isfinite(w0) && w0 > 0 || return (sigma = s, success = false)
-    R0 = VgtkCore.estimate(res)
-    lo = local_optimization_strategy === nothing ? _ROTATION_LOCAL_OPTIMIZATION : local_optimization_strategy
-    function fit(w, train)
-        r = VgtkEstimation.locally_optimize(VgtkEstimation.RotationProblem(cs[collect(train)]), R0; local_optimization_strategy = lo,
-                                            scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = w))
-        return VgtkCore.found_model(r) ? VgtkCore.estimate(r) : nothing
-    end
-    function residuals_sq(R, val)
-        r = Vector{Float64}(undef, length(val))
-        VgtkCore.mahalanobis_distances!(r, VgtkEstimation.RotationProblem(cs[collect(val)]), R)
-        return abs2.(r)
-    end
-    w, ok = VgtkEstimation.simfitpp_loss_width(fit, residuals_sq, length(cs), w0, _SIMFIT; rng)
-    return (sigma = w / sqrt(q), success = ok)
 end
 
 # The settings every entry checks before any feature is detected.
@@ -298,21 +265,16 @@ RANSAC's:
   that filter). A periodic scene verifies a pair one period off as well as the
   true one, and only the view graph tells them apart. The removed pairs are the
   result's `removed`; their matches make no track.
-- scale: per verified pair, after its RANSAC, its noise scale by SIMFIT++
-  (Edstedt, "Less Biased Noise Scale Estimation for Threshold-Robust RANSAC",
-  CVPRW 2025; VisualGeometryToolkitEstimation's `simfitpp_loss_width` with χ²₂, the
-  rotation's Sampson residual's codimension, at coverage α = 0.99): the
-  rotation refitted on random train splits (VisualGeometryToolkitEstimation's
-  seeded RANSAC local optimization `locally_optimize`, MSAC at the current
-  width, the pair's `local_optimization_strategy`), the held-out residuals'
-  truncation-debiased median the scale; seeded with the RANSAC's own σ̂, the
-  sampler the pair's (`seed`, `i`, `j`). The pairs' `scales`
-  ([`VerifiedPairs`](@ref)): the variance factor σ₀ of the keypoints' covariances
-  (the noise σ₀²Σ̃, Σ̃ the detector's).
+- scale: per verified pair its RANSAC scorer's own scale ŝ (Core's `noise_scale` of
+  its result: the consensus set's Student-t posterior scale) and the result's degrees
+  of freedom, the pairs' `scales` ([`VerifiedPairs`](@ref)): the variance factor σ₀ of
+  the keypoints' covariances (the noise σ₀²Σ̃, Σ̃ the detector's). No second scale
+  estimate.
 - bundle: [`refine_rotations`](@ref) with `bundle_optimization_strategy` (a `Triggs{Shape}`, by default VisualGeometryToolkitEstimation's pixel bundle's) at
-  `scale = σ̂` (its width the strategy's efficiency constant × σ̂), σ̂ the pooled scale of the kept pairs whose
-  SIMFIT++ succeeded, `σ̂² = Σ nₚσₚ² / Σ nₚ` (`nₚ` the pair's inliers: their
-  pooled variance), the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,
+  `scale` the kept pairs' scales pooled by VisualGeometryToolkitEstimation's
+  `pooled_noise_scale` (`σ̂² = Σ νₚŝₚ² / Σ νₚ`, `νₚ` the pair's degrees of freedom;
+  the bundle records it as `ScaleUpstream`, its width the strategy's efficiency
+  constant × σ̂), σ̂ the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,
   `bundle_ftol`, `bundle_xtol`: [`refine_rotations`](@ref)), the width fixed.
   No kept pair with a scale is an `ArgumentError`. Every observation is its
   keypoint in the camera's pixels with its covariance, the detector's taken through
@@ -378,12 +340,17 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
         "$(isempty(removed) ? "" : ": " * join(["$(i - 1)-$(j - 1)" for (i, j) in removed], ", "))), edges with their rotation covariances (scale $(VgtkCore.noise_scale(avg)), $(VgtkCore.scale_source(avg))), $(avg.retcode)")
     ts, dropped = chain_tracks(Dict(p => m for (p, m) in vp.inlier_matches if haskey(graph, p...)))
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
-    # the bundle's scale: the variance factor σ₀ of the keypoints' covariances, the kept pairs' SIMFIT++ scales pooled
-    σ = _pooled_scale(vp, graph)
-    say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over the kept pairs' SIMFIT++ scales (σ₀ of the keypoints' covariances), the bundle's scale")
+    # the bundle's scale, upstream: the kept pairs' RANSAC scales pooled by their degrees of freedom (Estimation's
+    # pooled_noise_scale), σ₀ of the keypoints' covariances
+    ps = sort!([p for p in keys(vp.verified) if haskey(graph, p...)])
+    pooled = VgtkEstimation.pooled_noise_scale([vp.scales[p].sigma for p in ps], [vp.scales[p].dof for p in ps])
+    VgtkCore.scale_source(pooled) == VgtkCore.ScaleNone &&
+        throw(ArgumentError("register_rotations: no kept pair has a noise scale: the bundle has no width"))
+    σ = Float64(VgtkCore.noise_scale(pooled))
+    say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales (σ₀ of the keypoints' covariances), the bundle's scale")
     # every observation its keypoint in the camera's pixels with its covariance (the bundle whitens by it)
     obs = [[k => _camera_keypoint(frame_map, feats[k][kp].detection) for (k, kp) in t] for t in ts]
-    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; optimization_strategy = bundle_optimization_strategy, scale = σ,
+    bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; optimization_strategy = bundle_optimization_strategy, scale = pooled,
                               max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, $(bundle.iterations) iterations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; sigdigits = 3)) (whitened), " *
         "$(VgtkCore.retcode(bundle)) ($(VgtkCore.stop_rule(bundle))), $(bundle.metadata.n_dropped_start) observations dropped at the start (not imaged there)")
@@ -395,15 +362,6 @@ end
 # own default (`[fit_rotation_averaging] optimization_strategy`), by leaving the keyword out.
 _averaging_kw(::_NotGiven) = (;)
 _averaging_kw(strategy) = (; optimization_strategy = strategy)
-
-# The one noise scale of the bundle: the kept pairs' SIMFIT++ scales pooled as a variance weighted by their inlier counts,
-# σ̂² = Σ nₚσₚ² / Σ nₚ, over the pairs whose estimate succeeded.
-function _pooled_scale(vp::VerifiedPairs, graph)
-    ps = [p for p in keys(vp.verified) if haskey(graph, p...) && vp.scales[p].success]
-    isempty(ps) && throw(ArgumentError("register_rotations: no kept pair has a noise scale (SIMFIT++ found none): the bundle has no width"))
-    n = [vp.verified[p].inliers for p in ps]
-    return sqrt(sum(n .* [vp.scales[p].sigma^2 for p in ps]) / sum(n))
-end
 
 # The view-graph filters' tolerances (radians): positive, or nothing (that filter skipped). Checked before any feature is detected;
 # from the verified pairs, VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` refuses them itself.

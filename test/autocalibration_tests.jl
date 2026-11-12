@@ -142,7 +142,7 @@ end
     using PanoramaStitching: refine_rotations
     import VisualGeometryToolkitCore as VgtkCore
     # (69471ff's pinned numbers of this fixture were those of the 3-run bundle that re-estimated its width; the bundle is one
-    # run at a given width since the SIMFIT++ scale, so the held camera is checked on the result instead)
+    # run at a given width since the pooled RANSAC scale, so the held camera is checked on the result instead)
     rng = Xoshiro(31)
     R = sweep_rotations(rng, 5)
     ts, _, _ = sweep_tracks(rng, R, 400; outl = 0.05)

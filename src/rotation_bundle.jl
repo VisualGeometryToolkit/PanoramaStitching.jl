@@ -277,7 +277,7 @@ result's `n` is the number of observations kept; its metadata's
   `[refine_camera_and_poses]`: `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D residual), its loss `K` as NLLSsolver's robustifier (`loss_robustifier`) at ONE width fixed for the bundle's one
   NLLSsolver run; or `nothing`, the plain least squares (no scale or width).
 - exactly one of `scale = σ` (the observations' noise scale, pixels or whitened units, or an upstream robust result:
-  `register_rotations` hands the verified pairs' pooled SIMFIT++ scale) — the width is the strategy's efficiency
+  `register_rotations` hands the verified pairs' RANSAC scales pooled by Estimation's `pooled_noise_scale`) — the width is the strategy's efficiency
   constant × σ — or `width = w` (the loss width). Neither, or both, is an `ArgumentError`. `max_iter`, `ftol` (the relative cost decrease) and `xtol`
   (the largest step in chart units: radians for a rotation or a direction)
   are its stops (`nlls_options`); the result's `iterations` the LM iterations
