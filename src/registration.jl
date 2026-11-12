@@ -154,7 +154,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         kw = local_optimization_strategy === nothing ? kw : merge(kw, (; local_optimization_strategy))
         res = VgtkEstimation.find_rotation(cs; kw...)
         n = res === nothing ? 0 : count(VgtkCore.inlier_mask(res))
-        if res === nothing || !VgtkCore.converged(res) || n < min_inliers
+        if res === nothing || !VgtkCore.found_model(res) || n < min_inliers
             say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches, $n inliers → dropped"); return nothing
         end
         R = SMatrix{3, 3, Float64, 9}(VgtkCore.estimate(res))
@@ -201,7 +201,7 @@ function _pair_scale(cs, res, local_optimization_strategy, rng)
     function fit(w, train)
         r = VgtkEstimation.locally_optimize(VgtkEstimation.RotationProblem(cs[collect(train)]), R0; local_optimization_strategy = lo,
                                             scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = w))
-        return VgtkCore.converged(r) ? VgtkCore.estimate(r) : nothing
+        return VgtkCore.found_model(r) ? VgtkCore.estimate(r) : nothing
     end
     function residuals_sq(R, val)
         r = Vector{Float64}(undef, length(val))
