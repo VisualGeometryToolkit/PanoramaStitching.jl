@@ -47,12 +47,12 @@ end
         push!(pixels[k], u); index[k][t] = length(pixels[k])
     end
     feats = [FrameFeatures(pixels[k], fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(pixels[k])), nothing, length(pixels[k])) for k in 1:K]
-    verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}()
+    verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
     matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
     stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
     for i in 1:K, j in (i + 1):K
         common = sort!([t for t in keys(index[i]) if haskey(index[j], t)]); length(common) >= 25 || continue
-        verified[(i, j)] = (rotation = SMatrix{3, 3, Float64, 9}(R[j]' * R[i]), inliers = length(common))
+        verified[(i, j)] = (rotation = SMatrix{3, 3, Float64, 9}(R[j]' * R[i]), inliers = length(common), covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))
         matches[(i, j)] = [(index[i][t], index[j][t]) for t in common]
         stats[(i, j)] = (matches = length(common), inliers = length(common), rms_px = 0.4, rotation_deg = 0.0)
     end

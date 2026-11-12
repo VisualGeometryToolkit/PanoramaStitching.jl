@@ -10,6 +10,16 @@
   Eval's keyed result cache (`cached_result` at `run_key`: `verified_pairs_<key>.jld2`, `registration_<key>.jld2`) instead of a
   private key and JSON cache; the READY_14mm.txt marker is gone; `reproduce.toml` declares the stage graph. Its checks
   (`stage_cache_check.jl`, `autocalibration_check.jl`) run through `run_checks.jl` in the example's environment.
+- The view graph's averaging runs on Uncertain edges (the owner's ruling): each verified pair is scored on its keypoints'
+  covariance SHAPES (the new `keypoint_covariance_scale`/`keypoint_uncertain`, the one normalisation, shared with the
+  bundle's `:keypoint_covariance` whitening, which now normalises over every frame's refined keypoints) and its edge is
+  VisualGeometryToolkitEstimation's `uncertain_rotation` (its scorer's `noise_scale`² × the implicit-function covariance:
+  absolute, rad²), so the averaging takes no scale and records scale 1, `ScaleUpstream`; edges sharing a keypoint are
+  treated as independent (first order). A pair whose covariance is not determined is no edge, listed in
+  `Registration.no_covariance` and the log; a drop that splits the frames is an `ArgumentError` naming the pairs. The
+  pairs' scorer thresholds are in the whitened units of those shapes (pixels of the median keypoint).
+  `VerifiedPairs.verified` entries carry `covariance`. The example's verified pairs are format v6, rotations.json records
+  the pairs with no covariance and the averaging's scale record.
 - `refine_rotations` takes the robust-estimation contract's `optimization_strategy` (a `Triggs{Shape}`, by default every
   refine's `Triggs{WelschShape}`; `nothing` the plain least squares) and exactly one of `scale` or `width`; its `loss` and
   `loss_width` are refused by name. `RotationBundleMetadata` records the scale (`scale`, `scale_source`: read through

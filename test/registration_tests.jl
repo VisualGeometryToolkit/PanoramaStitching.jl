@@ -111,7 +111,7 @@ end
 
 @testitem "register_rotations, sample_frames: a synthetic fisheye sweep" setup = [SyntheticSequence, BayerMaps] begin
     using Test, LinearAlgebra, Statistics, StaticArrays
-    using PanoramaStitching: register_rotations, sample_frames, fibonacci_directions
+    using PanoramaStitching: register_rotations, sample_frames, fibonacci_directions, keypoint_covariance_scale
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
     q = sequence()
@@ -125,7 +125,14 @@ end
     @info "synthetic register: rotation errors (deg) $(round.(errs; digits = 4)), bundle rms $(round(reg.bundle.rms; digits = 3)) px"
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
     @test length(reg.pairs) == K * (K - 1) ÷ 2 && all(p -> p.inliers >= 100, values(reg.pairs))
-    @test reg.bundle.rms < 0.5 && reg.dropped == 0
+    # The bundle's residuals in the pairs' scorer units: the pairs admit a keypoint by its covariance SHAPE (Uncertain pixels,
+    # Σ over the median trace `keypoint_covariance_scale`), so a coarse keypoint's pixel residual is larger by its shape's
+    # scale; each pixel residual over that scale is the one the pairs scored.
+    m = keypoint_covariance_scale(reg.features)
+    shaped = filter(isfinite, [reg.bundle.metadata.residuals[j][i] / sqrt(tr(reg.features[k].pixel_covariances[kp]) / 2 / m)
+                               for (j, t) in enumerate(reg.tracks) for (i, (k, kp)) in enumerate(t)])
+    @test sqrt(mean(abs2, shaped)) < 0.5 && reg.dropped == 0
+    @test median(filter(isfinite, reduce(vcat, reg.bundle.metadata.residuals))) < 0.15   # px
     # the view graph is VisualGeometryToolkitEstimation's, each edge the pair's rotation weighted by its inlier count
     @test reg.graph isa VgtkEstimation.ViewGraph && VgtkEstimation.nedges(reg.graph) == length(reg.pairs)
     @test all(p -> VgtkCore.weight_of(reg.graph[p...]) == reg.pairs[p].inliers, keys(reg.pairs))
@@ -199,9 +206,10 @@ end
     import VisualGeometryToolkitEstimation as VgtkEstimation
     function tried_pairs(K, dropped)
         R = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:K]
-        verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}()
+        verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
         tried = Tuple{Int, Int}[]
-        verify(i, j) = ((i, j) in dropped || (verified[(i, j)] = (rotation = R[j]' * R[i], inliers = 100)); nothing)
+        verify(i, j) = ((i, j) in dropped || (verified[(i, j)] = (rotation = R[j]' * R[i], inliers = 100,
+                                                                         covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))); nothing)
         foreach(k -> verify(k, k + 1), 1:(K - 1))
         PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, 70.0,
                                                  VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))

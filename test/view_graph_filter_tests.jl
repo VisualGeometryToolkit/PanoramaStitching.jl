@@ -25,7 +25,7 @@
             push!(pixels[k], u); index[k][t] = length(pixels[k])
         end
         feats = [FrameFeatures(pixels[k], fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(pixels[k])), nothing, length(pixels[k])) for k in 1:K]
-        verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers), Tuple{SMatrix{3, 3, Float64, 9}, Int}}}()
+        verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
         matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
         stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms_px, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
         for i in 1:K, j in (i + 1):K
@@ -37,7 +37,7 @@
                 Rij = SMatrix{3, 3, Float64, 9}(exp_so3(SVector(0.0, deg2rad(12.0), 0.0))) * Rij
                 m = [(m[q][1], m[mod1(q + 1, length(m))][2]) for q in eachindex(m)]
             end
-            verified[(i, j)] = (rotation = Rij, inliers = length(m)); matches[(i, j)] = m
+            verified[(i, j)] = (rotation = Rij, inliers = length(m), covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6)); matches[(i, j)] = m
             stats[(i, j)] = (matches = length(m), inliers = length(m), rms_px = 0.3, rotation_deg = 0.0)
         end
         return VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = 0.3, success = true) for p in keys(verified)),

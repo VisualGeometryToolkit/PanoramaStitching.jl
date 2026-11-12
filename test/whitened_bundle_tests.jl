@@ -95,5 +95,9 @@ end
     @test SMatrix{2, 2}(Statistics.cov(last(obs[1][1]))) ≈ S(4.0, 1.0, 0.5) / 2.5
     # frame 1's keypoint 2 is unrefined: the identity (the median keypoint's)
     @test SMatrix{2, 2}(Statistics.cov(last(obs[2][1]))) == S(1.0, 1.0, 0.0)
-    @test_throws ArgumentError PanoramaStitching._uncertain_observations([f1], [[(1, 2), (1, 2)]])
+    # the median is over EVERY frame's refined keypoints (the one rule the pairs use, keypoint_covariance_scale), so only a
+    # set with no refined keypoint at all is refused
+    @test PanoramaStitching.keypoint_covariance_scale([f1]) == 2.5
+    f0 = FrameFeatures([SVector(1.0, 2.0), SVector(3.0, 4.0)], [nanS, nanS], nothing, 2)
+    @test_throws ArgumentError PanoramaStitching._uncertain_observations([f0], [[(1, 1), (1, 2)]])
 end

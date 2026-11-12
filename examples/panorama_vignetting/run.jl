@@ -194,7 +194,7 @@ end
 # v10: the robust-estimation contract: the averaging's and the bundle's strategies are tables (averaging_optimization_strategy,
 # bundle_optimization_strategy, read by Estimation's reader), the record holds the bundle's strategy and its scale
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v10 (the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v10 (the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -203,9 +203,11 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # v3: the detector's selection and detection image (`selection`, `detection_image` and its noise keys), every ASIFT detection
 # refined (VisualGeometryToolkitFeatures 0.9), the kept keypoints the described set.
 # v4: per pair its SIMFIT++ noise scale (sigma, success).
+# v6: the pairs are scored on the keypoints' covariance shapes (keypoint_covariance_scale) and each records its absolute rotation
+# covariance (VisualGeometryToolkitEstimation's uncertain_rotation): the averaging's Uncertain edges.
 # v5: no keypoint within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
 # Features' canonical order, the frames' map Features' raw_frame_map.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v5 (the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v6 (per pair its absolute rotation covariance (uncertain_rotation, the keypoints' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol", "bundle_whitening")
 function pairs_settings(r)
@@ -223,6 +225,8 @@ function pairs_record(vp::VerifiedPairs)
     feats = [Dict("pixels" => [collect(p) for p in f.pixels], "pixel_covariances" => [nan_null.(vec(Σ)) for Σ in f.pixel_covariances],
                   "n_detected" => f.n_detected) for f in vp.features]
     pairs = [Dict("i" => i, "j" => j, "rotation" => [collect(e.rotation[r, :]) for r in 1:3], "inliers" => e.inliers,
+                  # the pair's absolute rotation covariance (rad², so(3) chart; uncertain_rotation), or null when not determined
+                  "covariance" => e.covariance === nothing ? nothing : [collect(e.covariance[r, :]) for r in 1:3],
                   "inlier_matches" => [collect(m) for m in vp.inlier_matches[(i, j)]],
                   "matches" => vp.stats[(i, j)].matches, "rms_px" => vp.stats[(i, j)].rms_px, "rotation_deg" => vp.stats[(i, j)].rotation_deg,
                   "sigma_px" => nan_null(vp.scales[(i, j)].sigma), "sigma_success" => vp.scales[(i, j)].success)
@@ -236,7 +240,10 @@ function pairs_from_record(rec)
              for f in rec["features"]]
     key(p) = (Int(p["i"]), Int(p["j"]))
     verified = Dict(key(p) => (rotation = SMatrix{3, 3, Float64, 9}(permutedims(reduce(hcat, [Float64.(r) for r in p["rotation"]]))),
-                               inliers = Int(p["inliers"])) for p in rec["pairs"])
+                               inliers = Int(p["inliers"]),
+                               covariance = p["covariance"] === nothing ? nothing :
+                                            SMatrix{3, 3, Float64, 9}(permutedims(reduce(hcat, [Float64.(r) for r in p["covariance"]]))))
+                    for p in rec["pairs"])
     matches = Dict(key(p) => [(Int(m[1]), Int(m[2])) for m in p["inlier_matches"]] for p in rec["pairs"])
     stats = Dict(key(p) => (matches = Int(p["matches"]), inliers = Int(p["inliers"]), rms_px = Float64(p["rms_px"]),
                             rotation_deg = Float64(p["rotation_deg"])) for p in rec["pairs"])
@@ -315,6 +322,11 @@ function registration(C, inp, lens; log)
                           # the seconds of the whole registration: the verified pairs' (as computed, also when reused) and the rest
                           # the verified pairs, and those the view-graph filters removed (0-based frame indices) at their tolerances
                           "pairs" => length(reg.pairs), "pairs_removed" => [[i - 1, j - 1] for (i, j) in reg.removed],
+                          # the verified pairs whose rotation covariance is not determined (not averaged), 0-based, and the
+                          # averaging's scale record (its edges' covariances absolute: scale 1, ScaleUpstream)
+                          "pairs_no_covariance" => [[i - 1, j - 1] for (i, j) in reg.no_covariance],
+                          "averaging_scale" => VgtkCore.noise_scale(reg.averaging),
+                          "averaging_scale_source" => string(VgtkCore.scale_source(reg.averaging)),
                           "cycle_tol_deg" => Float64(r["cycle_tol_deg"]), "orientation_tol_deg" => Float64(r["orientation_tol_deg"]),
                           "bundle_rms_px" => reg.bundle.rms, "seconds" => vp.seconds + time() - t0,
                           # the bundle's outcome (RotationBundleMetadata): converged, not_run, or another retcode; the observations it
@@ -337,7 +349,8 @@ function registration(C, inp, lens; log)
     # a record written before 2026-11-04 holds no bundle loss width: no point scale (IntensityAndPositionNoise then refuses to run;
     # delete the record to recompute it)
     return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
-            pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], bundle_rms_px = rec["bundle_rms_px"],
+            pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], pairs_no_covariance = rec["pairs_no_covariance"],
+            bundle_rms_px = rec["bundle_rms_px"],
             bundle_sigma_px = rec["bundle_sigma_px"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
@@ -629,7 +642,9 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
                "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma_px; d = 3)) px, the pairs' pooled SIMFIT++ scale)"
-        println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_removed)) removed by the view-graph filters" *
+        println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *
+                    "covariance, not averaged$(isempty(reg.pairs_no_covariance) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_no_covariance], ", "))" *
+                    "; $(length(reg.pairs_removed)) removed by the view-graph filters" *
                     "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
                     "bundle outcome $(reg.bundle_outcome) (retcode $(reg.bundle_retcode), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *

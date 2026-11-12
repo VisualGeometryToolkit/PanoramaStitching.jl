@@ -19,6 +19,8 @@ RotationBundleMetadata
 PanoramaStitching.FrameFeatures
 PanoramaStitching.detect_features
 PanoramaStitching.pair_bearings
+PanoramaStitching.keypoint_covariance_scale
+PanoramaStitching.keypoint_uncertain
 ```
 
 ## Sampling the frames at directions

@@ -133,15 +133,19 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
 end
 
 """
-    pair_bearings(camera, fa, fb, matches) -> (cs, kept)
+    pair_bearings(camera, fa, fb, matches; covariance_scale = nothing) -> (cs, kept)
 
 The matches of two frames as unit-bearing correspondences with their
 back-projection Jacobians as the `M₁`/`M₂` columns and the match score as the
 `:score` column (VisualGeometryToolkitCore's `backproject_with_jacobian` through
 the calibrated `camera`: the whole field, past 90°), and the keypoint index pairs
-kept (a pixel the camera cannot back-project is dropped).
+kept (a pixel the camera cannot back-project is dropped). With a
+`covariance_scale` m ([`keypoint_covariance_scale`](@ref)) each keypoint's
+position covariance, as a SHAPE `Σ / m`, is the measurement noise of its endpoint
+(VisualGeometryToolkitCore's `noise_columns`: the `Σ₁`/`Σ₂` columns), so the pair's
+residuals, its scorer's scale and its rotation's covariance are whitened by it.
 """
-function pair_bearings(camera, fa::FrameFeatures, fb::FrameFeatures, matches)
+function pair_bearings(camera, fa::FrameFeatures, fb::FrameFeatures, matches; covariance_scale = nothing)
     f1 = SVector{3, Float64}[]; f2 = SVector{3, Float64}[]; M1 = SMatrix{3, 2, Float64, 6}[]; M2 = SMatrix{3, 2, Float64, 6}[]
     score = Float64[]; kept = Tuple{Int, Int}[]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
@@ -151,5 +155,35 @@ function pair_bearings(camera, fa::FrameFeatures, fb::FrameFeatures, matches)
         (all(isfinite, ba[1]) && all(isfinite, bb[1]) && all(isfinite, ba[2]) && all(isfinite, bb[2])) || continue
         push!(f1, ba[1]); push!(f2, bb[1]); push!(M1, ba[2]); push!(M2, bb[2]); push!(score, m.score); push!(kept, (a, b))
     end
-    return VgtkCore.withattrs(VgtkCore.Csponds(f1, f2); M₁ = M1, M₂ = M2, score), kept
+    cs = VgtkCore.withattrs(VgtkCore.Csponds(f1, f2); M₁ = M1, M₂ = M2, score)
+    covariance_scale === nothing && return cs, kept
+    noise = VgtkCore.noise_columns([keypoint_uncertain(fa, a, covariance_scale) for (a, _) in kept],
+                                   [keypoint_uncertain(fb, b, covariance_scale) for (_, b) in kept])
+    return VgtkCore.withattrs(cs; noise...), kept
 end
+
+"""
+    keypoint_covariance_scale(features) -> Union{Nothing, Float64}
+
+The ONE normalisation of the keypoints' position covariances, shared by the pairs ([`pair_bearings`](@ref)) and the
+bundle's whitening: the median over every frame's refined keypoints of `tr Σ / 2` (camera pixels²), so a keypoint's
+covariance divided by it is a SHAPE, the median keypoint's of unit trace per axis: the noise's scale is then the
+estimators' own (the pairs' scorers' `noise_scale`). `nothing` when no keypoint has a covariance (finite and positive
+definite).
+"""
+function keypoint_covariance_scale(features::AbstractVector{<:FrameFeatures})
+    traces = [(Σ[1, 1] + Σ[2, 2]) / 2 for f in features for Σ in f.pixel_covariances if _valid_covariance(Σ)]
+    return isempty(traces) ? nothing : Float64(Statistics.median(traces))
+end
+
+"""
+    keypoint_uncertain(features, keypoint, covariance_scale) -> Uncertain
+
+Keypoint `keypoint` of a frame's [`FrameFeatures`](@ref) as VisualGeometryToolkitCore's `Uncertain(pixel, CovMat(Σ / m))`,
+`m` the [`keypoint_covariance_scale`](@ref); a keypoint the detector did not refine (Σ NaN), or whose Σ is not positive
+definite, takes the identity shape.
+"""
+keypoint_uncertain(f::FrameFeatures, kp::Integer, m::Real) =
+    VgtkCore.Uncertain(f.pixels[kp], VgtkCore.CovMat(_valid_covariance(f.pixel_covariances[kp]) ? f.pixel_covariances[kp] / m :
+                                                                                                SMatrix{2, 2, Float64, 4}(LinearAlgebra.I)))
+_valid_covariance(Σ) = all(isfinite, Σ) && Σ[1, 1] > 0 && Σ[1, 1] * Σ[2, 2] - Σ[1, 2] * Σ[2, 1] > 0
