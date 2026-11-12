@@ -1,3 +1,3 @@
-docs-pass: eea9956
+docs-pass: 904840c
 
 PanoramaStitching 0.6.0 (2026-11-12). The public API against 0.5.1: FrameFeatures, keypoint_covariance_scale and keypoint_uncertain removed (their docstrings and api.md entries deleted); detect_features, pair_bearings, register_rotations, VerifiedPairs, Registration and RotationBundleMetadata re-documented for the described-features store, plain keypoints (covariances off), the pairs' RANSAC scales pooled by pooled_noise_scale and the Student-t pairs of the example. README, docs/src/index.md and the guide: the bundle claim restated (0.24 px on the README scene, below 0.5 px; the guide below half a pixel), the autocalibration snippet on plain pixel tracks, every whitened-unit and sigma claim removed. Gates: the docs build (checkdocs = :public, doctests, no warnonly) and the suite's docs, README, quality and naming items run in the fresh-clone gate of this release.
