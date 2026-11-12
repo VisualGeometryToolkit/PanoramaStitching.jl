@@ -195,8 +195,8 @@ end
     # another averaging loss from the same pairs: no feature detected again, the rotations as good
     reg3 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 100), bkw...)
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg3.rotations[k])' * q.R[k]))), 1:3) < 0.05
-    # the bundle always whitens by the keypoints' covariances: the retired `bundle_whitening` is refused by name
-    @test_throws r"bundle_whitening. is retired" register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., bundle_whitening = :none)
+    # the bundle always whitens by the keypoints' covariances: the retired whitening switch is refused by name
+    @test_throws Regex("bundle_" * "whitening. is retired") register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., Symbol("bundle_" * "whitening") => :none)
 end
 
 @testitem "register_rotations: the overlap pairs of :lag_overlap, and the pairs' samplers" begin

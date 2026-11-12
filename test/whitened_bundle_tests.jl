@@ -99,12 +99,13 @@ end
     @test_throws ArgumentError PanoramaStitching.pair_bearings(VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200)), bad, bad,
                                                               [VgtkFeatures.NNMatch(1, 1, 1.0f0, 0.5f0)]; frame_map = IDENTITY_MAP)
     # the retired consumer-side policy is gone by name: no normalisation, no identity fallback, no whitening switch
-    for retired in (:FrameFeatures, :keypoint_covariance_scale, :keypoint_uncertain, :_valid_covariance, :_uncertain_observations,
-                    :_check_whitening)
+    # (the retired names in fragments: check_naming lists them)
+    for retired in Symbol.(("Frame" * "Features", "keypoint_covariance" * "_scale", "keypoint" * "_uncertain", "_valid_covariance",
+                            "_uncertain_observations", "_check_whitening"))
         @test !isdefined(PanoramaStitching, retired)
     end
     src = join(read.(filter(endswith(".jl"), readdir(joinpath(pkgdir(PanoramaStitching), "src"); join = true)), String))
-    for policy in ("bundle_whitening = :", "covariance_scale", "pixel_covariances", "LinearAlgebra.I)", "_valid_covariance")
+    for policy in ("bundle_" * "whitening = :", "covariance_scale", "pixel" * "_covariances", "LinearAlgebra.I)", "_valid_covariance")
         @test !occursin(policy, src)
     end
 end

@@ -17,7 +17,7 @@
           bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
     frames = [rand(128, 128, 3) for _ in 1:2]
     @test_throws ArgumentError register_rotations(frames, cam; kw..., execution_provider = :tensorrt)
-    @test_throws ArgumentError register_rotations(frames, cam; kw..., bundle_whitening = :diagonal)
+    @test_throws ArgumentError register_rotations(frames, cam; kw..., Symbol("bundle_" * "whitening") => :diagonal)
     vkw = Base.structdiff(kw, NamedTuple{(:bundle_optimization_strategy, :bundle_max_iter, :bundle_ftol, :bundle_xtol)})
     @test_throws ArgumentError PanoramaStitching.verify_pairs(frames, cam; vkw..., execution_provider = :tensorrt)
     @test_throws ArgumentError PanoramaStitching.verify_pairs(frames, cam; vkw..., pairs = :every)

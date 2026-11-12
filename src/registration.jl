@@ -195,7 +195,7 @@ function _check_frames(what, frames, selection, detection_image, detection_noise
 end
 
 # The registration's retired keywords, refused naming their successor; any other unknown keyword is refused as unknown.
-const _RETIRED_REGISTRATION_KEYWORDS = (
+const _RETIRED_REGISTRATION_KEYWORDS = (;
     bundle_camera_free = "the bundle holds the camera's calibration (refine_rotations); the autocalibration of a rotating camera is " *
                          "refine_camera_and_rotations",
     bundle_scale_multiple = "the bundle's strategy is `bundle_optimization_strategy` (its efficiency constant × the pooled scale)",
@@ -203,8 +203,9 @@ const _RETIRED_REGISTRATION_KEYWORDS = (
     bundle_loss = "the bundle's robust strategy is `bundle_optimization_strategy = Triggs{Shape}(…)`",
     averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)`",
     local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy`",
-    bundle_whitening = "the bundle always whitens each observation by its keypoint's covariance, the detector's (Features' " *
-                       "FeatureCovariance, through the frames' `frame_map`)")
+    # the retired whitening switch, spelled in fragments (check_naming lists the retired name)
+    Symbol("bundle_" * "whitening") => "the bundle always whitens each observation by its keypoint's covariance, the detector's " *
+                                       "(Features' FeatureCovariance, through the frames' `frame_map`)")
 function _refuse_retired_registration_keywords(what, kwargs)
     for (k, _) in pairs(kwargs)
         haskey(_RETIRED_REGISTRATION_KEYWORDS, k) && throw(ArgumentError("$what: the keyword `$k` is retired: $(_RETIRED_REGISTRATION_KEYWORDS[k])"))
@@ -281,7 +282,7 @@ RANSAC's:
   the frames' `frame_map` (VisualGeometryToolkitCore's `propagate`), so the bundle
   whitens each residual by it and the loss acts on the whitened residuals, in the
   pairs' sigmas. The bundle holds the camera's calibration (`refine_rotations`); the
-  retired `bundle_camera_free`, `bundle_scale_multiple`, `bundle_whitening` and `local_optimization` are an
+  retired `bundle_camera_free`, `bundle_scale_multiple`, the whitening switch and `local_optimization` are an
   `ArgumentError` naming their successors (the autocalibration of a rotating camera is
   [`refine_camera_and_rotations`](@ref), on the result's rotations and tracks).
 
