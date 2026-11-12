@@ -435,9 +435,10 @@ end
 function fit_measurement_noise(v, point_scale_px)
     N = PanoramaStitching.MEASUREMENT_NOISES[v["measurement_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
     N === IntensityNoise && return IntensityNoise()
-    point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" needs a sensor point's σ in camera " *
-                                        "pixels; the registration gives none (its bundle is whitened by the keypoints' covariances: its scale " *
-                                        "σ₀ is their variance factor, not a pixel σ)")
+    point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" is refused in this release: it awaits " *
+                                        "each pixel's position noise from the frames' rotation covariance (after the release). The " *
+                                        "registration's scale σ₀ is the variance factor of the keypoints' covariances, not a pixel σ, so " *
+                                        "no shared point σ is taken from it")
     return IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), log_intensity_scale = v["log_intensity_scale"],
                                      iterations = v["measurement_noise_iterations"])
 end

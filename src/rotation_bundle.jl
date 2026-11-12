@@ -204,19 +204,18 @@ the camera is held, else the autocalibration's information at the result
 - `free_parameters` — the names of the camera parameters refined;
 - `parameters`, `sigma`, `covariance` — their values, standard deviations and
   covariance (parameter units: pixels for `f`, `cx`, `cy`; the lens's own for its
-  coefficients) — `s²·H⁻¹`, `H` the Gauss–Newton information of the robust
-  bundle (each observation weighted by its loss's IRLS weight at the result)
-  reduced to the rotations and the camera by the Schur complement of the track
-  directions, the gauge frame removed, mapped from the camera chart to the
-  parameters; `s² = Σ wᵢ‖rᵢ‖² / ν`, `ν = 2n − p` (`n` observations kept, `p`
-  unknowns: `3(K − 1)` rotations, 2 per kept track, the free parameters);
+  coefficients) — `s²` × VisualGeometryToolkitCore's `implicit_covariance` of the
+  robust bundle (its Gauss–Newton `(JᵀJ)⁻¹`, each observation weighted by its
+  loss's IRLS weight at the result, over the rotations, the track directions and
+  the camera, the gauge frame removed), its camera block mapped from the camera
+  chart to the parameters; `s² = Σ wᵢ‖rᵢ‖² / ν`, `ν = 2n − p` (`n` observations
+  kept, `p` unknowns: `3(K − 1)` rotations, 2 per kept track, the free parameters);
 - `s2`, `nu` — `s²` and `ν`;
-- `reduced_eigenvalues` — the eigenvalues (ascending) of that reduced
-  information with the gauge frame INCLUDED, its rows and columns scaled to a
-  unit diagonal: three are zero to rounding (a common rotation of every frame
-  and every direction is the problem's one symmetry) and the next is the
-  smallest of `reduced_eigenvalues_gauge_fixed`, the same with the gauge frame
-  removed — positive when nothing else is free;
+- `reduced_eigenvalues_gauge_fixed` — the eigenvalues (ascending) of the
+  information reduced to the rotations and the camera (the inverse of their
+  marginal covariance: the Schur complement of the directions), the gauge frame
+  removed, its rows and columns scaled to a unit diagonal — positive when nothing
+  but the gauge is free;
 - `direction_min_eigenvalue` — the least eigenvalue over the kept tracks of
   their 2 × 2 direction blocks (each positive: every kept direction observed).
 """
@@ -523,50 +522,47 @@ _with_camera_model(camera::VgtkCore.BoundedCamera, m) = VgtkCore.with_model(came
 _with_camera_model(::VgtkCore.CameraModel, m) = m
 
 # The autocalibration's information at the result (`RotationBundleMetadata`'s `calibration`): every kept observation's
-# Jacobian (its loss's IRLS weight at the result folded in) over the frames (the gauge frame included), its track's direction
-# and the camera chart; the directions eliminated track by track (the Schur complement of their 2 × 2 blocks); the reduced
-# information's scaled spectrum with and without the gauge frame; the covariance s²·H⁻¹ of the gauge-fixed reduced system,
-# its camera block mapped from the chart to the parameters.
+# Jacobian rows (its loss's IRLS weight at the result folded in, √w) over the free frames, its track's direction and the camera
+# chart — the gauge frame and the held frames left out — grouped by frame, each group's measurement Jacobian −I (the rows are
+# already whitened); their covariance is Core's `implicit_covariance` (the Gauss–Newton (AᵀA)⁻¹ of every unknown, the directions
+# included: their marginal is the Schur complement's), times s² = Σ wᵢ‖rᵢ‖² / ν; the camera block mapped from the chart to the
+# parameters. The gauge-fixed reduced information is the inverse of the frames' and the camera's marginal; each kept direction's
+# 2 × 2 information block gives `direction_min_eigenvalue`.
 function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unconstrained)
-    nd = VgtkCore.tangent_size(cc); P = 3nf + nd
-    A = zeros(P, P); S2 = 0.0; n = length(kept)
-    Dmin = Inf
-    bytrack = Dict{Int, Vector{Tuple{Int, Any}}}()
-    for (j, i, o) in kept
-        push!(get!(bytrack, j, Tuple{Int, Any}[]), (i, o))
-    end
-    for (j, obs) in bytrack
-        Dj = zeros(2, 2); Bj = zeros(2, P)
-        for (i, o) in obs
-            ob = observation(j, i, o)
-            e, J = NLLSsolver.computeresjac(7, ob, NLLSsolver.getvars(ob, vars)...)
-            _, w, _ = NLLSsolver.robustifydcost(NLLSsolver.robustkernel(ob), sum(abs2, e))
-            S2 += w * sum(abs2, e)
-            k = fid[first(o)]
-            Jc = zeros(2, P); Jc[:, (3k - 2):(3k)] = J[:, 1:3]; Jc[:, (3nf + 1):P] = J[:, 6:end]
-            Jv = Matrix(J[:, 4:5])
-            A .+= w .* (Jc' * Jc); Bj .+= w .* (Jv' * Jc); Dj .+= w .* (Jv' * Jv)
-        end
-        Dmin = min(Dmin, LinearAlgebra.eigmin(LinearAlgebra.Symmetric(Dj)))
-        A .-= Bj' * (Dj \ Bj)
-    end
-    H = LinearAlgebra.Symmetric((A + A') / 2)
-    scaled(M) = (d = 1 ./ sqrt.(LinearAlgebra.diag(M)); LinearAlgebra.Symmetric(d .* M .* d'))
+    nd = VgtkCore.tangent_size(cc)
+    tracks = sort!(unique([j for (j, _, _) in kept])); col = Dict(j => 3nf + 2(q - 1) for (q, j) in enumerate(tracks))
+    nt = length(tracks); P = 3nf + 2nt + nd
     held = vcat([(3k - 2):(3k) for k in [1; [fid[u] for u in unconstrained]]]...)      # the gauge frame and the frames held
-    keep = setdiff(1:P, held)
-    keep_gauge = setdiff(1:P, held[4:end])
-    Hf = H[keep, keep]
-    p = length(keep) + 2 * length(bytrack); ν = 2n - p
+    free = setdiff(1:P, held)
+    S2 = 0.0; n = length(kept)
+    D = Dict(j => zeros(2, 2) for j in tracks)
+    byframe = Dict{Int, Vector{Matrix{Float64}}}()
+    for (j, i, o) in kept
+        ob = observation(j, i, o)
+        e, J = NLLSsolver.computeresjac(7, ob, NLLSsolver.getvars(ob, vars)...)
+        _, w, _ = NLLSsolver.robustifydcost(NLLSsolver.robustkernel(ob), sum(abs2, e))
+        S2 += w * sum(abs2, e)
+        k = fid[first(o)]; c = col[j]
+        r = zeros(2, P); r[:, (3k - 2):(3k)] = J[:, 1:3]; r[:, (c + 1):(c + 2)] = J[:, 4:5]; r[:, (3nf + 2nt + 1):P] = J[:, 6:end]
+        D[j] .+= w .* (Matrix(J[:, 4:5])' * Matrix(J[:, 4:5]))
+        push!(get!(byframe, k, Matrix{Float64}[]), sqrt(w) .* r[:, free])
+    end
+    Dmin = minimum(j -> LinearAlgebra.eigmin(LinearAlgebra.Symmetric(D[j])), tracks)
+    groups = [reduce(vcat, byframe[k]) for k in sort!(collect(keys(byframe)))]
+    Σ̃ = VgtkCore.implicit_covariance(A -> (A, -Matrix{Float64}(LinearAlgebra.I, size(A, 1), size(A, 1))), groups)
+    Σ̃ === nothing && throw(ArgumentError("refine_camera_and_rotations: the autocalibration's information is singular at the result"))
+    ν = 2n - length(free)
     s2 = S2 / ν
-    Σz = s2 .* inv(LinearAlgebra.Symmetric(Matrix(Hf)))
+    Σz = s2 .* Σ̃
     Σc = Σz[(end - nd + 1):end, (end - nd + 1):end]
+    fc = findall(q -> q <= 3nf || q > 3nf + 2nt, free)                   # the free frames' and the camera's coordinates
+    scaled(M) = (d = 1 ./ sqrt.(LinearAlgebra.diag(M)); LinearAlgebra.Symmetric(d .* M .* d'))
     names = VgtkCore.parameter_names(VgtkCore.model(cc)); idx = [findfirst(==(q), names) for q in free_names]
     θ(z) = VgtkCore.parameter_vector(VgtkCore.model(VgtkCore.retract(cc, z)))[idx]
     z0 = zeros(nd); T = ForwardDiff.jacobian(θ, z0)
     Σθ = VgtkCore.propagate(T, Σc)                     # Core's propagation through the chart → parameters Jacobian
     return (; free_parameters = free_names, parameters = NamedTuple{free_names}(Tuple(θ(z0))), sigma = NamedTuple{free_names}(Tuple(sqrt.(LinearAlgebra.diag(Σθ)))),
             covariance = Σθ, s2, nu = ν,
-            reduced_eigenvalues = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(H[keep_gauge, keep_gauge])))),
-            reduced_eigenvalues_gauge_fixed = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(Hf)))),
+            reduced_eigenvalues_gauge_fixed = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(inv(LinearAlgebra.Symmetric(Σ̃[fc, fc]))))),
             direction_min_eigenvalue = Dmin)
 end

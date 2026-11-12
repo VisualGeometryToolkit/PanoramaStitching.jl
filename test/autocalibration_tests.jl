@@ -2,7 +2,7 @@
 # The autocalibration of a rotating camera (`refine_camera_and_rotations`: no target, the rotation bundle with the camera free
 # but `fixed`), and the rotation-only bundle that holds the calibration (`refine_rotations`), one bundle underneath.
 # Exact data from a known Kannala–Brandt camera are fitted exactly from a wrong camera and a perturbed start; the reduced
-# information shows the one gauge (the first frame's rotation) and nothing else free; the camera block's Jacobian against
+# information (Core's implicit_covariance) shows nothing free but the gauge (the first frame's rotation); the camera block's Jacobian against
 # ForwardDiff; the camera held, the bundle's numbers are those it had before the camera could be freed.
 # =============================================================================
 
@@ -67,12 +67,12 @@ end
     c = res.metadata.calibration
     @test c.free_parameters == free
     @test collect(values(c.parameters)) ≈ θt[[1, 4, 5, 6, 7, 8, 9]] rtol = 1.0e-9
-    # one gauge: the reduced information with the first frame's rotation has exactly three null directions (a common rotation
-    # of the frames and the directions); without it, none (nothing else free); every kept direction is observed
-    e = c.reduced_eigenvalues; eg = c.reduced_eigenvalues_gauge_fixed
-    @test length(e) == 3 * 10 + 7 && length(eg) == 3 * 9 + 7
-    @test maximum(abs, e[1:3]) < 1.0e-12 * e[end] && e[4] > 1.0e-8 * e[end]
+    # one gauge: with the first frame's rotation held, the reduced information (the inverse of the rotations' and the camera's
+    # marginal of Core's implicit_covariance) has no null direction (nothing else free); every kept direction is observed
+    eg = c.reduced_eigenvalues_gauge_fixed
+    @test length(eg) == 3 * 9 + 7
     @test eg[1] > 1.0e-8 * eg[end]
+    @test !hasproperty(c, :reduced_eigenvalues)                         # the gauge-included spectrum: PanoramaStitching's Schur copy, deleted
     @test c.direction_min_eigenvalue > 0
     @test c.nu == 2 * res.n - (3 * 9 + 2 * length(tracks) + 7)
 end
