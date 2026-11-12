@@ -1,26 +1,39 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-12)
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
-- Keypoints are Uncertain points (the owner's ruling): the feature store is VisualGeometryToolkitFeatures'
-  `StructArray{DescribedFeature}` as the descriptor returns it (`detect_features`' result; `VerifiedPairs.features`,
-  `Registration.features`), each detection's frame Core's `Uncertain(frame, Σ̃)`, the detector's covariance. `FrameFeatures`
-  (its `pixels`, `pixel_covariances` and `n_detected` beside the store), `keypoint_covariance_scale` (the median
-  normalisation), `keypoint_uncertain` (its identity fallback for a covariance not positive definite) and `bundle_whitening`
-  are gone: a keypoint reaches the camera's pixels with its covariance by Core's `propagate` through the frames'
-  `frame_map`, the pairs' residuals and the bundle's are always whitened by it (in sigmas of the detection image's unit
-  noise), and a covariance that is not finite and positive definite is refused where it is read (Core's `noise_columns`,
-  the bundle), never replaced. `pair_bearings(camera, fa, fb, matches; frame_map)` takes the two frames' described features
-  and Features' `NNMatch`es (Features' `csponds`); `register_rotations(::VerifiedPairs, camera; frame_map, …)` takes the
-  frames' map; the retired `bundle_whitening` keyword is refused by name. The scale is the variance factor σ₀ of the
-  keypoints' covariances (noise σ₀²Σ̃): the pairs' σ̂, their pooled `bundle_sigma` and the bundle's scale and width carry no
-  pixel unit, and a pair's `rms_px` statistic is `rms` (whitened). The example's `[registration] scoring_threshold_px` is
-  `scoring_threshold` (sigmas of that unit noise; the old key refused by name; 0.21 for the 14 mm set, 0.28 for the
-  rooftop: the 5 px over the old median normalisation), its records are verified_pairs v7 (the described features held as
-  they are) and rotations v12 (`bundle_scale`, `bundle_sigma`, `bundle_loss_width`), and its `intensity_and_position`
-  measurement noise is refused for want of a pixel σ (the bundle's scale is no longer one). Numbers move.
+- The feature store is VisualGeometryToolkitFeatures' `StructArray{DescribedFeature}` as the descriptor returns it
+  (`detect_features`' result; `VerifiedPairs.features`, `Registration.features`): `FrameFeatures` (its `pixels`,
+  `pixel_covariances` and `n_detected` kept beside the store) is gone, and so are `keypoint_covariance_scale`,
+  `keypoint_uncertain` and the `bundle_whitening` keyword (refused by name). **Keypoint covariances are OFF in this
+  release** (owner ruling 2026-11-12): the detector runs at its default (no `FeatureCovariance`), the pairs'
+  correspondences and the bundle's observations are the keypoints' centres in the camera's pixels (through the frames'
+  `frame_map`), and every residual, scale and width is in pixels. Per-keypoint covariances return with the
+  heterogeneous-covariance Student-t + uniform score of the next VisualGeometryToolkitCore release.
+  `pair_bearings(camera, fa, fb, matches; frame_map)` takes the two frames' described features and Features' `NNMatch`es
+  (Core/Features' `csponds`, Core's `bearing_csponds`); `register_rotations(::VerifiedPairs, camera; frame_map, …)` takes
+  the frames' map. A pair's `rms_px` statistic is `rms`.
+- SIMFIT++ is removed (owner ruling). Each verified pair's noise scale is its RANSAC scorer's own ŝ (Core's `noise_scale`
+  of the result) with the result's degrees of freedom (`VerifiedPairs.scales` holds `(sigma, dof)`, was
+  `(sigma, success)`); the bundle's scale is the kept pairs' scales pooled by VisualGeometryToolkitEstimation's
+  `pooled_noise_scale`, recorded as `ScaleUpstream`.
+- examples/panorama_vignetting: the pairs are scored by VisualGeometryToolkitCore's `StudentTUniformScoring` (Jeffreys
+  scale prior, flat label prior) at the `[registration]` key `outlier_halfwidth_px` (2120 px, half the FX3's long side);
+  the MSAC `scoring_threshold` (and `scoring_threshold_px`) are refused by name. Records: verified pairs v10, rotations
+  v14. The `intensity_and_position` measurement-noise arms are refused in this release (they await each pixel's position
+  noise from the rotation covariance).
+- The stack's one implementation replaces PanoramaStitching's copies: Core's `is_stationary(blocks, variables, free)`
+  (the bundle's stall postcondition), `lens_coverage(camera, rim)` (the coverage less a rim margin), `bearing_csponds`
+  and `implicit_covariance` (`refine_camera_and_rotations`' calibration covariance; its gauge-included
+  `reduced_eigenvalues` is gone, `reduced_eigenvalues_gauge_fixed` stays), Core's `restrict` of a `ParameterManifold`
+  (`fit_vignetting`'s V increment) and `propagate`; Estimation's `bundle_loss` refuses an `Irls` bundle strategy.
+- **Accuracy tolerance (owner ruling 2026-11-12).** Against 0.5.1's line (f0c711c) on the suite's and the README's
+  synthetic sweeps, with ground truth: every kept observation is a true inlier (0.99 before) and the true inliers' pixel
+  rms is 0.23–0.26 px (0.35 px before), while the rotation error moved from at most 0.0037° / 0.0067° to at most 0.0055°
+  / 0.0078° (Student-t pairs). The release gate accepts rotation errors up to 0.01° on both scenes. On the example's real
+  sets the rotations move by up to 0.18° (14 mm) and 0.06° (rooftop) from 0.5.1's.
 - The termination record (the contract's §14): `RotationBundleMetadata`'s `outcome` is gone; the bundles' and
   `fit_vignetting`'s results carry VisualGeometryToolkitCore's termination record (the `FitResult`'s `ReturnCode.T` and
   `StopRule`, read by `retcode`/`stop_rule`; the legacy Symbol `retcode_symbol(result)`). NLLSsolver's step-size or rejection stop is `Success` only where the robust cost is stationary
@@ -41,23 +54,17 @@
   configs/default.toml `[refine_camera_and_poses]` (compliance audit #48; was a literal of the same strategy):
   `Triggs{WelschShape}` stating no efficiency constant, its width Core's `efficiency_constant(Welsch, 2)` × `scale`, as
   every refine reads it. Same numbers.
-- The pairs' SIMFIT++ refits are Estimation's seeded RANSAC local optimization, `locally_optimize` (MSAC at the current
-  width, the pair's strategy; the rotation class's `[pipelines.rotation]` one when the pairs take the default), and the
-  held-out residuals the rotation's Mahalanobis distances (compliance audit #20): a `refine_*` takes no scorer.
 - examples/panorama_vignetting runs on VisualGeometryToolkitEval's Experiments (compliance audit #21): everything it writes
   goes under the results root (`<results>/panorama_vignetting/<name>/`, the run's outputs in `run-<run_key(config)>/`
   with Eval's run records) instead of the config's `output` folder (the key is refused by name); the stages' records are
   Eval's keyed result cache (`cached_result` at `run_key`: `verified_pairs_<key>.jld2`, `registration_<key>.jld2`) instead of a
   private key and JSON cache; the READY_14mm.txt marker is gone; `reproduce.toml` declares the stage graph. Its checks
   (`stage_cache_check.jl`, `autocalibration_check.jl`) run through `run_checks.jl` in the example's environment.
-- The view graph's averaging runs on Uncertain edges (the owner's ruling): each verified pair is scored on its keypoints'
-  covariance SHAPES (the new `keypoint_covariance_scale`/`keypoint_uncertain`, the one normalisation, shared with the
-  bundle's `:keypoint_covariance` whitening, which now normalises over every frame's refined keypoints) and its edge is
+- The view graph's averaging runs on Uncertain edges (the owner's ruling): each verified pair's edge is
   VisualGeometryToolkitEstimation's `uncertain_rotation` (its scorer's `noise_scale`² × the implicit-function covariance:
   absolute, rad²), so the averaging takes no scale and records scale 1, `ScaleUpstream`; edges sharing a keypoint are
   treated as independent (first order). A pair whose covariance is not determined is no edge, listed in
-  `Registration.no_covariance` and the log; a drop that splits the frames is an `ArgumentError` naming the pairs. The
-  pairs' scorer thresholds are in the whitened units of those shapes (pixels of the median keypoint).
+  `Registration.no_covariance` and the log; a drop that splits the frames is an `ArgumentError` naming the pairs.
   `VerifiedPairs.verified` entries carry `covariance`. The example's verified pairs are format v6, rotations.json records
   the pairs with no covariance and the averaging's scale record.
 - `refine_rotations` takes the robust-estimation contract's `optimization_strategy` (a `Triggs{Shape}`, by default every
