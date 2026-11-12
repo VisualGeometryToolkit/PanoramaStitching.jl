@@ -72,7 +72,7 @@ Under `$VGTK_DATA_ROOT`:
    centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Decoding is done once and cached (below).
 2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
-   the rotation of every frame pair by RANSAC on bearings whitened by the keypoints' covariances (`find_rotation`, the
+   the rotation of every frame pair by RANSAC on bearings (`find_rotation`, the
    Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), cached in
    `verified_pairs_<key>.jld2` before anything else runs on them, keyed by the matching and verification settings (every
    `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files' hashes: changing only the

@@ -1,9 +1,8 @@
 # The averaging's edges carry their rotations' covariances (the owner's ruling): each verified pair's
-# `uncertain_rotation` (its scorer's noise_scale² × the implicit-function covariance, the keypoints' covariances — the
-# detector's, as they are — in its residuals), a pair with no determined covariance dropped and recorded (refused when the
+# `uncertain_rotation` (its scorer's noise_scale² × the implicit-function covariance of its pixel residuals), a pair with no determined covariance dropped and recorded (refused when the
 # drop splits the frames), and the averaging's scale record ScaleUpstream (its edges' covariances absolute: no second scale).
 
-@testitem "edge uncertainty: a verified pair's edge is its uncertain_rotation, on the keypoints' covariances" setup = [SweepScene, BayerMaps] begin
+@testitem "edge uncertainty: a verified pair's edge is its uncertain_rotation" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, Statistics, StaticArrays
     using PanoramaStitching: PanoramaStitching, pair_bearings
     import VisualGeometryToolkitCore as VgtkCore
@@ -19,14 +18,11 @@
         push!(u1, VgtkCore.project(CAM, f) + 0.7 * randn(rng, SVector{2, Float64}))
         push!(u2, VgtkCore.project(CAM, g) + 0.7 * randn(rng, SVector{2, Float64}))
     end
-    # anisotropic keypoint covariances, every one positive definite (the detector's decision; no consumer default)
-    Σa = [SMatrix{2, 2, Float64, 4}(4.0, 0.5, 0.5, 1.0) * (1 + rand(rng)) for _ in u1]
-    Σb = [SMatrix{2, 2, Float64, 4}(1.0, -0.3, -0.3, 2.0) * (1 + rand(rng)) for _ in u2]
-    fa = described(u1, Σa); fb = described(u2, Σb)
+    fa = described(u1); fb = described(u2)                         # plain keypoints (no keypoint covariance in this release)
     ms = [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)]
     cs, kept = pair_bearings(bcam, fa, fb, ms; frame_map = IDENTITY_MAP)
-    # the endpoints' noise: the detector's covariances as they are, through the frame map (Core's propagate)
-    @test cs.Σ₁[1] == Σa[1] && cs.Σ₂[2] == Σb[2] && kept[1] == (1, 1)
+    # plain endpoints: no covariance columns (unit isotropic pixel noise)
+    @test !VgtkCore.hasattr(cs, :Σ₁) && !VgtkCore.hasattr(cs, :Σ₂) && kept[1] == (1, 1)
     @test VgtkCore.hasattr(cs, :score) && cs.score[1] == 1.0                       # Features' csponds' score column
     res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
                                        scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0))

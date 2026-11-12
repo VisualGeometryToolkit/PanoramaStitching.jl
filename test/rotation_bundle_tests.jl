@@ -7,7 +7,7 @@
 @testsetup module SweepScene
 using Random, LinearAlgebra, StaticArrays
 import Rotations
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, project, Uncertain, CovMat, Disc, Point2
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, project, Disc, Point2
 import VisualGeometryToolkitFeatures as VgtkFeatures
 export CAM, sweep_rotations, sweep_tracks, described
 const CAM = CameraModel(300.0px, SA[600.0px, 600.0px]; lens = KannalaBrandt(-0.02))
@@ -34,13 +34,10 @@ function sweep_tracks(rng, R, n; σ = 0.5, outl = 0.0, θmax = deg2rad(100))
     return out, dirs, past90
 end
 # A frame's features as the detector gives them, Features' described features (`StructArray{DescribedFeature}`), at `pixels`
-# (a frame at the camera's own pixels): each a detection of an uncertain Disc, its (x, y) covariance `covs[i]` (unit
-# isotropic by default; its log σ variance 1, uncorrelated), described by one zero.
-described(pixels, covs = fill(SMatrix{2, 2, Float64, 4}(1.0, 0.0, 0.0, 1.0), length(pixels))) =
-    VgtkFeatures.described_features([VgtkFeatures.Detection(Uncertain(Disc(Point2(p[1], p[2]), 2.0),
-                                                                      CovMat(SMatrix{3, 3, Float64, 9}(Σ[1, 1], Σ[2, 1], 0, Σ[1, 2], Σ[2, 2], 0, 0, 0, 1))),
-                                                            (; response = 1.0)) for (p, Σ) in zip(pixels, covs)],
-                                    zeros(Float32, length(pixels), 1))
+# (a frame at the camera's own pixels): each a detection of a Disc (the detector's default: no keypoint covariance),
+# described by one zero.
+described(pixels) = VgtkFeatures.described_features([VgtkFeatures.Detection(Disc(Point2(p[1], p[2]), 2.0), (; response = 1.0)) for p in pixels],
+                                                    zeros(Float32, length(pixels), 1))
 end
 
 @testitem "chain_tracks; the view graph is VisualGeometryToolkitEstimation's" begin

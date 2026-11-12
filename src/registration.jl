@@ -32,19 +32,17 @@ frame, `d = R_k·f_k`, the first frame's camera frame the common frame), `graph`
 (VisualGeometryToolkitEstimation's `ViewGraph` of the verified pairs the view-graph
 filters kept: per pair `(i, j)` VisualGeometryToolkitCore's `Attributed(Uncertain(R_ij,
 CovMat(Σ_R)), (; weight))`, `f_j = R_ij·f_i`, Σ_R its absolute rotation covariance (rad²;
-VisualGeometryToolkitEstimation's `uncertain_rotation`, the keypoints' covariance shapes
-included), its weight the inlier count), `removed` (the verified pairs the filters removed,
+VisualGeometryToolkitEstimation's `uncertain_rotation`), its weight the inlier count), `removed` (the verified pairs the filters removed,
 sorted), `no_covariance` (the verified pairs whose rotation covariance is not determined:
 not edges, sorted), `pairs` (per verified pair
-`(i, j)`, kept or removed: matches, inliers, the rms whitened residual of its inliers — sigmas of the keypoints' unit
-noise — and its rotation angle in degrees), `averaging` (the averaging fitted on `graph`,
+`(i, j)`, kept or removed: matches, inliers, the rms Sampson residual of its inliers in pixels and its rotation angle in
+degrees), `averaging` (the averaging fitted on `graph`,
 VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging`: the edges' covariances carry the scale, so it records scale 1,
 `ScaleUpstream`; the edges sharing a keypoint are treated as independent, the first-order approximation), `tracks` (of the kept pairs, as `(frame, keypoint)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 its `retcode`/`stop_rule` (Core's termination record) and its metadata's `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `bundle_sigma` (the
-pooled noise scale σ̂ of the kept pairs, the variance factor σ₀ of the keypoints' covariances — the noise σ₀²Σ̃ — and the
-bundle's `scale`), `features` (the frames' described features, [`detect_features`](@ref): a track's `(frame, keypoint)` is
+pooled noise scale σ̂ of the kept pairs, px, the bundle's `scale`), `features` (the frames' described features, [`detect_features`](@ref): a track's `(frame, keypoint)` is
 keypoint `keypoint` of `features[frame]`, in the frame's pixels) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
 `loma_provenance` of the descriptor and of the matcher — the models, the ONNX Runtime
 provider used and its threads).
@@ -76,10 +74,9 @@ its rotation `R_ij`, `f_j = R_ij·f_i`, its inlier count and its absolute rotati
 what the view graph and the rotation averaging consume), `inlier_matches` (per verified pair its
 inliers as keypoint index pairs `(a, b)`, keypoint `a` of frame `i` ↔ keypoint `b`
 of frame `j`: what the tracks consume) and `stats` (per verified pair: matches,
-inliers, the rms whitened residual of its inliers in sigmas of the keypoints' unit
-noise and its rotation angle in degrees), `scales` (per verified pair its noise scale: `sigma`, the variance factor σ₀
-of its keypoints' covariances (the noise σ₀²Σ̃) per coordinate of its whitened residual, its RANSAC scorer's own (`NaN` when
-the result recorded none), and `dof`, the result's degrees of freedom —
+inliers, the rms Sampson residual of its inliers in pixels and its rotation angle in degrees), `scales` (per verified
+pair its noise scale: `sigma`, px per coordinate of its Sampson residual, its RANSAC scorer's own (`NaN` when the result
+recorded none), and `dof`, the result's degrees of freedom —
 see [`register_rotations`](@ref)) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
 `loma_provenance` of the descriptor and of the matcher, `(; descriptor,
 matcher)`). Everything a registration needs after the features, the
@@ -204,8 +201,8 @@ const _RETIRED_REGISTRATION_KEYWORDS = (;
     averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)`",
     local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy`",
     # the retired whitening switch, spelled in fragments (check_naming lists the retired name)
-    Symbol("bundle_" * "whitening") => "the bundle always whitens each observation by its keypoint's covariance, the detector's " *
-                                       "(Features' FeatureCovariance, through the frames' `frame_map`)")
+    Symbol("bundle_" * "whitening") => "the bundle's observations are the keypoints' pixels (no keypoint covariance in this " *
+                                       "release)")
 function _refuse_retired_registration_keywords(what, kwargs)
     for (k, _) in pairs(kwargs)
         haskey(_RETIRED_REGISTRATION_KEYWORDS, k) && throw(ArgumentError("$what: the keyword `$k` is retired: $(_RETIRED_REGISTRATION_KEYWORDS[k])"))
@@ -254,9 +251,8 @@ RANSAC's:
   averaging of the verified pairs, are within `overlap_deg`); a pair is verified by `find_rotation` (its `scoring` and
   `local_optimization_strategy` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
-  with at least `min_inliers` inliers. Its residuals are whitened by its keypoints'
-  covariances ([`pair_bearings`](@ref)): in sigmas of the detection image's unit
-  noise, so a scorer's threshold is a number of those sigmas.
+  with at least `min_inliers` inliers. Its residuals are in the camera's pixels
+  ([`pair_bearings`](@ref): plain keypoints).
 - graph: VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` of the
   verified pairs' view graph, its strategy `averaging_optimization_strategy` (an `Irls{Shape}`; by default
   VisualGeometryToolkitEstimation's `[fit_rotation_averaging] optimization_strategy`): the pairs off a cycle
@@ -268,8 +264,7 @@ RANSAC's:
   result's `removed`; their matches make no track.
 - scale: per verified pair its RANSAC scorer's own scale ŝ (Core's `noise_scale` of
   its result: the consensus set's Student-t posterior scale) and the result's degrees
-  of freedom, the pairs' `scales` ([`VerifiedPairs`](@ref)): the variance factor σ₀ of
-  the keypoints' covariances (the noise σ₀²Σ̃, Σ̃ the detector's). No second scale
+  of freedom, the pairs' `scales` ([`VerifiedPairs`](@ref)), px. No second scale
   estimate.
 - bundle: [`refine_rotations`](@ref) with `bundle_optimization_strategy` (a `Triggs{Shape}`, by default VisualGeometryToolkitEstimation's pixel bundle's) at
   `scale` the kept pairs' scales pooled by VisualGeometryToolkitEstimation's
@@ -278,10 +273,8 @@ RANSAC's:
   constant × σ̂), σ̂ the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,
   `bundle_ftol`, `bundle_xtol`: [`refine_rotations`](@ref)), the width fixed.
   No kept pair with a scale is an `ArgumentError`. Every observation is its
-  keypoint in the camera's pixels with its covariance, the detector's taken through
-  the frames' `frame_map` (VisualGeometryToolkitCore's `propagate`), so the bundle
-  whitens each residual by it and the loss acts on the whitened residuals, in the
-  pairs' sigmas. The bundle holds the camera's calibration (`refine_rotations`); the
+  keypoint's centre in the camera's pixels (through the frames' `frame_map`), the
+  residuals in pixels. The bundle holds the camera's calibration (`refine_rotations`); the
   retired `bundle_camera_free`, `bundle_scale_multiple`, the whitening switch and `local_optimization` are an
   `ArgumentError` naming their successors (the autocalibration of a rotating camera is
   [`refine_camera_and_rotations`](@ref), on the result's rotations and tracks).
@@ -342,18 +335,18 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
     ts, dropped = chain_tracks(Dict(p => m for (p, m) in vp.inlier_matches if haskey(graph, p...)))
     say("  tracks: $(length(ts)) ($(sum(length, ts; init = 0)) observations), $dropped inconsistent dropped")
     # the bundle's scale, upstream: the kept pairs' RANSAC scales pooled by their degrees of freedom (Estimation's
-    # pooled_noise_scale), σ₀ of the keypoints' covariances
+    # pooled_noise_scale), px
     ps = sort!([p for p in keys(vp.verified) if haskey(graph, p...)])
     pooled = VgtkEstimation.pooled_noise_scale([vp.scales[p].sigma for p in ps], [vp.scales[p].dof for p in ps])
     VgtkCore.scale_source(pooled) == VgtkCore.ScaleNone &&
         throw(ArgumentError("register_rotations: no kept pair has a noise scale: the bundle has no width"))
     σ = Float64(VgtkCore.noise_scale(pooled))
-    say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales (σ₀ of the keypoints' covariances), the bundle's scale")
-    # every observation its keypoint in the camera's pixels with its covariance (the bundle whitens by it)
-    obs = [[k => VgtkCore.propagate(frame_map, feats[k][kp].detection) for (k, kp) in t] for t in ts]
+    say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales, px, the bundle's scale")
+    # every observation its keypoint's centre in the camera's pixels, through the frame map
+    obs = [[k => frame_map(SVector{2, Float64}(feats[k][kp].center[1], feats[k][kp].center[2])) for (k, kp) in t] for t in ts]
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; optimization_strategy = bundle_optimization_strategy, scale = pooled,
                               max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
-    say("  bundle: $(bundle.n) observations, $(bundle.iterations) iterations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; sigdigits = 3)) (whitened), " *
+    say("  bundle: $(bundle.n) observations, $(bundle.iterations) iterations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(VgtkCore.retcode(bundle)) ($(VgtkCore.stop_rule(bundle))), $(bundle.metadata.n_dropped_start) observations dropped at the start (not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(VgtkCore.estimate(bundle)[k]) for k in 1:K]
     return Registration(Rs, graph, removed, no_covariance, vp.stats, avg, ts, dropped, bundle, σ, feats, vp.loma)
@@ -375,8 +368,7 @@ end
 
 # A verified pair's rotation covariance (rad², the so(3) chart of R_ij): VisualGeometryToolkitEstimation's
 # `uncertain_rotation` of the pair's own RotationProblem and RANSAC result — its scorer's `noise_scale`² × the
-# implicit-function covariance of its estimator over the inliers, the keypoints' covariance shapes included (the problem's
-# `Σ₁`/`Σ₂` columns). `nothing` when the inliers do not determine it (a singular covariance): that pair is no edge.
+# implicit-function covariance of its estimator over the inliers. `nothing` when the inliers do not determine it (a singular covariance): that pair is no edge.
 function _verified_rotation_covariance(cs, res)
     u = try
         VgtkEstimation.uncertain_rotation(VgtkEstimation.RotationProblem(cs), res)

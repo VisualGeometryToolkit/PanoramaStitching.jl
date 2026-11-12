@@ -44,15 +44,16 @@ max_lag = 1
 overlap_deg = 120.0
 min_inliers = 25                                   # 40 left frames 1 and 7 a component of their own (2026-11-04)
 seed = 1
-outlier_halfwidth_px = 2120.0                      # StudentTUniformScoring on RotationProblem: the outlier half-width a (px, the plain
-                                                   # Sampson space; half the FX3's 4240 px long side), Jeffreys scale and flat label priors
+outlier_halfwidth_px = 2120.0                      # StudentTUniformScoring on RotationProblem: the outlier half-width a (px; half the FX3's
+                                                   # 4240 px long side), Jeffreys scale and flat label priors; from the hetero-cov
+                                                   # validation, exact for these plain keypoints (ℓ ≡ 0)
 local_optimization_strategy = { type = "irls", loss = "tls" }   # the pairs' RANSAC local optimization (Estimation's strategy table; Irls{TLSShape} its rotation default)
 max_trials = 10000
 min_trials = 100
 averaging_optimization_strategy = { type = "irls", loss = "huber", max_iter = 100 }   # the view graph's averaging (Estimation's fit_rotation_averaging strategy of record)
 cycle_tol_deg = 2.0                                # the view-graph filters (Estimation's fit_filtered_rotation_averaging): a pair off a 3-cycle by more
 orientation_tol_deg = 5.0                          # than this removed, then a pair off the averaged rotations by more than this
-bundle_optimization_strategy = { type = "triggs", loss = "welsch", efficiency_constant = 2.5 }   # the bundle: ONE LM run, Welsch at 2.5 × σ̂ (the pairs' pooled RANSAC scale; whitened residuals)
+bundle_optimization_strategy = { type = "triggs", loss = "welsch", efficiency_constant = 2.5 }   # the bundle: ONE LM run, Welsch at 2.5 × σ̂ (the pairs' pooled RANSAC scale, px)
 bundle_max_iter = 1000                             # never the reason it stops here: rotations.json records the iterations it took
 bundle_ftol = 1.0e-10                              # the relative cost decrease that stops it
 bundle_xtol = 1.0e-6                               # the largest step that stops it: radians of a rotation or a direction

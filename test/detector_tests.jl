@@ -1,11 +1,11 @@
 # =============================================================================
 # detect_features' variants: the selection (:spread, VisualGeometryToolkitFeatures' spread_strongest through the descriptor,
 # the one selection) and the detection image (:tone; :vst, the variance-stabilized green cells of the frame's
-# LinearRaw), the kept keypoints the described set (Features' described features, each Uncertain with the detector's
-# positive-definite covariance), and the refusals.
+# LinearRaw), the kept keypoints the described set (Features' described features, plain: no keypoint covariance), and the
+# refusals.
 # =============================================================================
 
-@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept keypoints are the described set, Uncertain" setup = [SyntheticSequence, BayerMaps] begin
+@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept keypoints are the described set, plain" setup = [SyntheticSequence, BayerMaps] begin
     using Test, StaticArrays, Statistics, LinearAlgebra
     using PanoramaStitching: PanoramaStitching, detect_features
     import VisualGeometryToolkitCore as VgtkCore
@@ -20,11 +20,8 @@
     sp = detect_features(q.cam, frame, desc; kw..., selection = :spread)
     @test VgtkFeatures.descriptor_matrix(sp) isa AbstractMatrix{Float32}             # Features' StructArray{DescribedFeature}, as the descriptor returns it
     @test px(detect_features(q.cam, frame, desc; kw...)) == px(sp)                  # :spread and :tone the defaults
-    # every keypoint is Uncertain with the detector's positive-definite covariance, and Core's propagate takes it to the camera's
-    # pixels (FRAME_MAP x ↦ 2x: the (x, y) block × 4)
-    @test all(f -> f.detection isa VgtkCore.Attributed{<:VgtkCore.Uncertain} && isposdef(Symmetric(Matrix(cov(f.detection)))), sp)
-    u = VgtkCore.propagate(FRAME_MAP, sp[1].detection)
-    @test VgtkCore.geom(u) == px(sp)[1] && Matrix(cov(u)) ≈ 4 * Matrix(cov(sp[1].detection))[1:2, 1:2]
+    # keypoint covariances are off in this release: every keypoint is the detector's plain detection
+    @test !any(f -> f.detection isa VgtkCore.Attributed{<:VgtkCore.Uncertain}, sp)
     @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(sp))
     @test round(Int, 0.9N) <= length(sp) <= round(Int, 1.1N)
     # the oracle: the global top N by |response| of the region's detections (ASIFT on the documented tone) leaves the dim half

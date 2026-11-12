@@ -41,10 +41,10 @@ _clip_mask(frame, ::Nothing) = nothing
 # variance-stabilized green cells of a `LinearRaw` (Features' `variance_stabilize`, whose saturation Features masks) at
 # `noise_sigmas` noise σ; no detection reads a clipped pixel (Features' `exclusion_mask`: within three scales of one, dropped).
 _asift(frame, toned, ::Val{:tone}, noise, tilts, mask) =
-    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, exclusion_mask = mask, uncertainty = VgtkFeatures.FeatureCovariance())
+    VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, exclusion_mask = mask)
 _asift(frame::VgtkFeatures.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
     VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame; noise.electrons_per_dn, noise.read_noise);
-                              noise.noise_sigmas, tilts, exclusion_mask = mask, uncertainty = VgtkFeatures.FeatureCovariance())
+                              noise.noise_sigmas, tilts, exclusion_mask = mask)
 _asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
     throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
 
@@ -80,13 +80,11 @@ descriptor resamples the image to its network's input).
 
 The result is the descriptor's own: VisualGeometryToolkitFeatures' described
 features (`StructArray{DescribedFeature}`), each a `Detection` in the frame's
-pixels whose frame is VisualGeometryToolkitCore's `Uncertain(frame, Σ̃)` (Features'
-`FeatureCovariance`: the detector's covariance over `(x, y, log σ)` for unit iid
-noise of the detection image) and its DeDoDe description — the one feature store,
-in Features' canonical order of the detections (a function of the image: the same
-run to run, on any number of threads). `frame_map` takes a keypoint to the camera's
-pixels with its covariance (Core's `propagate`: [`pair_bearings`](@ref), the
-bundle of [`register_rotations`](@ref)).
+pixels (the detector's default: no keypoint covariance) and its DeDoDe description —
+the one feature store, in Features' canonical order of the detections (a function of
+the image: the same run to run, on any number of threads). `frame_map` takes a
+keypoint's centre to the camera's pixels ([`pair_bearings`](@ref), the bundle of
+[`register_rotations`](@ref)).
 """
 function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; frame_map,
                          tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
@@ -115,25 +113,22 @@ end
 
 The `matches` of two frames' described features `fa`, `fb` ([`detect_features`](@ref))
 as unit-bearing correspondences: VisualGeometryToolkitFeatures' `csponds` of the
-matched features (their `:score` column kept), each keypoint taken to the camera's
-pixels with its covariance by the frames' `frame_map` (VisualGeometryToolkitCore's
-`propagate`), back-projected with its Jacobian as the `M₁`/`M₂` columns
-(VisualGeometryToolkitCore's `backproject_with_jacobian` through the calibrated
-`camera`: the whole field, past 90°) and its covariance the measurement noise of its
-endpoint (VisualGeometryToolkitCore's `noise_columns`: the `Σ₁`/`Σ₂` columns, camera
-pixels² for unit noise of the detection image), so the pair's residuals are in
-sigmas of that unit noise; and the keypoint index pairs kept (a pixel the camera
-cannot back-project is dropped).
+matched features (their `:score` column kept), each keypoint's centre taken to the
+camera's pixels by the frames' `frame_map` and back-projected with its Jacobian as the
+`M₁`/`M₂` columns (VisualGeometryToolkitCore's `bearing_csponds` through the calibrated
+`camera`: the whole field, past 90°), plain points, so the pair's residuals are in
+camera pixels; and the keypoint index pairs kept (a pixel the camera cannot
+back-project is dropped).
 """
 function pair_bearings(camera, fa, fb, matches; frame_map)
     ms = VgtkCore.csponds(fa, fb, matches)          # Features' method of Core's csponds: the matched features and their score
-    # each keypoint in the camera's pixels with its covariance: Features' propagate of the detection through the frame map
-    ua = [VgtkCore.propagate(frame_map, f.detection) for f in VgtkCore.sources(ms)]
-    ub = [VgtkCore.propagate(frame_map, f.detection) for f in VgtkCore.targets(ms)]
+    # each keypoint's centre in the camera's pixels, through the frame map
+    ua = [frame_map(SVector{2, Float64}(f.center[1], f.center[2])) for f in VgtkCore.sources(ms)]
+    ub = [frame_map(SVector{2, Float64}(f.center[1], f.center[2])) for f in VgtkCore.targets(ms)]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
-    bs = VgtkCore.bearing_csponds(cm, cm, VgtkCore.geom.(ua) .=> VgtkCore.geom.(ub))   # Core's: the bearings and their M₁/M₂
+    bs = VgtkCore.bearing_csponds(cm, cm, ua .=> ub)  # Core's: the bearings and their M₁/M₂
     f1 = VgtkCore.sources(bs); f2 = VgtkCore.targets(bs)
     keep = [i for i in eachindex(ua) if all(isfinite, f1[i]) && all(isfinite, f2[i]) && all(isfinite, bs.M₁[i]) && all(isfinite, bs.M₂[i])]
-    cs = VgtkCore.withattrs(bs[keep]; score = ms.score[keep], VgtkCore.noise_columns(ua[keep], ub[keep])...)
+    cs = VgtkCore.withattrs(bs[keep]; score = ms.score[keep])
     return cs, [(matches[i].first, matches[i].second) for i in keep]
 end

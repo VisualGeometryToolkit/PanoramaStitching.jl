@@ -24,7 +24,7 @@
         for (t, obs) in enumerate(ts), (k, u) in obs
             push!(pixels[k], u); index[k][t] = length(pixels[k])
         end
-        feats = [described(pixels[k]) for k in 1:K]                  # unit isotropic covariances: the pixel residuals
+        feats = [described(pixels[k]) for k in 1:K]                  # plain keypoints: the pixel residuals
         verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
         matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
         stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()

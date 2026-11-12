@@ -330,7 +330,7 @@ end
     # 0.5.1's bundle: the same tracks and start through the bare model (this lens's projection is defined everywhere, so
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
-    obs = [[k => VgtkCore.propagate(FRAME_MAP, b.features[k][kp].detection) for (k, kp) in t] for t in b.tracks]
+    obs = [[k => FRAME_MAP(SVector{2, Float64}(b.features[k][kp].center...)) for (k, kp) in t] for t in b.tracks]
     ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; merge(bkw, (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}()))..., width = b.bundle.metadata.loss_width)
     @test VgtkCore.converged(ref)
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9

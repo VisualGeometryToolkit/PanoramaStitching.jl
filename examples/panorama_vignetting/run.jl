@@ -65,7 +65,7 @@ const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM 
                                    "averaging_loss" => "the averaging's strategy is the table averaging_optimization_strategy",
                                    "local_optimization" => "the pairs' RANSAC strategy table is local_optimization_strategy",
                                    "bundle_camera_free" => "the bundle holds the camera's calibration",
-                                   "bundle_" * "whitening" => "the bundle always whitens each observation by its keypoint's covariance (the detector's)",
+                                   "bundle_" * "whitening" => "the bundle's observations are the keypoints' pixels (no keypoint covariance in this release)",
                                    "scoring_threshold" * "_px" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (no threshold)",
                                    "scoring_threshold" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (the MSAC threshold " *
                                    "is retired)")
@@ -200,11 +200,12 @@ end
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 # v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
+# v14: keypoint covariances off: the bundle's observations the keypoints' pixels, its scale and width in pixels.
 # v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's pooled_noise_scale; SIMFIT++ deleted).
 # v12: every bundle observation whitened by its keypoint's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for IntensityAndPositionNoise.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v13 (the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its keypoint's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v14 (plain keypoints, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its keypoint's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -217,13 +218,14 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # covariance (VisualGeometryToolkitEstimation's uncertain_rotation): the averaging's Uncertain edges.
 # v5: no keypoint within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
 # Features' canonical order, the frames' map Features' raw_frame_map.
-# v9: the pairs scored by Student-t + uniform at outlier_halfwidth_px (Core 0.10's heterogeneous covariances; the MSAC
-# scoring_threshold retired), each pair's ŝ that scorer's.
+# v10: keypoint covariances off (the detector's default): the pairs' residuals and scales in pixels.
+# v9: the pairs scored by Student-t + uniform at outlier_halfwidth_px (the MSAC scoring_threshold retired), each pair's ŝ that
+# scorer's.
 # v8: per pair its RANSAC scorer's own ŝ and degrees of freedom (sigma, dof); SIMFIT++ deleted.
 # v7: the features are Features' described features as detected (their covariances the detector's, no normalisation), the pairs'
 # residuals whitened by them (scoring_threshold in sigmas of the unit noise; the px threshold retired), per pair its rms and σ̂
 # in those sigmas.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v9 (Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the keypoints' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v10 (plain keypoints, pixel residuals; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the keypoints' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol")
 function pairs_settings(r)
@@ -349,12 +351,11 @@ function registration(C, inp, lens; log)
                           "bundle_stop_rule" => string(VgtkCore.stop_rule(reg.bundle)),
                           "bundle_dropped_start" => reg.bundle.metadata.n_dropped_start,
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
-                          # the bundle's robust loss width and scale (whitened residuals: sigmas of the keypoints' unit noise) and its
-                          # strategy
+                          # the bundle's robust loss width and scale (px) and its strategy
                           "bundle_loss_width" => reg.bundle.metadata.loss_width,
                           "bundle_optimization_strategy" => VgtkEstimation.config_dict(bundle_strategy(r)),
                           "bundle_scale" => VgtkCore.noise_scale(reg.bundle),
-                          # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, σ₀ of the keypoints' covariances) and the LM
+                          # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the keypoints' covariances) and the LM
                           # iterations its one run took
                           "bundle_sigma" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.iterations,
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
@@ -442,9 +443,7 @@ function fit_measurement_noise(v, point_scale_px)
     N = PanoramaStitching.MEASUREMENT_NOISES[v["measurement_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
     N === IntensityNoise && return IntensityNoise()
     point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" is refused in this release: it awaits " *
-                                        "each pixel's position noise from the frames' rotation covariance (after the release). The " *
-                                        "registration's scale σ₀ is the variance factor of the keypoints' covariances, not a pixel σ, so " *
-                                        "no shared point σ is taken from it")
+                                        "each pixel's position noise from the frames' rotation covariance (after the release)")
     return IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), log_intensity_scale = v["log_intensity_scale"],
                                      iterations = v["measurement_noise_iterations"])
 end

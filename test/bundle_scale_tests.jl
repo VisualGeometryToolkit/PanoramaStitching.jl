@@ -22,7 +22,7 @@
             push!(u2, rand(rng) < 0.2 ? SVector(600 + 500 * (2rand(rng) - 1), 600 + 500 * (2rand(rng) - 1)) :
                                          VgtkCore.project(CAM, g) + σ * randn(rng, SVector{2, Float64}))
         end
-        fa = described(u1); fb = described(u2)                     # unit isotropic covariances: whitened residuals in pixels
+        fa = described(u1); fb = described(u2)                     # plain keypoints: residuals in pixels
         cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)];
                                                 frame_map = IDENTITY_MAP)
         lo = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
@@ -73,7 +73,7 @@ end
     @test VgtkCore.converged(reg.bundle) && reg.bundle.iterations < 1000
     # the same bundle with that width given explicitly: one LM run, the same result (its observations the keypoints with their
     # covariances, as register_rotations builds them)
-    obs = [[k => VgtkCore.propagate(IDENTITY_MAP, feats[k][kp].detection) for (k, kp) in t] for t in reg.tracks]
+    obs = [[k => IDENTITY_MAP(SVector{2, Float64}(feats[k][kp].center...)) for (k, kp) in t] for t in reg.tracks]
     direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 2.5 * pooled,
                               max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
     @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations

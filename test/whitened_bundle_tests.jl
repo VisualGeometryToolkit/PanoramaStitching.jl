@@ -1,10 +1,9 @@
 # =============================================================================
-# The whitened rotation bundle (src/rotation_bundle.jl; register_rotations' observations always carry their keypoints'
-# covariances): observations that carry their
+# The whitened rotation bundle (src/rotation_bundle.jl): observations that carry their
 # keypoints' pixel covariances (`frame => Uncertain(pixel, CovMat(Σ))`) are whitened by L⁻¹ (Σ = LLᵀ). On a synthetic fisheye
 # sweep with known anisotropic, heteroscedastic keypoint noise the whitened bundle recovers the rotations better than the
-# unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; register_rotations' observations the detector's
-# covariances, with no consumer default.
+# unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; register_rotations' observations plain pixels
+# (keypoint covariances off in this release), with no consumer default.
 # =============================================================================
 
 @testitem "refine_rotations whitened by known anisotropic keypoint covariances beats the unweighted bundle" setup = [SweepScene] begin
@@ -80,24 +79,20 @@ end
     @test_throws ArgumentError refine_rotations(CAM, R, [[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]]; kw...)
 end
 
-@testitem "the bundle's observations: each keypoint with the detector's covariance, no consumer default" setup = [SweepScene, BayerMaps] begin
-    # Keypoints are Uncertain points: their covariances are the detector's (Features' FeatureCovariance), taken to the camera's
-    # pixels by Core's propagate through the frame map; PanoramaStitching normalises none and substitutes none. A covariance
-    # that is not finite and positive definite is refused where it is read (Core's noise_columns, the bundle's whitening), never
-    # replaced.
+@testitem "keypoint covariances off: the pairs and the bundle read plain pixels, no consumer default" setup = [SweepScene, BayerMaps] begin
+    # This release runs the detector at its default (no keypoint covariance): the pairs' correspondences carry no covariance
+    # columns and the bundle's observations are the keypoints' pixels; PanoramaStitching normalises and substitutes none.
     using Test, StaticArrays, Statistics
     import PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitFeatures as VgtkFeatures
-    S(a, b, c) = SMatrix{2, 2, Float64, 4}(a, c, c, b)
-    f = described([SVector(1.0, 2.0), SVector(3.0, 4.0)], [S(4.0, 1.0, 0.5), S(2.0, 2.0, 0.0)])
-    u = VgtkCore.propagate(FRAME_MAP, f[1].detection)                      # FRAME_MAP: x ↦ 2x
-    @test VgtkCore.geom(u) == FRAME_MAP(SVector(1.0, 2.0)) && SMatrix{2, 2}(Statistics.cov(u)) == 4 * S(4.0, 1.0, 0.5)
-    @test SMatrix{2, 2}(Statistics.cov(VgtkCore.propagate(IDENTITY_MAP, f[2].detection))) == S(2.0, 2.0, 0.0)
-    # an undetermined covariance is refused, not defaulted: the pairs' noise columns and the bundle read it as it is
-    bad = described([SVector(600.0, 600.0)], [fill(NaN, SMatrix{2, 2, Float64, 4})])         # at the principal point: back-projected
-    @test_throws ArgumentError PanoramaStitching.pair_bearings(VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200)), bad, bad,
-                                                              [VgtkFeatures.NNMatch(1, 1, 1.0f0, 0.5f0)]; frame_map = IDENTITY_MAP)
+    f = described([SVector(600.0, 600.0), SVector(610.0, 590.0)])
+    cs, kept = PanoramaStitching.pair_bearings(VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200)), f, f,
+                                               [VgtkFeatures.NNMatch(1, 1, 1.0f0, 0.5f0), VgtkFeatures.NNMatch(2, 2, 0.5f0, 0.5f0)];
+                                               frame_map = IDENTITY_MAP)
+    @test length(cs) == 2 && kept == [(1, 1), (2, 2)] && !VgtkCore.hasattr(cs, :Σ₁) && cs.score == [1.0, 0.5]
+    src0 = join(read.(filter(endswith(".jl"), readdir(joinpath(pkgdir(PanoramaStitching), "src"); join = true)), String))
+    @test !occursin("Feature" * "Covariance()", src0)                     # the detector at its default
     # the retired consumer-side policy is gone by name: no normalisation, no identity fallback, no whitening switch
     # (the retired names in fragments: check_naming lists them)
     for retired in Symbol.(("Frame" * "Features", "keypoint_covariance" * "_scale", "keypoint" * "_uncertain", "_valid_covariance",
