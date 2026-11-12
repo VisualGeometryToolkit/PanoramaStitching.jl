@@ -280,8 +280,8 @@ result's `n` is the number of observations kept; its metadata's
   loss acts on the whitened residual. Every observation carries a covariance
   or none does.
 - `optimization_strategy` — the robust strategy of the robust-estimation contract: a `Triggs{K}`
-  (VisualGeometryToolkitCore's; the default every refine's, `Triggs{WelschShape}` at the shape's efficiency constant for
-  a 2-D residual), its loss `K` as NLLSsolver's robustifier (`loss_robustifier`) at ONE width fixed for the bundle's one
+  (VisualGeometryToolkitCore's; the default VisualGeometryToolkitEstimation's pixel bundle's, configs/default.toml
+  `[refine_camera_and_poses]`: `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D residual), its loss `K` as NLLSsolver's robustifier (`loss_robustifier`) at ONE width fixed for the bundle's one
   NLLSsolver run; or `nothing`, the plain least squares (no scale or width).
 - exactly one of `scale = σ` (the observations' noise scale, pixels or whitened units, or an upstream robust result:
   `register_rotations` hands the verified pairs' pooled SIMFIT++ scale) — the width is the strategy's efficiency
@@ -319,14 +319,29 @@ function refine_rotations(camera, rotations::AbstractDict, tracks::AbstractVecto
                             what = "refine_rotations")
 end
 
-# The default strategy of the rotation bundles: every refine's, Triggs{Welsch} at Core's efficiency constant for a 2-D
-# residual (a pixel reprojection error).
-const _DEFAULT_BUNDLE_STRATEGY = VgtkCore.Triggs{VgtkCore.WelschShape}(
-    efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2))
+# VisualGeometryToolkitEstimation's configuration of record (its configs/default.toml), read once through its public reader:
+# a strategy default the bundles share with Estimation is looked up there, never restated here.
+const _ESTIMATION_DEFAULTS = VgtkCore.parse_defaults(VgtkEstimation.default_config_path())
+_estimation_strategy(table::AbstractString, key::AbstractString, class::Symbol) =
+    VgtkEstimation.optimization_strategy_from_toml(VgtkCore.toml_default(_ESTIMATION_DEFAULTS, table, key);
+                                                   class, section = "$table.$key")
+
+# The default strategy of the rotation bundles: Estimation's pixel bundle's, [refine_camera_and_poses]
+# `optimization_strategy` (Triggs{Welsch} stating no efficiency constant: its width is Core's efficiency constant for a 2-D
+# residual, a pixel reprojection error, times the caller's `scale`).
+const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("refine_camera_and_poses", "optimization_strategy", :refine_camera_and_poses)
 
 # The bundle's loss, width and scale record from its strategy and scale input (the robust-estimation contract): a Triggs{K}
 # at exactly one of `scale` (its width the strategy's efficiency constant × σ) or `width`; `nothing` the plain least squares,
 # which takes neither.
+# The efficiency constant a bundle strategy multiplies `scale` by: the one stated on it, or (none stated) Core's
+# `efficiency_constant(K, 2)` for the 2-D pixel residual, as every refine reads it.
+function _bundle_constant(strategy::VgtkCore.Triggs)
+    w = VgtkCore.lo_width(strategy)
+    K = VgtkCore.strategy_loss(strategy)
+    w === nothing && return Float64(VgtkCore.efficiency_constant(K, 2))
+    return Float64(VgtkCore.lo_width_value(w).value)
+end
 function _rotation_bundle_loss(what, strategy, scale, width)
     if strategy === nothing
         (scale === nothing && width === nothing) || throw(ArgumentError(
@@ -337,8 +352,7 @@ function _rotation_bundle_loss(what, strategy, scale, width)
         "$what: the bundle's strategy is a Triggs{K} (its loss K as NLLSsolver's robustifier at one width) or nothing, " *
         "got $(nameof(typeof(strategy)))"))
     input = VgtkCore.scale_input(scale, width)
-    w = isfinite(input.width) ? Float64(input.width) :
-        Float64(VgtkCore.lo_width_value(VgtkCore.lo_width(strategy)).value) * Float64(input.scale)
+    w = isfinite(input.width) ? Float64(input.width) : _bundle_constant(strategy) * Float64(input.scale)
     return (; loss = VgtkCore.strategy_loss(strategy)(), width = w, scale = Float64(input.scale), scale_source = input.source)
 end
 
@@ -357,8 +371,9 @@ observations kept at the start are those the GIVEN camera images; the residuals,
 refined camera's.
 
 A contract refine:
-- `optimization_strategy` — the robust strategy, a `Triggs{K}` (VisualGeometryToolkitCore's; the default every
-  refine's, `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D residual): the loss `K` as NLLSsolver's
+- `optimization_strategy` — the robust strategy, a `Triggs{K}` (VisualGeometryToolkitCore's; the default
+  VisualGeometryToolkitEstimation's pixel bundle's, configs/default.toml `[refine_camera_and_poses]`: `Triggs{WelschShape}`
+  at the shape's efficiency constant for a 2-D residual): the loss `K` as NLLSsolver's
   robustifier at ONE fixed width.
 - exactly one of `scale = σ` (the observations' noise scale, px or whitened units; or an upstream robust result) — the width
   is then the strategy's efficiency constant × σ — or `width = w` (the loss width itself).

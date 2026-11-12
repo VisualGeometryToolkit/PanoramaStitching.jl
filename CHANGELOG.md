@@ -4,6 +4,13 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
+- The bundles' default `optimization_strategy` is VisualGeometryToolkitEstimation's pixel bundle's, read from its
+  configs/default.toml `[refine_camera_and_poses]` (compliance audit #48; was a literal of the same strategy):
+  `Triggs{WelschShape}` stating no efficiency constant, its width Core's `efficiency_constant(Welsch, 2)` × `scale`, as
+  every refine reads it. Same numbers.
+- The pairs' SIMFIT++ refits are Estimation's seeded RANSAC local optimization, `locally_optimize` (MSAC at the current
+  width, the pair's strategy; the rotation class's `[pipelines.rotation]` one when the pairs take the default), and the
+  held-out residuals the rotation's Mahalanobis distances (compliance audit #20): a `refine_*` takes no scorer.
 - examples/panorama_vignetting runs on VisualGeometryToolkitEval's Experiments (compliance audit #21): everything it writes
   goes under the results root (`<results>/panorama_vignetting/<name>/`, the run's outputs in `run-<run_key(config)>/`
   with Eval's run records) instead of the config's `output` folder (the key is refused by name); the stages' records are

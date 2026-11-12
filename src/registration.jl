@@ -179,11 +179,15 @@ end
 # SIMFIT++ (Edstedt, CVPRW 2025; VisualGeometryToolkitEstimation's port) on the Sampson residual of a pair's rotation: χ² of its 2
 # degrees of freedom (the residual's codimension), the reference's coverage α = 0.99 and its width bounds (px).
 const _SIMFIT = VgtkEstimation.SimFitPP(; dg = 2)
+# The rotation class's RANSAC local optimization (Estimation's [pipelines.rotation]), the strategy `find_rotation` runs when
+# the pairs take the default: their SIMFIT++ refits run the same one.
+const _ROTATION_LOCAL_OPTIMIZATION = _estimation_strategy("pipelines.rotation", "local_optimization_strategy", :rotation)
 _chisq2_quantile(α) = -2 * log1p(-α)          # the χ²₂ quantile, closed form: F(x) = 1 − exp(−x/2)
 
 # A verified pair's noise scale: SIMFIT++'s loss width over its correspondences, the rotation refitted on a random train split
-# at the current width (Estimation's `refine_rotation` from the RANSAC estimate, MSAC at that width and the pair's local
-# optimization) and the held-out split's squared residuals at it, seeded with the RANSAC's own σ̂ (its consensus Student-t
+# at the current width (Estimation's seeded RANSAC local optimization, `locally_optimize`, from the RANSAC estimate: MSAC at
+# that width and the pair's local optimization strategy, the rotation class's when the pair takes the default) and the
+# held-out split's squared residuals at it (its Mahalanobis distances, no refit), seeded with the RANSAC's own σ̂ (its consensus Student-t
 # scale) as a width; σ̂ = width / √χ²₂(α). `rng` the pair's own stream. `success` false when SIMFIT++ found no width in its
 # bounds (the RANSAC σ̂ is then the pair's sigma, and the pair is not pooled).
 function _pair_scale(cs, res, local_optimization_strategy, rng)
@@ -193,12 +197,17 @@ function _pair_scale(cs, res, local_optimization_strategy, rng)
     w0 = sqrt(q) * s
     isfinite(w0) && w0 > 0 || return (sigma = s, success = false)
     R0 = VgtkCore.estimate(res)
-    lo = local_optimization_strategy === nothing ? (;) : (; optimization_strategy = local_optimization_strategy)   # a refine's keyword
+    lo = local_optimization_strategy === nothing ? _ROTATION_LOCAL_OPTIMIZATION : local_optimization_strategy
     function fit(w, train)
-        r = VgtkEstimation.refine_rotation(R0, cs[collect(train)]; scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = w), lo...)
+        r = VgtkEstimation.locally_optimize(VgtkEstimation.RotationProblem(cs[collect(train)]), R0; local_optimization_strategy = lo,
+                                            scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = w))
         return VgtkCore.converged(r) ? VgtkCore.estimate(r) : nothing
     end
-    residuals_sq(R, val) = abs2.(VgtkEstimation.refine_rotation(R, cs[collect(val)]; optimization_strategy = nothing).residuals)
+    function residuals_sq(R, val)
+        r = Vector{Float64}(undef, length(val))
+        VgtkCore.mahalanobis_distances!(r, VgtkEstimation.RotationProblem(cs[collect(val)]), R)
+        return abs2.(r)
+    end
     w, ok = VgtkEstimation.simfitpp_loss_width(fit, residuals_sq, length(cs), w0, _SIMFIT; rng)
     return (sigma = w / sqrt(q), success = ok)
 end
@@ -293,12 +302,13 @@ RANSAC's:
   (Edstedt, "Less Biased Noise Scale Estimation for Threshold-Robust RANSAC",
   CVPRW 2025; VisualGeometryToolkitEstimation's `simfitpp_loss_width` with χ²₂, the
   rotation's Sampson residual's codimension, at coverage α = 0.99): the
-  rotation refitted on random train splits (`refine_rotation`, MSAC at the
-  current width, the pair's `local_optimization_strategy`), the held-out residuals'
+  rotation refitted on random train splits (VisualGeometryToolkitEstimation's
+  seeded RANSAC local optimization `locally_optimize`, MSAC at the current
+  width, the pair's `local_optimization_strategy`), the held-out residuals'
   truncation-debiased median the scale; seeded with the RANSAC's own σ̂, the
   sampler the pair's (`seed`, `i`, `j`). The pairs' `scales`
   ([`VerifiedPairs`](@ref)).
-- bundle: [`refine_rotations`](@ref) with `bundle_optimization_strategy` (a `Triggs{Shape}`, by default every refine's) at
+- bundle: [`refine_rotations`](@ref) with `bundle_optimization_strategy` (a `Triggs{Shape}`, by default VisualGeometryToolkitEstimation's pixel bundle's) at
   `scale = σ̂` (its width the strategy's efficiency constant × σ̂), σ̂ the pooled scale of the kept pairs whose
   SIMFIT++ succeeded, `σ̂² = Σ nₚσₚ² / Σ nₚ` (`nₚ` the pair's inliers: their
   pooled variance), the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,

@@ -82,3 +82,60 @@ end
     @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 1.0), width = 0.0,
                                                 max_iter = 10, ftol = 1.0e-12, xtol = 1.0e-6)
 end
+
+@testitem "the default bundle strategy is VisualGeometryToolkitEstimation's [refine_camera_and_poses]: Core's constant × scale" setup = [SweepScene] begin
+    using Test, Random, StaticArrays
+    using PanoramaStitching: PanoramaStitching, refine_rotations
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    import TOML
+    table = TOML.parsefile(VgtkEstimation.default_config_path())["refine_camera_and_poses"]["optimization_strategy"]
+    record = VgtkEstimation.optimization_strategy_from_toml(table; class = :refine_camera_and_poses)
+    @test PanoramaStitching._DEFAULT_BUNDLE_STRATEGY == record
+    @test VgtkCore.lo_width(PanoramaStitching._DEFAULT_BUNDLE_STRATEGY) === nothing   # no constant of its own: Core's at d = 2
+    rng = MersenneTwister(4)
+    R = sweep_rotations(rng, 3)
+    ts, _, _ = sweep_tracks(rng, R, 200; σ = 0.4)
+    bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
+    kw = (; scale = 0.4, max_iter = 200, ftol = 1.0e-12, xtol = 1.0e-9)
+    dflt = refine_rotations(bcam, R, ts; kw...)
+    c = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2)
+    stated = refine_rotations(bcam, R, ts; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = c), kw...)
+    @test dflt.metadata.loss_width == c * 0.4
+    @test [VgtkCore.estimate(dflt)[k] for k in 1:3] == [VgtkCore.estimate(stated)[k] for k in 1:3]
+    @test dflt.iterations == stated.iterations
+end
+
+@testitem "_pair_scale: SIMFIT++ on the default strategy runs no refine with a scorer (the rotation class's local optimization)" setup = [SweepScene] begin
+    using Test, Random, LinearAlgebra, StaticArrays
+    using PanoramaStitching: PanoramaStitching, FrameFeatures
+    import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    rng = MersenneTwister(6)
+    bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
+    R = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.01, deg2rad(15.0), 0.02)))
+    σ = 0.8
+    u1 = SVector{2, Float64}[]; u2 = SVector{2, Float64}[]
+    while length(u1) < 1200
+        f = normalize(randn(rng, SVector{3, Float64})); acos(f[3]) < deg2rad(70) || continue
+        g = R * f; acos(clamp(g[3], -1, 1)) < deg2rad(70) || continue
+        push!(u1, VgtkCore.project(CAM, f) + σ * randn(rng, SVector{2, Float64}))
+        push!(u2, rand(rng) < 0.2 ? SVector(600 + 500 * (2rand(rng) - 1), 600 + 500 * (2rand(rng) - 1)) :
+                                     VgtkCore.project(CAM, g) + σ * randn(rng, SVector{2, Float64}))
+    end
+    fa = FrameFeatures(u1, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u1)), nothing, length(u1))
+    fb = FrameFeatures(u2, fill(SMatrix{2, 2}(fill(NaN, 2, 2)), length(u2)), nothing, length(u2))
+    cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [(first = i, second = i, score = 1.0) for i in eachindex(u1)])
+    res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
+                                       scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0))
+    # the default (`nothing`) is the strategy find_rotation ran: Estimation's [pipelines.rotation]
+    @test PanoramaStitching._ROTATION_LOCAL_OPTIMIZATION ==
+          VgtkEstimation.optimization_strategy_from_toml(VgtkCore.toml_default(PanoramaStitching._ESTIMATION_DEFAULTS, "pipelines.rotation",
+                                                                                "local_optimization_strategy"); class = :rotation)
+    s = PanoramaStitching._pair_scale(cs, res, nothing, MersenneTwister(2))
+    @test s.success
+    @test isapprox(s.sigma, σ; rtol = 0.15)
+    # a refine_* refuses a scorer: the SIMFIT++ refits are the seeded local optimization, not a refine
+    @test_throws ArgumentError VgtkEstimation.refine_rotation(VgtkCore.estimate(res), cs;
+                                                              scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 1.0))
+end
