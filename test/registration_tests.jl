@@ -119,8 +119,8 @@ end
     reg = register_rotations(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5,
                              detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                              min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
-                             min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                             bundle_efficiency_constant = 3.0, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+                             min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
+                              bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:K]
     @info "synthetic register: rotation errors (deg) $(round.(errs; digits = 4)), bundle rms $(round(reg.bundle.rms; digits = 3)) px"
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
@@ -168,8 +168,8 @@ end
     reg = register_rotations(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5,
                              detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                              min_score = 0.0, pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0, min_inliers = 40, seed = 1,
-                             max_trials = 10000, min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.CauchyShape(),
-                             bundle_efficiency_constant = 3.0, bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+                             max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
+                              bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     @test sort(collect(keys(reg.pairs))) == [(1, 3), (2, 3)]
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:3]
     @info "a dropped lag pair: rotation errors (deg) $(round.(errs; digits = 4))"
@@ -177,17 +177,17 @@ end
     # the verified pairs kept apart: verify_pairs, then the rest from them, is the registration exactly
     vp = verify_pairs(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)],
                       max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :lag_overlap, max_lag = 1,
-                      overlap_deg = 60.0, min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_loss = VgtkCore.HuberShape())
+                      overlap_deg = 60.0, min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
     @test vp isa VerifiedPairs && vp.stats == reg.pairs && length(vp.features) == 3
     @test all(p -> vp.inlier_matches[p] isa Vector{Tuple{Int, Int}} && length(vp.inlier_matches[p]) == vp.verified[p].inliers, keys(vp.verified))
-    bkw = (; bundle_loss = VgtkCore.CauchyShape(), bundle_efficiency_constant = 3.0, bundle_max_iter = 100,
+    bkw = (; bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 100,
            bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
-    reg2 = register_rotations(vp, q.cam; averaging_loss = VgtkCore.HuberShape(), bkw...)
+    reg2 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw...)
     @test reg2.rotations == reg.rotations && reg2.tracks == reg.tracks && reg2.pairs == reg.pairs
     # another averaging loss from the same pairs: no feature detected again, the rotations as good
-    reg3 = register_rotations(vp, q.cam; averaging_loss = VgtkCore.CauchyShape(), bkw...)
+    reg3 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 100), bkw...)
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg3.rotations[k])' * q.R[k]))), 1:3) < 0.05
-    @test_throws ArgumentError register_rotations(vp, q.cam; averaging_loss = VgtkCore.HuberShape(), bkw..., bundle_whitening = :diagonal)
+    @test_throws ArgumentError register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., bundle_whitening = :diagonal)
 end
 
 @testitem "register_rotations: the overlap pairs of :lag_overlap, and the pairs' samplers" begin
@@ -203,7 +203,8 @@ end
         tried = Tuple{Int, Int}[]
         verify(i, j) = ((i, j) in dropped || (verified[(i, j)] = (rotation = R[j]' * R[i], inliers = 100)); nothing)
         foreach(k -> verify(k, k + 1), 1:(K - 1))
-        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, 70.0, VgtkCore.HuberShape())
+        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, 70.0,
+                                                 VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
         return tried, verified
     end
     @test first(tried_pairs(6, [])) == [(1, 3), (2, 4), (3, 5), (4, 6)]                # connected: the aimed pairs only
@@ -300,12 +301,13 @@ end
     @test PanoramaStitching._imaged_less_rim(bare, 30.0) == VgtkCore.imaged_region(bare)
     region = PanoramaStitching.frame_region(bare, 1000, 1000, 12.0)
     @test SVector(2.5, 2.5) ∈ region && SVector(997.5, 500.0) ∈ region && SVector(1.5, 500.0) ∉ region
-    bkw = (; loss = VgtkCore.CauchyShape(), max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
+    bkw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), max_iter = 1000, ftol = 1.0e-10,
+           xtol = 1.0e-10)
     reg(margin) = register_rotations(q.frames, bare; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = margin,
                                      asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
                                      pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
-                                     min_trials = 100, averaging_loss = VgtkCore.HuberShape(), bundle_loss = bkw.loss,
-                                     bundle_efficiency_constant = 3.0,
+                                     min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
+                                     bundle_optimization_strategy = bkw.optimization_strategy,
                                      bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
     a, b = reg(0.0), reg(30.0)
     @test [f.pixels for f in a.features] == [f.pixels for f in b.features]
@@ -317,7 +319,7 @@ end
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
     obs = [[k => b.features[k].pixels[kp] for (k, kp) in t] for t in b.tracks]
-    ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; bkw..., loss_width = b.bundle.metadata.loss_width)
+    ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; bkw..., width = b.bundle.metadata.loss_width)
     @test ref.metadata.outcome === :converged
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
 end

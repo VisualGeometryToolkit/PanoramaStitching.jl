@@ -94,7 +94,7 @@ spline and V) at the previous solve; the first solve is
 
 - `point_covariance`: `Σ_u`, VisualGeometryToolkitCore's `CovMat{2}` of a
   pixel's sensor point in camera pixels² — the registration's: a rotation
-  bundle's robust core scale `σ_u` is its `loss_width / bundle_efficiency_constant`
+  bundle's robust core scale `σ_u` is its scale record, `noise_scale(bundle)`
   ([`RotationBundleMetadata`](@ref)), and `CovMat{2}(σ = σ_u)` its isotropic
   covariance `σ_u²·I`. A full or diagonal `CovMat` must be symmetric positive
   definite.

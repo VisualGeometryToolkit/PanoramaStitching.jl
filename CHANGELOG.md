@@ -4,14 +4,25 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
-- `register_rotations`' `bundle_scale_multiple` is `bundle_efficiency_constant` (the same plain multiple of the pooled scale;
-  results unchanged); the pairs' RANSAC strategy keyword of `verify_pairs`/`register_rotations` is
+- `refine_rotations` takes the robust-estimation contract's `optimization_strategy` (a `Triggs{Shape}`, by default every
+  refine's `Triggs{WelschShape}`; `nothing` the plain least squares) and exactly one of `scale` or `width`; its `loss` and
+  `loss_width` are refused by name. `RotationBundleMetadata` records the scale (`scale`, `scale_source`: read through
+  Core's `noise_scale`/`scale_source`). `register_rotations`' and `verify_pairs`' `averaging_loss`, `bundle_loss` and
+  `bundle_efficiency_constant` are `averaging_optimization_strategy` (an `Irls`; by default Estimation's
+  `[fit_rotation_averaging]` strategy) and `bundle_optimization_strategy` (a `Triggs`, run at the pooled pair scale);
+  the old keywords are refused by name. Same numbers: the bundle runs at the same width.
+- examples/panorama_vignetting: the `[registration]` keys `averaging_optimization_strategy` and
+  `bundle_optimization_strategy` are strategy tables read by Estimation's `optimization_strategy_from_toml` (the private
+  string → loss table is gone); `averaging_loss`, `bundle_loss` and `bundle_efficiency_constant` are refused by name.
+- `RotationBundleMetadata.calibration.free` is `free_parameters`.
+- `register_rotations`' `bundle_scale_multiple` is the efficiency constant of its `bundle_optimization_strategy` (the same
+  plain multiple of the pooled scale; results unchanged, above); the pairs' RANSAC strategy keyword of `verify_pairs`/`register_rotations` is
   `local_optimization_strategy` (was `local_optimization`), the stack's find_* keyword. The old keywords are an
   `ArgumentError` naming the new ones. The view graph's averaging and the pairs' SIMFIT++ refits take Estimation's
   `optimization_strategy` (`nothing` for the plain least squares, no `NoLocalOptimization`).
-- examples/panorama_vignetting: the `[registration]` keys `bundle_efficiency_constant` and `local_optimization_strategy`
-  (the old ones refused by name, as is `bundle_camera_free`); `rotations.json` format v10 (its `bundle_scale_multiple`
-  field is `bundle_efficiency_constant`).
+- examples/panorama_vignetting: the `[registration]` key `local_optimization_strategy` (the old one refused by name, as are
+  `bundle_scale_multiple` and `bundle_camera_free`); `rotations.json` format v10 (the bundle's strategy and its scale
+  record, `bundle_scale_px`, in place of `bundle_scale_multiple`).
 
 ### Breaking: the VisualGeometryToolkit 0.9 stack — the frames' and the planes' maps, Core's CG and penalty rows
 

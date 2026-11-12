@@ -73,11 +73,11 @@ end
     @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., selection = :ssc)
     # verify_pairs and register_rotations refuse before any feature is detected
     vkw = (; kw..., descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 90.0, min_inliers = 10,
-           seed = 1, max_trials = 10, min_trials = 1, averaging_loss = VgtkCore.HuberShape(), execution_provider = :cpu)
+           seed = 1, max_trials = 10, min_trials = 1, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), execution_provider = :cpu)
     @test_throws ArgumentError verify_pairs([L.image, L.image], q.cam; vkw..., detection_image = :vst, detection_noise = noise)
     @test_throws ArgumentError verify_pairs([L, L], q.cam; vkw..., selection = :ssc)
-    @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_loss = VgtkCore.CauchyShape(),
-                                                  bundle_efficiency_constant = 3.0, bundle_max_iter = 1,
+    @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
+                                                   bundle_max_iter = 1,
                                                   bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
 end
 

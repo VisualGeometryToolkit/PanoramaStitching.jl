@@ -180,8 +180,11 @@ end
 [`refine_camera_and_rotations`](@ref): `directions` (one unit
 direction per track, the common frame), `residuals` (per track, the pixel
 reprojection error norm of each of its observations at the result, unwhitened),
-`loss_width` (the given width: px, or in whitened units when the
-observations carry covariances), `n_observations` (given), `n_dropped_start`
+`loss_width` (the width the strategy ran at: px, or in whitened units when the
+observations carry covariances; `NaN` for the plain least squares), `scale` and
+`scale_source` (the scale record of the robust-estimation contract: the given
+`scale`, or `NaN` with `ScaleNone` for a `width` or the least squares; read
+through VisualGeometryToolkitCore's `noise_scale`/`scale_source`), `n_observations` (given), `n_dropped_start`
 (the observations left out of the solve: those whose residual or Jacobian is
 not finite at the start — a start prediction off the camera model's valid
 domain, where it has no projection and no back-projection Jacobian, as for a
@@ -203,7 +206,7 @@ holds it, else the refined one, of the given camera's type and, for a
 the camera is held, else the autocalibration's information at the result
 ([`refine_camera_and_rotations`](@ref)):
 
-- `free` — the names of the camera parameters refined;
+- `free_parameters` — the names of the camera parameters refined;
 - `parameters`, `sigma`, `covariance` — their values, standard deviations and
   covariance (parameter units: pixels for `f`, `cx`, `cy`; the lens's own for its
   coefficients) — `s²·H⁻¹`, `H` the Gauss–Newton information of the robust
@@ -226,6 +229,8 @@ struct RotationBundleMetadata{K, C, I}
     directions::Vector{SVector{3, Float64}}
     residuals::Vector{Vector{Float64}}
     loss_width::Float64
+    scale::Float64
+    scale_source::VgtkCore.ScaleSource
     n_observations::Int
     n_dropped_start::Int
     frames_unconstrained::Vector{K}
@@ -235,8 +240,8 @@ struct RotationBundleMetadata{K, C, I}
 end
 
 """
-    refine_rotations(camera, rotations, tracks; loss, loss_width, max_iter, ftol, xtol,
-                     eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+    refine_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width, max_iter,
+                     ftol, xtol, eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
 (fixed: the calibration is held, a rotation-only bundle with no parameter
@@ -274,11 +279,13 @@ result's `n` is the number of observations kept; its metadata's
   scale): the residual is then whitened, `L⁻¹(π(R_kᵀ d_j) − x_jk)`, and the
   loss acts on the whitened residual. Every observation carries a covariance
   or none does.
-- `loss`, `loss_width` — the stack loss shape (NLLSsolver's robustifier,
-  `loss_robustifier`) and its width (pixels, or whitened units; positive and
-  finite), fixed for the bundle's ONE NLLSsolver run: the caller's, from the
-  data's noise scale (`register_rotations`: the verified pairs' pooled
-  SIMFIT++ scale). `max_iter`, `ftol` (the relative cost decrease) and `xtol`
+- `optimization_strategy` — the robust strategy of the robust-estimation contract: a `Triggs{K}`
+  (VisualGeometryToolkitCore's; the default every refine's, `Triggs{WelschShape}` at the shape's efficiency constant for
+  a 2-D residual), its loss `K` as NLLSsolver's robustifier (`loss_robustifier`) at ONE width fixed for the bundle's one
+  NLLSsolver run; or `nothing`, the plain least squares (no scale or width).
+- exactly one of `scale = σ` (the observations' noise scale, pixels or whitened units, or an upstream robust result:
+  `register_rotations` hands the verified pairs' pooled SIMFIT++ scale) — the width is the strategy's efficiency
+  constant × σ — or `width = w` (the loss width). Neither, or both, is an `ArgumentError`. `max_iter`, `ftol` (the relative cost decrease) and `xtol`
   (the largest step in chart units: radians for a rotation or a direction)
   are its stops (`nlls_options`); the result's `iterations` the LM iterations
   it took.
@@ -292,20 +299,47 @@ bundle ended. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
 without, a covariance that is not finite and positive definite, and a start
 that keeps no observation (every track left in fewer than two imaged frames)
-are an `ArgumentError`, and so is `camera_free` (the bundle holds the calibration:
-[`refine_camera_and_rotations`](@ref) frees it).
+are an `ArgumentError`, and so are the retired `loss`/`loss_width` (the strategy and its scale input replace them) and
+`camera_free` (the bundle holds the calibration: [`refine_camera_and_rotations`](@ref) frees it).
 """
 function refine_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
-                          loss::VgtkCore.AbstractLossShape, loss_width::Real,
-                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
-                          camera_free = _NotGiven())
-    camera_free isa _NotGiven || throw(ArgumentError(
-        "refine_rotations: the rotation bundle holds the camera's calibration (no parameter keyword); to refine the camera " *
-        "with the rotations — the autocalibration of a rotating camera — call refine_camera_and_rotations(…; fixed)"))
-    isfinite(loss_width) && loss_width > 0 ||
-        throw(ArgumentError("refine_rotations: the loss width must be positive and finite, got $loss_width"))
-    return _rotation_bundle(camera, rotations, tracks, nothing, (); loss, width = Float64(loss_width), max_iter, ftol, xtol,
-                            eliminate, what = "refine_rotations")
+                          optimization_strategy = _DEFAULT_BUNDLE_STRATEGY, scale = nothing, width = nothing,
+                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true, retired...)
+    for k in keys(retired)
+        k === :camera_free && throw(ArgumentError(
+            "refine_rotations: the rotation bundle holds the camera's calibration (no parameter keyword); to refine the camera " *
+            "with the rotations — the autocalibration of a rotating camera — call refine_camera_and_rotations(…; fixed)"))
+        k in (:loss, :loss_width) && throw(ArgumentError(
+            "refine_rotations: the keyword `$k` is retired: give the robust strategy as `optimization_strategy = Triggs{Shape}(…)` " *
+            "and exactly one of `scale` or `width` (the robust-estimation contract)"))
+        throw(ArgumentError("refine_rotations: unknown keyword `$k`"))
+    end
+    rb = _bundle_loss("refine_rotations", optimization_strategy, scale, width)
+    return _rotation_bundle(camera, rotations, tracks, nothing, (); rb..., max_iter, ftol, xtol, eliminate,
+                            what = "refine_rotations")
+end
+
+# The default strategy of the rotation bundles: every refine's, Triggs{Welsch} at Core's efficiency constant for a 2-D
+# residual (a pixel reprojection error).
+const _DEFAULT_BUNDLE_STRATEGY = VgtkCore.Triggs{VgtkCore.WelschShape}(
+    efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2))
+
+# The bundle's loss, width and scale record from its strategy and scale input (the robust-estimation contract): a Triggs{K}
+# at exactly one of `scale` (its width the strategy's efficiency constant × σ) or `width`; `nothing` the plain least squares,
+# which takes neither.
+function _bundle_loss(what, strategy, scale, width)
+    if strategy === nothing
+        (scale === nothing && width === nothing) || throw(ArgumentError(
+            "$what: the plain least squares (optimization_strategy = nothing) takes no `scale` or `width`; one given would be ignored"))
+        return (; loss = nothing, width = NaN, scale = NaN, scale_source = VgtkCore.ScaleNone)
+    end
+    strategy isa VgtkCore.Triggs || throw(ArgumentError(
+        "$what: the bundle's strategy is a Triggs{K} (its loss K as NLLSsolver's robustifier at one width) or nothing, " *
+        "got $(nameof(typeof(strategy)))"))
+    input = VgtkCore.scale_input(scale, width)
+    w = isfinite(input.width) ? Float64(input.width) :
+        Float64(VgtkCore.lo_width_value(VgtkCore.lo_width(strategy)).value) * Float64(input.scale)
+    return (; loss = VgtkCore.strategy_loss(strategy)(), width = w, scale = Float64(input.scale), scale_source = input.source)
 end
 
 """
@@ -336,8 +370,7 @@ A contract refine:
 - `max_iter`, `ftol`, `xtol`, `eliminate` — as [`refine_rotations`](@ref)'s.
 """
 function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
-                                     optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(
-                                         efficiency_constant = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2)),
+                                     optimization_strategy = _DEFAULT_BUNDLE_STRATEGY,
                                      scale = nothing, width = nothing, fixed::Tuple{Vararg{Symbol}} = (),
                                      max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
                                      retired...)
@@ -347,20 +380,14 @@ function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::Ab
             "(every other parameter but the skew is free)"))
         throw(ArgumentError("refine_camera_and_rotations: unknown keyword `$k`"))
     end
-    optimization_strategy isa VgtkCore.Triggs || throw(ArgumentError(
-        "refine_camera_and_rotations: the bundle's strategy is a Triggs{K} (its loss K as NLLSsolver's robustifier at one width), " *
-        "got $(optimization_strategy === nothing ? "nothing" : nameof(typeof(optimization_strategy)))"))
-    shape = VgtkCore.strategy_loss(optimization_strategy)()
-    input = VgtkCore.scale_input(scale, width)
-    w = isfinite(input.width) ? Float64(input.width) :
-        Float64(VgtkCore.lo_width_value(VgtkCore.lo_width(optimization_strategy)).value) * Float64(input.scale)
+    rb = _bundle_loss("refine_camera_and_rotations", optimization_strategy, scale, width)
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
     names = VgtkCore.free_parameter_names(m, fixed)
     isempty(names) && throw(ArgumentError(
         "refine_camera_and_rotations: `fixed` holds every camera parameter: nothing to calibrate (refine_rotations is the bundle " *
         "with the calibration held)"))
     chc = _camera_chart(camera, names)
-    return _rotation_bundle(camera, rotations, tracks, chc, names; loss = shape, width = w, max_iter, ftol, xtol, eliminate,
+    return _rotation_bundle(camera, rotations, tracks, chc, names; rb..., max_iter, ftol, xtol, eliminate,
                             what = "refine_camera_and_rotations")
 end
 
@@ -370,11 +397,15 @@ struct _NotGiven end
 const _RETIRED_HOLD_KEYWORDS = (:camera_free, :free, :fix, :fixed_params, :hold)
 
 # The one rotation bundle of `refine_rotations` (`chc === nothing`: the camera held) and `refine_camera_and_rotations` (`chc`
-# the camera's chart over its free parameters `free`), `what` the caller named in a message; `width` the loss width, checked.
-function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free::Tuple{Vararg{Symbol}};
-                          loss::VgtkCore.AbstractLossShape, width::Float64, max_iter::Integer, ftol::Real, xtol::Real,
+# the camera's chart over its free parameters `free`), `what` the caller named in a message; `loss` the shape (`nothing`: the
+# plain least squares) at `width`, checked, and the scale record `scale`/`scale_source` (`_bundle_loss`).
+function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free_names::Tuple{Vararg{Symbol}};
+                          loss::Union{Nothing, VgtkCore.AbstractLossShape}, width::Float64, scale::Float64,
+                          scale_source::VgtkCore.ScaleSource, max_iter::Integer, ftol::Real, xtol::Real,
                           eliminate::Bool, what::AbstractString) where {K}
-    isfinite(width) && width > 0 || throw(ArgumentError("$what: the loss width must be positive and finite, got $width"))
+    loss === nothing || isfinite(width) && width > 0 ||
+        throw(ArgumentError("$what: the loss width must be positive and finite, got $width"))
+    robustifier() = loss === nothing ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width)
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
@@ -446,7 +477,7 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
     result = nothing
     if max_iter > 0                                                          # ONE LM run at the given width
-        kernel = VgtkCore.loss_robustifier(loss, width)
+        kernel = robustifier()
         problem = NLLSsolver.NLLSProblem(V, residual_type(kernel))
         for v in vars
             NLLSsolver.addvariable!(problem, v)
@@ -465,21 +496,21 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     niter = result === nothing ? 0 : result.niterations
     cam_out = chc === nothing ? camera : _with_camera_model(camera, VgtkCore.model(vars[ic]))
     calib = chc === nothing ? nothing :
-        _autocalibration(vars[ic], free, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
-                          (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width), j, i, o),
+        _autocalibration(vars[ic], free_names, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
+                          (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : robustifier(), j, i, o),
                           vars, fid, nf, unconstrained)
     return VgtkCore.FitResult(out, code, niter, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
-                              RotationBundleMetadata(dirs, rn, width, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
+                              RotationBundleMetadata(dirs, rn, width, scale, scale_source, nobs, nobs - nkept, unconstrained, outcome, cam_out, calib))
 end
 
 # The camera's variable for `refine_camera_and_rotations`: Core's ParameterManifold of its model restricted to the free
 # parameters (`free_parameter_names`: names checked there). A SplineLens camera (a gauge K: its parameters are its lattice's
 # controls, Estimation's own spline route) is refused.
-function _camera_chart(camera, free::Tuple{Vararg{Symbol}})
+function _camera_chart(camera, free_names::Tuple{Vararg{Symbol}})
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
     (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
         throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
-    return VgtkCore.restrict(VgtkCore.ParameterManifold(m), free)
+    return VgtkCore.restrict(VgtkCore.ParameterManifold(m), free_names)
 end
 _with_camera_model(camera::VgtkCore.BoundedCamera, m) = VgtkCore.with_model(camera, m)
 _with_camera_model(::VgtkCore.CameraModel, m) = m
@@ -489,7 +520,7 @@ _with_camera_model(::VgtkCore.CameraModel, m) = m
 # and the camera chart; the directions eliminated track by track (the Schur complement of their 2 × 2 blocks); the reduced
 # information's scaled spectrum with and without the gauge frame; the covariance s²·H⁻¹ of the gauge-fixed reduced system,
 # its camera block mapped from the chart to the parameters.
-function _autocalibration(cc, free, kept, observation, vars, fid, nf, unconstrained)
+function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unconstrained)
     nd = VgtkCore.tangent_size(cc); P = 3nf + nd
     A = zeros(P, P); S2 = 0.0; n = length(kept)
     Dmin = Inf
@@ -522,11 +553,11 @@ function _autocalibration(cc, free, kept, observation, vars, fid, nf, unconstrai
     s2 = S2 / ν
     Σz = s2 .* inv(LinearAlgebra.Symmetric(Matrix(Hf)))
     Σc = Σz[(end - nd + 1):end, (end - nd + 1):end]
-    names = VgtkCore.parameter_names(VgtkCore.model(cc)); idx = [findfirst(==(q), names) for q in free]
+    names = VgtkCore.parameter_names(VgtkCore.model(cc)); idx = [findfirst(==(q), names) for q in free_names]
     θ(z) = VgtkCore.parameter_vector(VgtkCore.model(VgtkCore.retract(cc, z)))[idx]
     z0 = zeros(nd); T = ForwardDiff.jacobian(θ, z0)
     Σθ = T * Σc * T'
-    return (; free, parameters = NamedTuple{free}(Tuple(θ(z0))), sigma = NamedTuple{free}(Tuple(sqrt.(LinearAlgebra.diag(Σθ)))),
+    return (; free_parameters = free_names, parameters = NamedTuple{free_names}(Tuple(θ(z0))), sigma = NamedTuple{free_names}(Tuple(sqrt.(LinearAlgebra.diag(Σθ)))),
             covariance = Σθ, s2, nu = ν,
             reduced_eigenvalues = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(H[keep_gauge, keep_gauge])))),
             reduced_eigenvalues_gauge_fixed = LinearAlgebra.eigvals(scaled(LinearAlgebra.Symmetric(Matrix(Hf)))),

@@ -1,7 +1,7 @@
 # =============================================================================
 # The bundle's scale: each verified pair's noise scale by SIMFIT++ (VisualGeometryToolkitEstimation's `simfitpp_loss_width`, after
 # its RANSAC, on held-out splits), pooled over the kept pairs into one σ̂ (inlier-count weighted variance), the bundle's
-# robust width `bundle_efficiency_constant·σ̂` fixed for its one LM run.
+# robust width the bundle strategy's efficiency constant × σ̂, fixed for its one LM run (its `scale = σ̂`).
 # =============================================================================
 
 @testitem "_pair_scale: SIMFIT++ recovers a rotation pair's pixel noise σ" setup = [SweepScene] begin
@@ -34,7 +34,7 @@
     end
 end
 
-@testitem "register_rotations: the bundle's width is bundle_efficiency_constant × the pooled pair scale, one LM run" setup = [SweepScene] begin
+@testitem "register_rotations: the bundle's width is its strategy's efficiency constant × the pooled pair scale, one LM run" setup = [SweepScene] begin
     using Test, Random, LinearAlgebra, StaticArrays
     using PanoramaStitching: register_rotations, refine_rotations, chain_tracks, FrameFeatures, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
@@ -62,21 +62,23 @@ end
     vp = VerifiedPairs(feats, verified, matches, stats, scales, (; descriptor = (;), matcher = (;)))
     pooled = (n = [verified[p].inliers for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
               sqrt(sum(n .* σ .^ 2) / sum(n)))
-    bkw = (; averaging_loss = VgtkCore.HuberShape(), bundle_loss = VgtkCore.WelschShape(), bundle_efficiency_constant = 2.5,
+    bkw = (; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
            bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
     reg = register_rotations(vp, bcam; bkw...)
     @test reg.bundle_sigma ≈ pooled
     @test reg.bundle.metadata.loss_width ≈ 2.5 * pooled
+    # the scale record of the robust-estimation contract: the pooled scale, given
+    @test VgtkCore.noise_scale(reg.bundle) == reg.bundle_sigma && VgtkCore.scale_source(reg.bundle) == VgtkCore.ScaleGiven
     @test reg.bundle.retcode === :converged && reg.bundle.iterations < 1000
     # the same bundle with that width given explicitly: one LM run, the same result
     obs = [[k => feats[k].pixels[kp] for (k, kp) in t] for t in reg.tracks]
-    direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; loss = VgtkCore.WelschShape(), loss_width = 2.5 * pooled,
+    direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 1.0), width = 2.5 * pooled,
                               max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
     @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations
     @test direct.iterations == reg.bundle.iterations
     # no pair with a scale: refused; a width that is not positive: refused
     none = VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = NaN, success = false) for p in ps), vp.loma)
     @test_throws ArgumentError register_rotations(none, bcam; bkw...)
-    @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; loss = VgtkCore.WelschShape(), loss_width = 0.0,
+    @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 1.0), width = 0.0,
                                                 max_iter = 10, ftol = 1.0e-12, xtol = 1.0e-6)
 end

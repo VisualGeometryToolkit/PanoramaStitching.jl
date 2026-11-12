@@ -24,7 +24,7 @@
         end
         return tracks, dirs
     end
-    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     K = 5
     eu = Float64[]; ew = Float64[]
     for seed in 1:4
@@ -70,7 +70,7 @@ end
     f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 
-    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     u1 = VgtkCore.project(CAM, SMatrix{3, 3}(R[1])' * d); u2 = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * d)
     unc(u, S) = VgtkCore.Uncertain(u, VgtkCore.CovMat(S))
     @test_throws ArgumentError refine_rotations(CAM, R, [[1 => u1, 2 => unc(u2, Σ)]]; kw...)                     # some, not all

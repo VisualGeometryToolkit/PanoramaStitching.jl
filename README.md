@@ -28,7 +28,7 @@ frames alone and renders their cylindrical panorama.
 ```julia
 using PanoramaStitching
 using VisualGeometryToolkitCore: CameraModel, BoundedCamera, Size2, KannalaBrandt, Circle, Point2, Equirectangular,
-    Cylindrical, HuberShape, CauchyShape, SimilarityMap, backproject, project, bilinear_sample, exp_so3, log_so3, px
+    Cylindrical, CauchyShape, Triggs, SimilarityMap, backproject, project, bilinear_sample, exp_so3, log_so3, px
 using StaticArrays: SA
 using CoordinateTransformations: LinearMap
 using LinearAlgebra: I, norm
@@ -66,9 +66,9 @@ frame_map = SimilarityMap(LinearMap(2.0I))
 reg = register_rotations(frames, camera; frame_map, tone_percentile = 99.5, detector_margin_px = 20.0,
                          asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
                          min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
-                         max_trials = 10_000, min_trials = 100, averaging_loss = HuberShape(), bundle_loss = CauchyShape(),
-                         bundle_efficiency_constant = 2.5, bundle_max_iter = 1000, bundle_ftol = 1e-10,
-                         bundle_xtol = 1e-10)
+                         max_trials = 10_000, min_trials = 100,
+                         bundle_optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.5), bundle_max_iter = 1000,
+                         bundle_ftol = 1e-10, bundle_xtol = 1e-10)
 errors = [rad2deg(norm(log_so3(reg.rotations[k]' * truth[k]))) for k in 1:4]   # degrees, each below 0.05
 reg.bundle.rms                                                   # the bundle's rms reprojection error, below 1 px
 cyl = panorama_view(Cylindrical(), (-100.0, 205.0, -45.0, 45.0), 0.25)

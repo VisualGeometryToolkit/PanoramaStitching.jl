@@ -66,15 +66,15 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
 3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `find_rotation` (RANSAC on bearings, its sampler seeded from
    `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
 4. **Rotation averaging**: the verified pairs form VisualGeometryToolkitEstimation's `ViewGraph` (each edge the pair's rotation, weighted by its
-   inlier count); Estimation's `fit_rotation_averaging` of it with `averaging_loss`
-   gives every frame's rotation.
+   inlier count); Estimation's `fit_rotation_averaging` of it with `averaging_optimization_strategy` (an `Irls`; by default
+   Estimation's own) gives every frame's rotation.
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two keypoints
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
-   robust pixel reprojection error through the camera's forward map with NLLSsolver: the loss `bundle_loss` at the width
-   `bundle_efficiency_constant`·σ̂, σ̂ the noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`,
-   pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
+   robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
+   `bundle_optimization_strategy` (a `Triggs`) at `scale = σ̂`, its width the strategy's efficiency constant × σ̂, σ̂ the
+   noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`, pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
    held, and it takes no keyword that would free a camera parameter. Refining the camera too is a refine of its own,
    [`refine_camera_and_rotations`](@ref) ([Autocalibration](#Autocalibration) below).
 

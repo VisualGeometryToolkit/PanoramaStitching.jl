@@ -44,11 +44,10 @@ scoring_threshold_px = 5.0                         # MsacScoring on RotationProb
 local_optimization_strategy = { type = "irls", loss = "tls" }   # the pairs' RANSAC local optimization (Estimation's strategy table; Irls{TLSShape} its rotation default)
 max_trials = 10000
 min_trials = 100
-averaging_loss = "huber"
+averaging_optimization_strategy = { type = "irls", loss = "huber", max_iter = 100 }   # the view graph's averaging (Estimation's fit_rotation_averaging strategy of record)
 cycle_tol_deg = 2.0                                # the view-graph filters (Estimation's filtered_rotation_averaging): a pair off a 3-cycle by more
 orientation_tol_deg = 5.0                          # than this removed, then a pair off the averaged rotations by more than this
-bundle_loss = "welsch"                             # the bundle: ONE LM run under the Welsch loss at the width
-bundle_efficiency_constant = 2.5                        #   2.5 × σ̂, the verified pairs' pooled SIMFIT++ noise scale (as Triggs' 2.5 × ŝ)
+bundle_optimization_strategy = { type = "triggs", loss = "welsch", efficiency_constant = 2.5 }   # the bundle: ONE LM run, Welsch at 2.5 × σ̂ (the pairs' pooled SIMFIT++ scale)
 bundle_max_iter = 1000                             # never the reason it stops here: rotations.json records the iterations it took
 bundle_ftol = 1.0e-10                              # the relative cost decrease that stops it
 bundle_xtol = 1.0e-6                               # the largest step that stops it: radians of a rotation or a direction

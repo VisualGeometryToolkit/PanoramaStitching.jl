@@ -455,8 +455,8 @@ end
     cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW"),
                                      "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0),
                                      "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
-                                                                               "averaging_loss" => "huber", "bundle_loss" => "cauchy",
-                                                                               "bundle_efficiency_constant" => 3.0), Dict{String, Any}(string(k) => v for (k, v) in kw)))
+                                                                               "averaging_optimization_strategy" => Dict{String, Any}("type" => "irls", "loss" => "huber", "max_iter" => 100),
+                                                                               "bundle_optimization_strategy" => Dict{String, Any}("type" => "triggs", "loss" => "cauchy", "efficiency_constant" => 3.0)), Dict{String, Any}(string(k) => v for (k, v) in kw)))
     out = mktempdir(); inp = (; names = ["a.ARW", "b.ARW"])
     path = joinpath(out, "verified_pairs.json")
     withenv("VGTK_DATA_ROOT" => root) do
@@ -475,7 +475,9 @@ end
         key(f, c; provider = :cuda) = call(f, (; cfg = c, out), inp, provider)
         # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
         @test key(:pairs_key, cfg(); provider = :cpu) != key(:pairs_key, cfg()) && key(:registration_key, cfg(); provider = :cpu) != key(:registration_key, cfg())
-        for c in (cfg(; averaging_loss = "cauchy"), cfg(; bundle_efficiency_constant = 2.5), cfg(; bundle_loss = "huber"),
+        for c in (cfg(; averaging_optimization_strategy = Dict{String, Any}("type" => "irls", "loss" => "cauchy", "max_iter" => 100)),
+                  cfg(; bundle_optimization_strategy = Dict{String, Any}("type" => "triggs", "loss" => "cauchy", "efficiency_constant" => 2.5)),
+                  cfg(; bundle_optimization_strategy = Dict{String, Any}("type" => "triggs", "loss" => "huber", "efficiency_constant" => 3.0)),
                   cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0))
             @test key(:registration_key, c) != key(:registration_key, cfg()) && key(:pairs_key, c) == key(:pairs_key, cfg())
             stage(c)
@@ -489,7 +491,7 @@ end
             @test key(:pairs_key, c) != key(:pairs_key, cfg())
         end
         # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its loss keys the pairs there
-        @test key(:pairs_key, cfg(; pairs = "lag_overlap", averaging_loss = "cauchy")) != key(:pairs_key, cfg(; pairs = "lag_overlap"))
+        @test key(:pairs_key, cfg(; pairs = "lag_overlap", averaging_optimization_strategy = Dict{String, Any}("type" => "irls", "loss" => "cauchy", "max_iter" => 100))) != key(:pairs_key, cfg(; pairs = "lag_overlap"))
     end
     # the detector's settings: "vst" reads the noise keys, "tone" refuses them (never read)
     det(r) = call(:detector_settings, Dict{String, Any}(r))

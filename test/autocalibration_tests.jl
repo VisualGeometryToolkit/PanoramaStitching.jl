@@ -52,12 +52,12 @@ end
     res = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect,))
     @test res.retcode === :converged
     # the same bundle as the camera_free keyword it replaces: PanoramaStitching ce2ce59's `refine_rotations(…; camera_free =
-    # free, loss = CauchyShape(), loss_width = 1.5)` on this scene, bit for bit
+    # free, optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 1.0), width = 1.5)` on this scene, bit for bit
     @test (res.rms, res.iterations, res.n) === (9.778781600849967e-14, 11, 3624)
     @test sum(sum, values(VgtkCore.estimate(res))) === 19.8664444387427 && sum(sum, res.metadata.directions) === 231.78800370774763
     # a group holds its family: the four KB coefficients held keeps them at the start's, f, cx and cy free
     rk = refine_camera_and_rotations(cam0, start, tracks; kw..., fixed = (:aspect, :k), max_iter = 3)
-    @test rk.metadata.calibration.free == (:f, :cx, :cy)
+    @test rk.metadata.calibration.free_parameters == (:f, :cx, :cy)
     cam = res.metadata.camera
     @test cam isa VgtkCore.BoundedCamera && VgtkCore.extent(cam) == VgtkCore.extent(cam0)
     θ = VgtkCore.parameter_vector(VgtkCore.model(cam)); θt = VgtkCore.parameter_vector(TRUE_CAM)
@@ -65,7 +65,7 @@ end
     @test res.rms < 1.0e-8                                                # exact data: an exact fit
     @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - R[k]), 1:10) < 1.0e-10
     c = res.metadata.calibration
-    @test c.free == free
+    @test c.free_parameters == free
     @test collect(values(c.parameters)) ≈ θt[[1, 4, 5, 6, 7, 8, 9]] rtol = 1.0e-9
     # one gauge: the reduced information with the first frame's rotation has exactly three null directions (a common rotation
     # of the frames and the directions); without it, none (nothing else free); every kept direction is observed
@@ -116,11 +116,19 @@ end
     @test_throws ArgumentError refine_camera_and_rotations(TRUE_CAM, R, tr; ac..., optimization_strategy = nothing)
     # the rotation-only bundle holds the calibration: camera_free is refused, pointing at the autocalibration; so is the
     # registration's bundle_camera_free (and the other retired registration keywords, each naming its successor)
-    @test_throws r"refine_camera_and_rotations" refine_rotations(TRUE_CAM, R, tr; kw..., loss = VgtkCore.CauchyShape(),
-                                                                 loss_width = 1.5, camera_free = (:f,))
+    @test_throws r"refine_camera_and_rotations" refine_rotations(TRUE_CAM, R, tr; kw..., width = 1.5, camera_free = (:f,))
+    # the retired loss keywords of the bundle: refused naming the strategy and its scale input
+    @test_throws r"optimization_strategy" refine_rotations(TRUE_CAM, R, tr; kw..., width = 1.5, loss = VgtkCore.CauchyShape())
+    @test_throws r"optimization_strategy" refine_rotations(TRUE_CAM, R, tr; kw..., loss_width = 1.5)
+    @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw...)                                  # neither scale nor width
+    @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw..., scale = 1.0, width = 1.5)        # both
+    @test_throws ArgumentError refine_rotations(TRUE_CAM, R, tr; kw..., optimization_strategy = nothing, width = 1.5)   # L2 takes none
+    for k in (:bundle_loss, :averaging_loss)
+        @test_throws r"optimization_strategy" PanoramaStitching._refuse_retired_registration_keywords("register_rotations", (; k => 1))
+    end
     @test_throws r"refine_camera_and_rotations" PanoramaStitching._refuse_retired_registration_keywords("register_rotations",
                                                                                                        (; bundle_camera_free = ()))
-    @test_throws r"bundle_efficiency_constant" PanoramaStitching._refuse_retired_registration_keywords("register_rotations",
+    @test_throws r"bundle_optimization_strategy" PanoramaStitching._refuse_retired_registration_keywords("register_rotations",
                                                                                                      (; bundle_scale_multiple = 3.0))
     @test_throws r"local_optimization_strategy" PanoramaStitching._refuse_retired_registration_keywords("verify_pairs",
                                                                                                       (; local_optimization = nothing))
@@ -140,7 +148,7 @@ end
     ts, _, _ = sweep_tracks(rng, R, 400; outl = 0.05)
     start = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.02 .* randn(rng, 3))...))) * R[k] for k in 1:5)
     start[1] = R[1]
-    kw = (; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
     res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
     @test res.metadata.camera === CAM && res.metadata.calibration === nothing
     @test res.metadata.loss_width == 1.5 && res.retcode === :converged && 0 < res.iterations < 1000
@@ -155,7 +163,7 @@ end
     cam0 = VgtkCore.BoundedCamera(VgtkCore.CameraModel(282.0VgtkCore.px, SA[600.0VgtkCore.px, 600.0VgtkCore.px];
                                                        lens = VgtkCore.KannalaBrandt(0.0, 0.0, 0.0, 0.0)), VgtkCore.Size2(1200, 1200))
     startk = Dict(k => (k == 1 ? Rk[1] : SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((deg2rad(1) .* normalize(randn(rng, 3)))...))) * Rk[k]) for k in 1:10)
-    rk = refine_rotations(cam0, startk, tracks; loss = VgtkCore.CauchyShape(), loss_width = 1.5, max_iter = 1000, ftol = 1.0e-12,
+    rk = refine_rotations(cam0, startk, tracks; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0), width = 1.5, max_iter = 1000, ftol = 1.0e-12,
                           xtol = 1.0e-12)
     @test (rk.rms, rk.iterations, rk.n) === (13.626810529489516, 435, 3624) && rk.metadata.camera === cam0
     @test sum(sum, values(VgtkCore.estimate(rk))) === 18.480086542920372 && sum(sum, rk.metadata.directions) === 128.27182481038034
