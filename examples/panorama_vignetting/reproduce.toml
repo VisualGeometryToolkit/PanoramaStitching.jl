@@ -1,0 +1,44 @@
+# The panorama vignetting example's stage graph (VisualGeometryToolkitEval Reproduce, the runner): which driver runs on which
+# config of record. Data only; how a stage runs is the site's (Eval's configs/sites), where the data and results are is
+# [sites.<name>]. Paths are relative to the repository root.
+
+[project]
+name = "panorama_vignetting"
+workdir = "../.."
+julia_project = "examples/panorama_vignetting"
+code = ["Project.toml", "src", "examples/panorama_vignetting/Project.toml", "examples/panorama_vignetting/run.jl"]
+
+[sites.dgx01]
+data_root = "/home/jpr/data/rc-cvpr2027"
+results_root = "/raid/data/jpr/results/panorama_vignetting"
+
+[[stage]]
+name = "setup"
+what = "the example's environment: Pkg.instantiate and precompile"
+command = ["julia", "--startup-file=no", "--project=examples/panorama_vignetting", "-e", "using Pkg; Pkg.instantiate(); Pkg.precompile()"]
+time = "01:00:00"
+
+[[stage]]
+name = "fx3_14mm_indoor"
+what = "the 14 mm indoor sequence: registration, the vignetting of record, the seams and the renders"
+after = ["setup"]
+command = ["julia", "--startup-file=no", "--project=examples/panorama_vignetting", "examples/panorama_vignetting/run.jl", "examples/panorama_vignetting/config_fx3_14mm.toml"]
+driver = "examples/panorama_vignetting/run.jl"
+config = "examples/panorama_vignetting/config_fx3_14mm.toml"
+time = "02:00:00"
+
+[[stage]]
+name = "fx3_8mm_rooftop"
+what = "the 8 mm rooftop sequence (a grid lens): registration, the vignetting of record, the seams and the renders"
+after = ["setup"]
+command = ["julia", "--startup-file=no", "--project=examples/panorama_vignetting", "examples/panorama_vignetting/run.jl", "examples/panorama_vignetting/config_fx3_8mm_rooftop.toml"]
+driver = "examples/panorama_vignetting/run.jl"
+config = "examples/panorama_vignetting/config_fx3_8mm_rooftop.toml"
+time = "02:00:00"
+
+[[stage]]
+name = "checks"
+what = "the example's checks (run_checks.jl): the stage cache and the 14 mm bundle equivalence"
+after = ["setup"]
+command = ["julia", "--startup-file=no", "--project=examples/panorama_vignetting", "examples/panorama_vignetting/run_checks.jl"]
+time = "00:30:00"

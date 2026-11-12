@@ -3,8 +3,10 @@
 #
 #     julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_14mm.toml
 #
-# Every setting is in the config (a config of record: nothing here has a default). Inputs are read under $VGTK_DATA_ROOT; the
-# outputs, and the decode cache, go to the config's `output` folder. The stages are functions, so in a REPL
+# Every setting is in the config (a config of record: nothing here has a default). Inputs are read under the data root
+# (VisualGeometryToolkitEval's data_root, $VGTK_DATA_ROOT); everything this writes goes under the results root
+# (results_root, $VGTK_RESULTS_ROOT): <results>/panorama_vignetting/<name>/, its stages' records keyed by their settings
+# (Eval's cached_result at Eval's run_key) and the run's outputs in run-<run_key(config)>/ with its run records. The stages are functions, so in a REPL
 # `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
@@ -70,14 +72,27 @@ function refuse_retired_registration(table, where)
     return table
 end
 
+# The output folder of earlier releases (`output`, relative to the config): the results go under Eval's results root, keyed by
+# the config — a config that names one is refused, never read.
+function refuse_output(cfg, where)
+    haskey(cfg, "output") && throw(ArgumentError("$where: the key output is retired: every result goes under VisualGeometryToolkitEval's " *
+                                                 "results_root() (\$VGTK_RESULTS_ROOT), <results>/panorama_vignetting/<name>/, the run's " *
+                                                 "outputs keyed by the config's run_key; remove the key"))
+    return cfg
+end
+
+# The config of record and where its results go: `out` the set's folder under the results root (its stages' keyed records and
+# the decode cache), `run` the run's outputs, keyed by the whole config (Eval's run_key), with its run records.
 function load_config(path)
     cfg = TOML.parsefile(path)
+    refuse_output(cfg, path)
     refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
     refuse_circle(cfg["inputs"], "$path [inputs]")
     refuse_retired_registration(cfg["registration"], "$path [registration]")
-    out = joinpath(dirname(abspath(path)), cfg["output"])
-    mkpath(out)
-    return (; cfg, out, path = abspath(path))
+    out = joinpath(VgtkEval.Experiments.results_root(), "panorama_vignetting", cfg["name"])
+    run = joinpath(out, "run-" * VgtkEval.Experiments.run_key(cfg))
+    mkpath(run)
+    return (; cfg, out, run, path = abspath(path))
 end
 
 say(io, msg) = (println(msg); println(io, msg); flush(io))
@@ -150,24 +165,22 @@ bundle_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["bundle_op
 # a SHA-256 of the record's format, the stage's settings, the ONNX Runtime provider LoMa runs on (`execution_provider = "auto"`
 # resolved: a CPU record is not a CUDA run's, whose matches differ in the pairs at the network's threshold), the inputs, the
 # decode settings and the RAW files' hashes — matches.
-# `cached_record` is the one reader and writer: a record whose key differs is recomputed by `compute()` and written over.
-function stage_key(C, inp, format, settings, provider::Symbol)
-    canon(d) = join(["$k=$(d[k])" for k in sort(collect(keys(d)))], ";")
-    return VgtkCore.sha256_hex(join([format, canon(settings), "provider=$provider", canon(C.cfg["inputs"]), canon(C.cfg["decode"]),
-                                     (open(VgtkCore.sha256_hex, joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names)...], "|"))
+# `staged_record` is the one reader and writer: a record of other settings is another file (Eval's cached_result).
+function stage_settings(C, inp, format, settings, provider::Symbol)
+    return Dict{String, Any}("format" => format, "settings" => settings, "provider" => string(provider),
+                             "inputs" => C.cfg["inputs"], "decode" => C.cfg["decode"],
+                             "raw_sha256" => [open(VgtkCore.sha256_hex, joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names])
 end
-function cached_record(compute, path, key; log, what)
-    if isfile(path)
-        rec = JSON.parsefile(path)
-        if get(rec, "key", nothing) == key
-            say(log, "$what: reused $(path)$(haskey(rec, "provenance") ? " ($(rec["provenance"]))" : "")")
-            return rec
-        end
-    end
-    rec = compute()
-    rec["key"] = key
-    open(io -> JSON.print(io, rec, 2), path, "w")
-    return JSON.parsefile(path)                                   # read back: the record a later run reuses, exactly
+# A stage's record: VisualGeometryToolkitEval's keyed result cache (`cached_result`, keyed by Eval's `run_key` of the stage's
+# settings), `<C.out>/<prefix>_<key>.jld2`, computed by `compute()` (a String-keyed Dict) when absent. Returns the record and
+# its file.
+function staged_record(compute, prefix, C, settings; log, what)
+    key = VgtkEval.Experiments.run_key(settings)
+    file = joinpath(C.out, "$(prefix)_$(key).jld2")
+    isfile(file) && say(log, "$what: reused $file")
+    rec, file = VgtkEval.Experiments.cached_result(_ -> compute(), prefix, settings, C.out; key = VgtkEval.Experiments.run_key,
+                                                    gitpath = pkgdir(PanoramaStitching))
+    return rec, file
 end
 
 # The registration's key: every [registration] setting and LoMa's provider. v3: PanoramaStitching 0.2.2 seeds each pair's sampler
@@ -182,7 +195,7 @@ end
 # bundle_optimization_strategy, read by Estimation's reader), the record holds the bundle's strategy and its scale
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v10 (the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
-registration_key(C, inp, provider::Symbol) = stage_key(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
+registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
 # rotation averaging's and the bundle's, so changing those reuses the pairs. With pairs = "lag_overlap" the averaging loss aims
@@ -199,7 +212,7 @@ function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
 end
-pairs_key(C, inp, provider::Symbol) = stage_key(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
+pairs_stage_settings(C, inp, provider::Symbol) = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
 
 # The verified pairs as a record and back (frame indices 1-based; a matrix row by row; a NaN — an unrefined keypoint's covariance
 # — as null). The record keeps no descriptions: the pairs read back are `VerifiedPairs{FrameFeatures{Nothing}}`.
@@ -262,11 +275,11 @@ linear_raws(C, inp) = [VgtkFeatures.load_raw(joinpath(input_path(C.cfg["inputs"]
 rotation_local_optimization(r) = VgtkEstimation.optimization_strategy_from_toml(r["local_optimization_strategy"]; class = :rotation,
                                                                                 section = "registration.local_optimization_strategy")
 
-# The verified pairs, cached (verified_pairs.json): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
+# The verified pairs, cached (verified_pairs_<key>.jld2): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
 # setting, and written before the view graph is built, so a failure past it (the averaging, the bundle) loses none of it.
 function verified_pairs(C, inp, lens, provider::Symbol; log)
     r = C.cfg["registration"]
-    rec = cached_record(joinpath(C.out, "verified_pairs.json"), pairs_key(C, inp, provider); log, what = "verified pairs") do
+    rec, _ = staged_record("verified_pairs", C, pairs_stage_settings(C, inp, provider); log, what = "verified pairs") do
         t0 = time()
         det = detector_settings(r)
         frames = det.detection_image === :vst ? linear_raws(C, inp) : inp.frames
@@ -288,7 +301,7 @@ function registration(C, inp, lens; log)
     r = C.cfg["registration"]
     # "auto" → "cuda" or "cpu" (warning why) here, before the keys; "cuda" that cannot run is an error naming why
     provider = VgtkFeatures.resolve_execution_provider(Symbol(r["execution_provider"]))
-    rec = cached_record(joinpath(C.out, "rotations.json"), registration_key(C, inp, provider); log, what = "registration") do
+    rec, file = staged_record("registration", C, registration_settings(C, inp, provider); log, what = "registration") do
         vp = verified_pairs(C, inp, lens, provider; log)
         t0 = time()
         reg = register_rotations(vp.pairs, lens; averaging_optimization_strategy = averaging_strategy(r),
@@ -328,7 +341,7 @@ function registration(C, inp, lens; log)
             bundle_sigma_px = rec["bundle_sigma_px"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_outcome = rec["bundle_outcome"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
-            loma = rec["loma"], point_scale_px = get(rec, "bundle_scale_px", nothing))
+            loma = rec["loma"], point_scale_px = get(rec, "bundle_scale_px", nothing), record = file)
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -403,7 +416,7 @@ function fit_measurement_noise(v, point_scale_px)
     N = PanoramaStitching.MEASUREMENT_NOISES[v["measurement_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
     N === IntensityNoise && return IntensityNoise()
     point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" needs the registration's point " *
-                                        "scale (its record rotations.json holds no bundle_scale_px: delete it to recompute the registration)")
+                                        "scale (its registration record holds no bundle_scale_px: delete it to recompute the registration)")
     return IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), log_intensity_scale = v["log_intensity_scale"],
                                      iterations = v["measurement_noise_iterations"])
 end
@@ -469,7 +482,7 @@ function write_vignetting(C, stem, res, W, H)
         c = VgtkCore.center(v); r = VgtkCore.field_radius(v)
         rec["model"] = Dict("kind" => VgtkCore.tag_of(VgtkCore.VIGNETTING_TAGS, VgtkCore.RadialVignetting), "center" => collect(c), "radius" => r, "controls" => VgtkCore.n_control_points(v),
                             "spline" => "VisualGeometryToolkitCore RadialVignetting: a B-spline in ρ/radius on clamped knots over [0, 1]")
-        open(joinpath(C.out, stem * "_profile.csv"), "w") do io
+        open(joinpath(C.run, stem * "_profile.csv"), "w") do io
             println(io, "rho_px,V")
             for ρ in 0.0:4.0:r
                 println(io, @sprintf("%.1f,%.6f", ρ, v(c + SVector(ρ, 0.0))))
@@ -479,16 +492,16 @@ function write_vignetting(C, stem, res, W, H)
         rec["model"] = Dict("kind" => VgtkCore.tag_of(VgtkCore.VIGNETTING_TAGS, VgtkCore.TensorProductVignetting), "controls" => collect(size(VgtkCore.control_points(v))),
                             "spline" => "VisualGeometryToolkitCore TensorProductVignetting: a tensor-product B-spline on clamped knots, x fastest")
     end
-    open(io -> JSON.print(io, rec, 2), joinpath(C.out, stem * ".json"), "w")
+    open(io -> JSON.print(io, rec, 2), joinpath(C.run, stem * ".json"), "w")
     # the map over the sensor, every 32 px (x, y, V), and as an image normalized to its maximum
-    open(joinpath(C.out, stem * "_map.csv"), "w") do io
+    open(joinpath(C.run, stem * "_map.csv"), "w") do io
         println(io, "x_px,y_px,V")
         for y in 16.0:32.0:H, x in 16.0:32.0:W
             println(io, @sprintf("%.1f,%.1f,%.6f", x, y, v(SVector(x, y))))
         end
     end
     M = [v(SVector(2j - 1.0, 2i - 1.0)) for i in 1:(H ÷ 2), j in 1:(W ÷ 2)]
-    PNGFiles.save(joinpath(C.out, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
+    PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
     return M
 end
 
@@ -513,9 +526,9 @@ end
 
 function run_example(config_path)
     C = load_config(config_path)
-    log = open(joinpath(C.out, "run.log"), "w")
+    log = open(joinpath(C.run, "run.log"), "w")
     T = Dict{String, Float64}()
-    say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path)), output $(C.out)")
+    say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path)), output $(C.run)")
     t = time(); inp = decoded_frames(C; masks = true, log); T["decode (or cache)"] = time() - t
     K = length(inp.frames); Hf, Wf, _ = size(inp.frames[1]); W, H = 2Wf, 2Hf
     say(log, "frames: $K, $(Wf) × $(Hf) bin2 ($(W) × $(H) camera pixels), saturated quads $(sum(count, inp.saturated))")
@@ -558,7 +571,7 @@ function run_example(config_path)
     before = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
     after = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
     T["score_seams (two)"] = time() - t
-    save_ratio(joinpath(C.out, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.out, "seams_corrected.png"), Array(after.ratio))
+    save_ratio(joinpath(C.run, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.run, "seams_corrected.png"), Array(after.ratio))
     say(log, "seams (saturated pixels excluded): uncorrected rms $(round(before.rms; digits = 4)) MAD $(round(before.mad; digits = 4)); " *
              "corrected rms $(round(after.rms; digits = 4)) MAD $(round(after.mad; digits = 4)); $(after.n) pixels")
 
@@ -579,20 +592,9 @@ function run_example(config_path)
     # for viewing only: LibRaw's daylight white balance (normalized to G = 1), or none (camera raw colour)
     wb = rc["white_balance"] == "daylight" ? inp.daylight_wb ./ inp.daylight_wb[2] :
          rc["white_balance"] == "none" ? [1.0, 1.0, 1.0] : error("render.white_balance = $(rc["white_balance"]) is not \"daylight\" or \"none\"")
-    save(name, img) = save_srgb(joinpath(C.out, name * ".png"), img, exposure, wb)
+    save(name, img) = save_srgb(joinpath(C.run, name * ".png"), img, exposure, wb)
     save("cylindrical_corrected", cyl_c); save("cylindrical_uncorrected", cyl_u)
     cyl_c = cyl_u = nothing
-    if occursin("14mm", C.cfg["name"])
-        open(joinpath(C.out, "READY_14mm.txt"), "w") do io
-            println(io, "cylindrical_corrected:   ", joinpath(C.out, "cylindrical_corrected.png"))
-            println(io, "cylindrical_uncorrected: ", joinpath(C.out, "cylindrical_uncorrected.png"))
-            println(io, "exposure (both): $(round(exposure; digits = 4)) (1 / the $(rc["exposure_percentile"]) % G of the corrected); " *
-                        "white balance $(rc["white_balance"]) $(round.(wb; digits = 3))")
-            println(io, "seam spread, log, saturated pixels excluded: uncorrected rms $(round(before.rms; digits = 4)) " *
-                        "1.4826·MAD $(round(before.mad; digits = 4)); corrected rms $(round(after.rms; digits = 4)) " *
-                        "1.4826·MAD $(round(after.mad; digits = 4)) ($(after.n) pixels seen by two frames or more)")
-        end
-    end
     ea = panorama_view(VgtkCore.CylindricalEqualArea(), rext, rc["equal_area_deg_per_pixel"]; up)
     save("equal_area_corrected", render(ea, V)); save("equal_area_uncorrected", render(ea, no_vignetting))
     rw, rh = rc["rectilinear_size"]; f = rw / 2 / tand(rc["rectilinear_hfov_deg"] / 2)
@@ -621,7 +623,7 @@ end
 
 function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
     f(x; d = 4) = string(round(x; digits = d))
-    open(joinpath(C.out, "summary.md"), "w") do io
+    open(joinpath(C.run, "summary.md"), "w") do io
         println(io, "# $(C.cfg["name"]): panorama vignetting\n")
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(W ÷ 2) × $(H ÷ 2); saturated quads (all frames): $(sum(count, inp.saturated)).")
@@ -665,10 +667,15 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
             println(io, "- $k: $(f(v; d = 2))")
         end
         println(io, "\n## Files\n")
-        for x in sort(readdir(C.out))
-            isfile(joinpath(C.out, x)) && println(io, "- `$x`")
+        for x in sort(readdir(C.run))
+            isfile(joinpath(C.run, x)) && println(io, "- `$x`")
         end
     end
+    # the run's records (VisualGeometryToolkitEval): its config of record, its key, its driver and the inputs it read
+    raws = [input_path(joinpath(C.cfg["inputs"]["raw_dir"], n)) for n in inp.names]
+    VgtkEval.Experiments.write_run_records(C.run, C.cfg; driver = "examples/panorama_vignetting/run.jl", config_source = C.path,
+                                           key = VgtkEval.Experiments.run_key(C.cfg), inputs = [raws; input_path(C.cfg["inputs"]["lens"])])
+    return C.run
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -48,7 +48,7 @@ function compare_arms(arms_path)
         Hf, Wf, _ = size(inp.frames[1]); W, H = 2Wf, 2Hf
         lens = load_lens(C; raw_width = W, raw_height = H)
         reg = registration(C, inp, lens; log = devnull)
-        key = arms_key(arms_path, set_path, joinpath(C.out, "rotations.json"))
+        key = arms_key(arms_path, set_path, reg.record)
         dir = joinpath(C.out, A["output"], key); mkpath(dir)
         isfile(joinpath(dir, "results.json")) && (println("$(C.cfg["name"]): reused $dir"); continue)
         device = get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])
@@ -73,7 +73,7 @@ function compare_arms(arms_path)
             cfg = deepcopy(C.cfg); v = cfg["vignetting"]
             v["gain_correction"] = a["gain_correction"]; v["measurement_noise"] = a["measurement_noise"]
             v["log_intensity_scale"] = A["log_intensity_scale"]; v["measurement_noise_iterations"] = A["measurement_noise_iterations"]
-            Ca = (; cfg, C.out, C.path)
+            Ca = (; cfg, C.out, run = dir, C.path)
             fkw = (; point_scale_px = reg.point_scale_px, vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
             fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
             t = time(); r = fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...); dt = time() - t

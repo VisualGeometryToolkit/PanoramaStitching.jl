@@ -371,7 +371,8 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
-    for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration)
+    for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration,
+                 :refuse_output)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -390,6 +391,17 @@ end
         e
     end
     @test err isa ArgumentError && occursin("lens_coverage", err.msg) && occursin("circle", err.msg)
+    # the top-level `output` folder is retired (the results go under Eval's results root, keyed): refused by name, and the
+    # configs of record name none
+    err = try
+        Base.invokelatest(m.refuse_output, Dict{String, Any}("output" => "out/x"), "config"); nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("output is retired", err.msg) && occursin("results_root", err.msg)
+    for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
+        @test !haskey(TOML.parsefile(joinpath(dir, f)), "output")
+    end
     # `[registration] bundle_iterations` is retired: refused by name
     err = try
         Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}("bundle_iterations" => 3), "config [registration]"); nothing
@@ -422,77 +434,25 @@ end
     end
 end
 
-@testitem "panorama_vignetting example: the verified pairs are a cached stage, reused when only the averaging or the bundle changes" begin
-    using Test, StaticArrays
-    import JSON
-    using PanoramaStitching: PanoramaStitching, VerifiedPairs
+# The example's stage cache (the verified pairs reused when only the averaging or the bundle changes, recomputed when a pair
+# setting changes) needs VisualGeometryToolkitEval, which is no test dependency (the stack's allow-list): it is checked by
+# examples/panorama_vignetting/stage_cache_check.jl, run by run_checks.jl in the example's environment (README, "Maintainers").
+@testitem "panorama_vignetting example: run.jl parses, and the detector's settings" begin
+    using Test
+    using PanoramaStitching: PanoramaStitching
     dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
+    @test !any(x -> Meta.isexpr(x, (:error, :incomplete)), code.args)
+    for f in ("stage_cache_check.jl", "autocalibration_check.jl", "run_checks.jl")       # the example's checks parse too
+        @test !any(x -> Meta.isexpr(x, (:error, :incomplete)), Meta.parseall(read(joinpath(dir, f), String)).args)
+    end
     named(x, name) = x === name || (x isa Expr && x.head === :call && x.args[1] === name)
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head in (:(=), :function) && named(x.args[1], name))
     m = Module()
-    Core.eval(m, :(using PanoramaStitching, StaticArrays; import JSON; import VisualGeometryToolkitCore as VgtkCore))
-    # the example's input_path reads VisualGeometryToolkitEval's data_root (not a test dependency: the stack's allow-list), which is
-    # ENV["VGTK_DATA_ROOT"] when it is set, as here
-    Core.eval(m, :(input_path(rel) = joinpath(ENV["VGTK_DATA_ROOT"], rel)))
-    for name in (:say, :stage_key, :cached_record, :REGISTRATION_FORMAT, :registration_key, :PAIRS_FORMAT,
-                 :AVERAGING_BUNDLE_KEYS, :pairs_settings, :pairs_key, :nan_null, :loma_record, :pairs_record, :pairs_from_record,
-                 :DETECTION_NOISE_KEYS, :detector_settings)
+    for name in (:DETECTION_NOISE_KEYS, :detector_settings)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     call(f, args...; kw...) = Base.invokelatest(getfield(m, f), args...; kw...)
-    # two frames' features (one keypoint unrefined: its covariance NaN) and one verified pair
-    F(px) = PanoramaStitching.FrameFeatures(px, [SMatrix{2, 2}(2.0, 0.1, 0.1, 3.0), SMatrix{2, 2}(fill(NaN, 2, 2))], nothing, 40)
-    R = SMatrix{3, 3, Float64, 9}(cosd(10), 0.0, -sind(10), 0.0, 1.0, 0.0, sind(10), 0.0, cosd(10))
-    vp = VerifiedPairs([F([SA[10.25, 20.5], SA[30.0, 40.125]]), F([SA[1.0 / 3, 2.0], SA[5.0, 6.0]])],
-                       Dict((1, 2) => (rotation = R, inliers = 2)), Dict((1, 2) => [(1, 2), (2, 1)]),
-                       Dict((1, 2) => (matches = 3, inliers = 2, rms_px = 0.4, rotation_deg = 10.0)),
-                       Dict((1, 2) => (sigma = 0.35, success = true)),
-                       (; descriptor = (; model = "loma_b", execution_provider = :cuda, threads = 8),
-                          matcher = (; model = "loma_b128", execution_provider = :cuda, threads = 8)))
-    root = mktempdir(); mkpath(joinpath(root, "raw"))
-    foreach(n -> write(joinpath(root, "raw", n), n), ("a.ARW", "b.ARW"))
-    cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW"),
-                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0),
-                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
-                                                                               "averaging_optimization_strategy" => Dict{String, Any}("type" => "irls", "loss" => "huber", "max_iter" => 100),
-                                                                               "bundle_optimization_strategy" => Dict{String, Any}("type" => "triggs", "loss" => "cauchy", "efficiency_constant" => 3.0)), Dict{String, Any}(string(k) => v for (k, v) in kw)))
-    out = mktempdir(); inp = (; names = ["a.ARW", "b.ARW"])
-    path = joinpath(out, "verified_pairs.json")
-    withenv("VGTK_DATA_ROOT" => root) do
-        matched = Ref(0)                                                  # how often the matching ran
-        compute() = (matched[] += 1; merge!(call(:pairs_record, vp), Dict{String, Any}("seconds" => 1.0)))
-        stage(c) = call(:cached_record, compute, path, call(:pairs_key, (; cfg = c, out), inp, :cuda); log = devnull, what = "verified pairs")
-        rec = stage(cfg())
-        @test matched[] == 1 && isfile(path) && haskey(rec, "key")
-        @test stage(cfg()) == rec && matched[] == 1                      # a second run with the same matching settings skips it
-        back = call(:pairs_from_record, rec)                              # the record reads back exactly
-        @test back isa VerifiedPairs && back.verified == vp.verified && back.inlier_matches == vp.inlier_matches && back.stats == vp.stats && back.scales == vp.scales
-        @test back.loma.descriptor["execution_provider"] == "cuda" && back.loma.matcher["model"] == "loma_b128"   # LoMa's provenance
-        @test all(k -> back.features[k].pixels == vp.features[k].pixels && isequal(back.features[k].pixel_covariances, vp.features[k].pixel_covariances) &&
-                       back.features[k].n_detected == 40, 1:2)
-        # a changed averaging or bundle setting: a new registration, the same pairs
-        key(f, c; provider = :cuda) = call(f, (; cfg = c, out), inp, provider)
-        # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
-        @test key(:pairs_key, cfg(); provider = :cpu) != key(:pairs_key, cfg()) && key(:registration_key, cfg(); provider = :cpu) != key(:registration_key, cfg())
-        for c in (cfg(; averaging_optimization_strategy = Dict{String, Any}("type" => "irls", "loss" => "cauchy", "max_iter" => 100)),
-                  cfg(; bundle_optimization_strategy = Dict{String, Any}("type" => "triggs", "loss" => "cauchy", "efficiency_constant" => 2.5)),
-                  cfg(; bundle_optimization_strategy = Dict{String, Any}("type" => "triggs", "loss" => "huber", "efficiency_constant" => 3.0)),
-                  cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0))
-            @test key(:registration_key, c) != key(:registration_key, cfg()) && key(:pairs_key, c) == key(:pairs_key, cfg())
-            stage(c)
-        end
-        @test matched[] == 1
-        # a changed matching setting, or a changed RAW file: matched again
-        stage(cfg(; min_inliers = 30)); @test matched[] == 2
-        write(joinpath(root, "raw", "b.ARW"), "b, rewritten"); stage(cfg(; min_inliers = 30)); @test matched[] == 3
-        # the detector's keys key the pairs
-        for c in (cfg(; selection = "spread"), cfg(; detection_image = "vst"), cfg(; max_detections = 4096))
-            @test key(:pairs_key, c) != key(:pairs_key, cfg())
-        end
-        # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its loss keys the pairs there
-        @test key(:pairs_key, cfg(; pairs = "lag_overlap", averaging_optimization_strategy = Dict{String, Any}("type" => "irls", "loss" => "cauchy", "max_iter" => 100))) != key(:pairs_key, cfg(; pairs = "lag_overlap"))
-    end
     # the detector's settings: "vst" reads the noise keys, "tone" refuses them (never read)
     det(r) = call(:detector_settings, Dict{String, Any}(r))
     @test det(Dict("selection" => "spread", "detection_image" => "tone")) == (; selection = :spread, detection_image = :tone, detection_noise = nothing)

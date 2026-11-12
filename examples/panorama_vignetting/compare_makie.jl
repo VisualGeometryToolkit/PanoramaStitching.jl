@@ -1,9 +1,9 @@
 # compare_makie.jl — view a run's outputs uncorrected vs corrected in GLMakie, the two axes linked (pan and zoom together):
 # VisualGeometryToolkitFeatures' `compare_images` (its Makie extension: the menu, the linked axes, Core's image orientation).
 #
-#   julia --project=examples/panorama_vignetting examples/panorama_vignetting/compare_makie.jl examples/panorama_vignetting/out/fx3_14mm_indoor
+#   julia --project=examples/panorama_vignetting examples/panorama_vignetting/compare_makie.jl $VGTK_RESULTS_ROOT/panorama_vignetting/fx3_14mm_indoor/run-<key>
 #
-# or from a REPL: include("compare_makie.jl"); compare_makie("out/fx3_14mm_indoor"). The menu switches the pair shown: each
+# or from a REPL: include("compare_makie.jl"); compare_makie("<results>/panorama_vignetting/fx3_14mm_indoor/run-<key>"). The menu switches the pair shown: each
 # projection's renders and the seam-ratio maps (run.jl's `<view>_uncorrected.png` and `<view>_corrected.png`). The renders of one
 # pair are the same size and the same exposure, so the linked axes compare pixel for pixel. `save_comparison` writes the
 # figure as a PNG (for a reader without a display). What is the example's own: which renders form a pair.

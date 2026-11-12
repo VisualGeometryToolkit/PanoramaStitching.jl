@@ -4,6 +4,12 @@
 
 ### Breaking: the robust-estimation contract's names (VisualGeometryToolkit 0.9)
 
+- examples/panorama_vignetting runs on VisualGeometryToolkitEval's Experiments (compliance audit #21): everything it writes
+  goes under the results root (`<results>/panorama_vignetting/<name>/`, the run's outputs in `run-<run_key(config)>/`
+  with Eval's run records) instead of the config's `output` folder (the key is refused by name); the stages' records are
+  Eval's keyed result cache (`cached_result` at `run_key`: `verified_pairs_<key>.jld2`, `registration_<key>.jld2`) instead of a
+  private key and JSON cache; the READY_14mm.txt marker is gone; `reproduce.toml` declares the stage graph. Its checks
+  (`stage_cache_check.jl`, `autocalibration_check.jl`) run through `run_checks.jl` in the example's environment.
 - `refine_rotations` takes the robust-estimation contract's `optimization_strategy` (a `Triggs{Shape}`, by default every
   refine's `Triggs{WelschShape}`; `nothing` the plain least squares) and exactly one of `scale` or `width`; its `loss` and
   `loss_width` are refused by name. `RotationBundleMetadata` records the scale (`scale`, `scale_source`: read through

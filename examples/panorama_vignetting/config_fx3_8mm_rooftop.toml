@@ -4,7 +4,6 @@
 # Run: julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_8mm_rooftop.toml
 
 name = "fx3_8mm_rooftop"
-output = "out/fx3_8mm_rooftop"                     # relative to this file's folder (gitignored); the decode cache lives in it
 
 [inputs]
 raw_dir = "vignetting/data/sony_fisheye"           # the RAW frames (*.ARW), in capture order by name

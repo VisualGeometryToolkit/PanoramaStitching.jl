@@ -3,7 +3,6 @@
 # Run: julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_14mm.toml
 
 name = "fx3_14mm_indoor"
-output = "out/fx3_14mm_indoor"                     # relative to this file's folder (gitignored); the decode cache lives in it
 
 [inputs]
 raw_dir = "panorama_good/14mm"                     # the RAW frames (*.ARW), in capture order by name
