@@ -68,7 +68,7 @@ end
     obs = PanoramaStitching._Observation{false, typeof(bc), typeof(fwd), Nothing, typeof(Li)}(bc, fwd, x, SVector(1, 2), nothing, Li)
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), obs, ch, dv)
     @test e ≈ NLLSsolver.computeresidual(obs, ch, dv)
-    f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
+    f = updated_residual(obs, ch, dv)
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 
     kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)

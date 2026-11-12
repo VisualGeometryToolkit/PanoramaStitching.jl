@@ -137,7 +137,7 @@ end
     # the averaging's gauge is the first frame: its rotation is the identity
     @test VgtkCore.estimate(reg.averaging)[1] ≈ one(SMatrix{3, 3, Float64, 9}) atol = 1e-12
     # every kept feature lies in the camera's imaged region eroded by the detector margin (the image circle less 20 px)
-    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]
+    px = keypoint_pixels
     @test all(f -> all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(f)), reg.features)
     @test all(f -> !isempty(f), reg.features)
     # the frames sampled at directions spread uniformly over the covered sphere, the vignetting read on the ray: every frame
@@ -318,7 +318,7 @@ end
                                      bundle_optimization_strategy = bkw.optimization_strategy,
                                      bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
     a, b = reg(0.0), reg(30.0)
-    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]
+    px = keypoint_pixels
     @test [px(f) for f in a.features] == [px(f) for f in b.features]
     edge(p) = min(p[1], p[2], 1000 - p[1], 1000 - p[2])
     @test any(f -> any(p -> edge(p) < 30.0, px(f)), b.features)                 # kept within the margin of the sensor's edge

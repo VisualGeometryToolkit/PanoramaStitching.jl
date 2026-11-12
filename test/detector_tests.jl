@@ -16,7 +16,7 @@
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
-    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]                # the keypoints' centres in the camera's pixels
+    px = keypoint_pixels                                                            # the keypoints' centres in the camera's pixels
     sp = detect_features(q.cam, frame, desc; kw..., selection = :spread)
     @test VgtkFeatures.descriptor_matrix(sp) isa AbstractMatrix{Float32}             # Features' StructArray{DescribedFeature}, as the descriptor returns it
     @test px(detect_features(q.cam, frame, desc; kw...)) == px(sp)                  # :spread and :tone the defaults
@@ -60,7 +60,7 @@ end
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
     noise = (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
-    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]
+    px = keypoint_pixels
     # :tone reads a LinearRaw's image as it reads the array
     @test px(detect_features(q.cam, L, desc; kw...)) == px(detect_features(q.cam, L.image, desc; kw...))
     v = detect_features(q.cam, L, desc; kw..., detection_image = :vst, detection_noise = noise)
@@ -97,7 +97,7 @@ end
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = :untilted, max_detections = N)
-    px(f) = [FRAME_MAP(SVector{2, Float64}(d.center...)) for d in f]
+    px = keypoint_pixels
     free = detect_features(q.cam, frame, desc; kw...)
     masked = detect_features(q.cam, frame, desc; kw..., saturated = clip)
     in_window(p) = all(c -> 2 * (150 - 1) <= c <= 2 * 350, p)                   # camera pixels of the clipped window

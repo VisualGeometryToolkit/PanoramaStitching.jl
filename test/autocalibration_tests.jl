@@ -77,7 +77,7 @@ end
     @test c.nu == 2 * res.n - (3 * 9 + 2 * length(tracks) + 7)
 end
 
-@testitem "refine_camera_and_rotations: the camera block's Jacobian; the refusals" setup = [RotatingKB] begin
+@testitem "refine_camera_and_rotations: the camera block's Jacobian; the refusals" setup = [RotatingKB, SweepScene] begin
     using Test, LinearAlgebra, StaticArrays
     import ForwardDiff, NLLSsolver
     import PanoramaStitching
@@ -93,7 +93,7 @@ end
     _, J = NLLSsolver.computeresjac(NLLSsolver.static(7), obs, ch, dv, cc)
     # the frame and direction blocks through the variables' updates (the camera at its anchor); the camera block through the
     # chart's update (π without the valid-domain test, which Core evaluates on plain numbers only)
-    f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]), cc)
+    f = updated_residual(obs, ch, dv, cc)
     @test J[:, 1:5] ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
     g(δ) = PanoramaStitching._image(VgtkCore.model(NLLSsolver.update(cc, δ)), R[3]' * d)
     @test J[:, 6:12] ≈ ForwardDiff.jacobian(g, zeros(7)) rtol = 1.0e-9

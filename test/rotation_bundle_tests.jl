@@ -9,7 +9,8 @@ using Random, LinearAlgebra, StaticArrays
 import Rotations
 using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, project, Disc, Point2
 import VisualGeometryToolkitFeatures as VgtkFeatures
-export CAM, sweep_rotations, sweep_tracks, described
+import NLLSsolver
+export CAM, sweep_rotations, sweep_tracks, described, updated_residual
 const CAM = CameraModel(300.0px, SA[600.0px, 600.0px]; lens = KannalaBrandt(-0.02))
 sweep_rotations(rng, K) = Dict(k => (k == 1 ? SMatrix{3, 3}(1.0I) :
     SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec(0.1randn(rng), 0.5 * (k - 1) + 0.05randn(rng), 0.1randn(rng))))) for k in 1:K)
@@ -36,6 +37,10 @@ end
 # A frame's features as the detector gives them, Features' described features (`StructArray{DescribedFeature}`), at `pixels`
 # (a frame at the camera's own pixels): each a detection of a Disc (the detector's default: no keypoint covariance),
 # described by one zero.
+# A bundle residual block as a function of its frame's and its direction's chart steps, δ[1:3] and δ[4:5] (any further
+# variables at their anchors): what a closed-form Jacobian is checked against with ForwardDiff.
+updated_residual(obs, ch, dv, rest...) =
+    δ -> NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]), rest...)
 described(pixels) = VgtkFeatures.described_features([VgtkFeatures.Detection(Disc(Point2(p[1], p[2]), 2.0), (; response = 1.0)) for p in pixels],
                                                     zeros(Float32, length(pixels), 1))
 end
@@ -102,7 +107,7 @@ end
     bc = PanoramaStitching._BundleCamera(CAM)
     obs = PanoramaStitching._Observation{false, typeof(bc), typeof(fwd), Nothing, Nothing}(bc, fwd, x, SVector(1, 2), nothing, nothing)
     _, J = NLLSsolver.computeresjac(NLLSsolver.static(3), obs, ch, dv)
-    f(δ) = NLLSsolver.computeresidual(obs, NLLSsolver.update(ch, δ[1:3]), NLLSsolver.update(dv, δ[4:5]))
+    f = updated_residual(obs, ch, dv)
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 end
 

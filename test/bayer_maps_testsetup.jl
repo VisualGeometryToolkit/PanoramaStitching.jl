@@ -7,11 +7,13 @@ using StaticArrays: SVector
 using Rotations: RotMatrix
 import VisualGeometryToolkitCore as VgtkCore
 import VisualGeometryToolkitFeatures as VgtkFeatures
-export FRAME_MAP, PLANE_MAPS, IDENTITY_MAP
+export FRAME_MAP, PLANE_MAPS, IDENTITY_MAP, keypoint_pixels
 
 const BGGR = VgtkFeatures.LinearRaw(VgtkFeatures.RawMosaic(zeros(UInt16, 4, 4), UInt8[2 1; 3 0], (0.0, 0.0, 0.0, 0.0), 1.0, (0, 0),
                                                            (4, 4), (; model = "synthetic")); mode = :bin2)
 const FRAME_MAP = VgtkFeatures.raw_frame_map(BGGR)                                     # x ↦ 2x
 const PLANE_MAPS = ntuple(c -> VgtkFeatures.bayer_plane_map(BGGR, c), 3)
 const IDENTITY_MAP = VgtkCore.SimilarityMap(1.0, one(RotMatrix{2, Float64}), SVector(0.0, 0.0))            # a frame at the camera's own pixels
+# A frame's keypoints' centres (its described features) in the camera's pixels, through the frame's map.
+keypoint_pixels(features, frame_map = FRAME_MAP) = [frame_map(SVector{2, Float64}(d.center...)) for d in features]
 end
