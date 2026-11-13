@@ -32,13 +32,14 @@ model entity an **observation** (Core's `conventions/naming.md`).
   registration record as Core's values, `bundle_fit`, format v15), and the example names PanoramaStitching as the file's
   generator (`VgtkIO.with_caller`). V stays inside the
   panorama file (its `vignetting` is the `vgio/vignetting` body): no separate vignetting file.
-- The detector's noise is the frame's resolved sensor noise (VisualGeometryToolkitCore's `SensorNoise`, its ONE resolver
-  `sensor_noise`): `detect_features(...; detection_image = :vst, noise::SensorNoise, noise_sigmas)`, and
-  `verify_pairs` / `register_rotations(...; noise, noise_sigmas)` with one `SensorNoise` per frame (Features'
-  `variance_stabilize(L, noise)`). The 0.6 keyword `detection_noise = (; electrons_per_dn, read_noise, noise_sigmas)` is
-  refused naming them; with `:tone` neither is given. The example resolves each frame's noise (`frame_noise`: the RAW files'
-  capture settings, the body's `[registration] sensor_noise_record` — a `vgio/sensor_noise` file or `"none"` — and Core's
-  `sensor_noise`), decodes the LinearRaw with it, and refuses the 0.6 keys `electrons_per_dn` and `read_noise_dn` by name.
+- The detector's noise is the frame's sensor model (VisualGeometryToolkitCore's `SensorModel`, its ONE resolver `sensor_model`
+  of the body's characterisation): `detect_features(...; detection_image = :vst, sensor_model, noise_sigmas)`, and
+  `verify_pairs` / `register_rotations(...; sensor_models, noise_sigmas)` with one model per frame (Features'
+  `variance_stabilize(L, sensor_model.noise)`); `:vst` needs a gain (a `PoissonGaussian`), any other noise refused naming the
+  model's reason. The 0.6 keyword `detection_noise` is refused naming them; with `:tone` neither is given. The example
+  resolves each frame's model (`frame_models`: the RAW files' capture settings, the body's `[registration]
+  sensor_characterisation` — a `vgio/sensor_characterisation` file or `"none"` — and Core's `sensor_model`), decodes the
+  LinearRaw with it, and refuses the 0.6 keys `electrons_per_dn` and `read_noise_dn` by name.
 - New public API, hoisted from the example (RC's cvpr2027 called them from run.jl): `sweep_up(rotations) -> (; up, eigenvalues)`
   (the up of a roll-free sweep: the least eigenvector of Σ x_k x_kᵀ over the frames' image x axes, signed against their down
   axes; the eigenvalues its roll-free diagnostic), `up_frame(up::AbstractVector)` (the true-up frame of an up direction,
@@ -51,6 +52,16 @@ model entity an **observation** (Core's `conventions/naming.md`).
 - The example's decoded-RAW cache is opt-in, `[decode] cache = true | false` (the configs of record set `true`), and the example
   loads no JLD2 itself: VisualGeometryToolkitEval brings it, and with it Features' FileCache extension. A caller that includes
   run.jl (RC's cvpr2027) needs no JLD2 of its own; the example's environment drops its direct JLD2 entry.
+- `fit_vignetting`'s value noise is the frames' own (owner ruling D10), by dispatch on the image type: an uncertain image —
+  VisualGeometryToolkitCore's `LinearRaw` under a sensor model whose noise feeds each value's variance (a `PoissonGaussian`, or a
+  specified `RelativeNoise`), a `StructArray` of `Uncertain` values — weights a row by I²/var(I); a plain image keeps the
+  read-noise fallback, weight I² (bit for bit the fits before 0.7; the configs of record decode plain images). The metadata
+  gains `value_variance`. `IntensityNoise` is deleted (its weights are the plain image's fallback), and
+  `IntensityAndPositionNoise` becomes `PositionNoise(; point_covariance, iterations)`: its constant σ of log I
+  (`log_intensity_scale`) is a specified `RelativeNoise` of the frames' sensor model, and it needs the frames' variances.
+  `observation_noise` is required (`nothing` or a `PositionNoise`); `OBSERVATION_NOISES` tags `"none"` and `"position"`
+  (`"intensity"`, `"intensity_and_position"` refused naming them). The example's `[vignetting] log_intensity_scale` is
+  refused; `arms.toml` states the position arms' `relative_noise = 0.01`.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation", the example's cache formats
   and their version history included (owner, 2026-11-13): its verified-pairs record is format v11, so 0.6 caches are
   recomputed, not reused.

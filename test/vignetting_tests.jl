@@ -7,8 +7,12 @@
 @testsetup module VignettingSequence
 using LinearAlgebra: I, normalize
 using StaticArrays: SVector, SMatrix, SA
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, backproject, exp_so3, Circle, Point2, BoundedCamera, Size2
-export vignetting_sequence
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, backproject, exp_so3, Circle, Point2, BoundedCamera, Size2,
+    Uncertain, CovMat
+export vignetting_sequence, relative_frames
+
+# The frames as an uncertain image (a value's variance each, as Core's LinearRaw under a RelativeNoise gives): σ = σ_rel·I.
+relative_frames(frames, σ_rel) = [map(x -> Uncertain(Float64(x), CovMat{1}(σ = x > 0 ? σ_rel * Float64(x) : 1.0)), F) for F in frames]   # (a dark pixel: no row)
 
 # the scene: a smooth log radiance on the sphere (wavelengths of about 30°; Cartesian, so no pole is singular)
 scene(d) = 0.05 * exp(0.6 * sin(3d[1] + 2d[2]) * cos(2d[3]) + 0.3 * sin(9d[1] - 7d[3] + 5d[2]))
@@ -56,7 +60,7 @@ end
         r = exp.(a .- b) .- 1
         return maximum(abs, r), sqrt(mean(abs2, r))
     end
-    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0,
+    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, observation_noise = nothing,
           plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
           vignetting_penalty_weight = 1.0e-6, gain_correction = nothing)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
@@ -75,10 +79,15 @@ end
     @info "fit_vignetting radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.iterations) CG iterations, rms $(cg.rms)"
     @test VgtkCore.converged(cg) && VgtkCore.stop_rule(cg) == VgtkCore.ToleranceMet && VgtkCore.retcode_symbol(cg) === :converged
     @test VgtkCore.converged(ch) && VgtkCore.stop_rule(ch) == VgtkCore.ClosedForm && VgtkCore.retcode_symbol(ch) === :solved
-    @test cg.metadata.log_change == 0 && cg.metadata.observation_noise === PanoramaStitching.IntensityNoise()
+    @test cg.metadata.log_change == 0 && cg.metadata.observation_noise === nothing && !cg.metadata.value_variance   # the read-noise fallback
+    # an uncertain image weights a row by I²/var(I): exact frames give the same V; a mix of plain and uncertain is refused
+    un = fit_vignetting(v0, q.camera, relative_frames(q.frames, 0.01), q.R; free_directions = Z, saturated = q.saturated, solver = SparseCholesky(), kw...)
+    @test un.metadata.value_variance && error_vs(VgtkCore.estimate(un), radial, q)[1] < 2.0e-3
+    @test_throws "not a mix" fit_vignetting(v0, q.camera, [relative_frames(q.frames[1:1], 0.01); q.frames[2:end]], q.R; free_directions = Z,
+                                            saturated = q.saturated, solver = cgs, kw...)
     # the noise keyword of 0.4–0.6 is refused naming its successor (spelled in fragments: check_naming retires its word)
     @test_throws "renamed `observation_noise`" fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, saturated = q.saturated,
-                                                              solver = cgs, Symbol("measure" * "ment_noise") => PanoramaStitching.IntensityNoise(), kw...)
+                                                              solver = cgs, Symbol("measure" * "ment_noise") => nothing, kw...)
     @test e_cg[1] < 2.0e-3 && e_ch[1] < 2.0e-3
     @test maximum(abs.(control_points(VgtkCore.estimate(cg)) .- control_points(VgtkCore.estimate(ch)))) < 1.0e-5
     @test cg.rms < 0.02
@@ -112,7 +121,7 @@ end
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
-    using PanoramaStitching: IntensityAndPositionNoise, ChannelGains
+    using PanoramaStitching: PositionNoise, ChannelGains
     import Adapt
     # a calibration's V as a table over the radius (a host Vector inside: it needs its Adapt rule to reach a device)
     struct TableV{A}
@@ -130,7 +139,7 @@ end
         radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
         q = vignetting_sequence(radial)
         v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-        kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0,
+        kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, observation_noise = nothing,
               plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
               vignetting_penalty_weight = 1.0e-6, gain_correction = ChannelGains(), free_directions = pole_regular_basis(v0),
               solver = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000))
@@ -143,9 +152,10 @@ end
         @test abs(d.rms - h.rms) < 1.0e-8
         # the value-and-position noise's weights on the device (the observation's constraint, ForwardDiff and Core's whitening
         # in the kernels)
-        sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 2)
-        hs = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, observation_noise = sw, kw...)
-        dsf = fit_vignetting(v0, q.camera, df, q.R; saturated = ds, observation_noise = sw, kw...)
+        sw = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 2)
+        uf = relative_frames(q.frames, 0.01)                                 # the position noise reads the values' variances
+        hs = fit_vignetting(v0, q.camera, uf, q.R; saturated = q.saturated, kw..., observation_noise = sw)
+        dsf = fit_vignetting(v0, q.camera, CuArray.(uf), q.R; saturated = ds, kw..., observation_noise = sw)
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
@@ -176,7 +186,7 @@ end
 @testitem "fit_vignetting: the frames' exposure gains recovered (gauge g₁ = 1), V free or held fixed; score_seams and render_panorama divide them out" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient,
-        SparseCholesky, IntensityAndPositionNoise, IntensityGains
+        SparseCholesky, PositionNoise, IntensityGains
     import VisualGeometryToolkitCore as VgtkCore
     using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, n_control_points, with_control_points
     c = SVector(430.0, 390.0)
@@ -184,7 +194,7 @@ end
     g = [1.0, 1.12, 0.9, 1.2, 0.95, 1.07]
     q = vignetting_sequence(radial; gains = g)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
     function v_error(v)
@@ -217,9 +227,12 @@ end
 
     # the value-and-position noise (the observation's constraint whitened with the sensor point's noise too): frames that follow
     # the model exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
-    sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5), iterations = 2)
-    sam = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
-                         observation_noise = sw, kw...)
+    sw = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5), iterations = 2)
+    uf = relative_frames(q.frames, 0.01)                                     # the position noise reads the values' variances
+    @test_throws "needs the frames' value variances" fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z,
+                                                                     gain_correction = IntensityGains(), solver = SparseCholesky(), kw..., observation_noise = sw)
+    sam = fit_vignetting(v0, q.camera, uf, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
+                         kw..., observation_noise = sw)
     @test sam.metadata.observation_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
     # the termination is every solve's (Core's worst_retcode), not the last one's: the cold first solve capped by the CG
@@ -228,19 +241,19 @@ end
     single = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), (; kw..., solver = cg(100_000))...)
     @test VgtkCore.converged(single) && VgtkCore.stop_rule(single) == VgtkCore.ToleranceMet
     budget = single.iterations ÷ 2                           # the cold solve capped well short (its CG count varies by an iteration or so: threaded scatter-adds)
-    capped = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(),
+    capped = fit_vignetting(v0, q.camera, uf, q.R; free_directions = Z, gain_correction = IntensityGains(),
                             (; kw..., solver = cg(budget), observation_noise = sw)...)
     @test capped.iterations < 3 * budget                     # a later solve met the tolerance within the budget
     @test VgtkCore.retcode(capped) == VgtkCore.ReturnCode.MaxIters && VgtkCore.stop_rule(capped) == VgtkCore.IterationCap
     @test VgtkCore.retcode_symbol(capped) === :max_iterations && !VgtkCore.converged(capped)
-    sf = fit_vignetting(VgtkCore.estimate(with), q.camera, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
+    sf = fit_vignetting(VgtkCore.estimate(with), q.camera, uf, q.R; free_directions = zeros(n_control_points(v0), 0),
                         gain_correction = IntensityGains(), solver = SparseCholesky(),
-                        observation_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)), kw...)
+                        kw..., observation_noise = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)))
     @test sf.metadata.observation_noise.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
-    @test_throws UndefKeywordError IntensityAndPositionNoise()                                     # the point's noise is required
-    @test_throws TypeError IntensityAndPositionNoise(; point_covariance = [1.0 0; 0 1])            # a CovMat, not a bare matrix
-    @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 3)
-    @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat(SMatrix{2, 2}(1.0, 2.0, 2.0, 1.0)))   # not positive definite
+    @test_throws UndefKeywordError PositionNoise()                                     # the point's noise is required
+    @test_throws TypeError PositionNoise(; point_covariance = [1.0 0; 0 1])            # a CovMat, not a bare matrix
+    @test_throws ArgumentError PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 3)
+    @test_throws ArgumentError PositionNoise(; point_covariance = VgtkCore.CovMat(SMatrix{2, 2}(1.0, 2.0, 2.0, 1.0)))   # not positive definite
 
     # the observation's constraint (Core's protocol): G_x is the model's exact gradient in u, and the weight is Core's whitening
     m = with.metadata
@@ -256,7 +269,8 @@ end
         fd = SVector((gat(u + SVector(h, 0)) - gat(u - SVector(h, 0))) / 2h, (gat(u + SVector(0, h)) - gat(u - SVector(0, h))) / 2h)
         @test isapprox(SVector(G_x[1], G_x[2]), fd; rtol = 1.0e-5, atol = 1.0e-9) && G_x[3] == 1.0
         @test length(G_θ) == 16 + 4 + 1 && G_θ[end] == -1.0
-        Σx = PanoramaStitching._noise_covariance(IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)))
+        # Σ_x = blockdiag(Σ_u, var(log I)), var(log I) = var(I)/I² = σ_rel² under a relative noise
+        Σx = SMatrix{3, 3, Float64, 9}(1.5^2, 0, 0, 0, 1.5^2, 0, 0, 0, 0.01^2)
         @test VgtkCore.whitening_factor(G_x, Σx)^2 ≈ 1 / (1.5^2 * (G_x[1]^2 + G_x[2]^2) + 0.01^2)
     end
 
@@ -296,7 +310,7 @@ end
     q = vignetting_sequence(radial; gains = G)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     truth(u, f) = exp(radial(u))                                     # a V given as any callable
-    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
     function v_error(v)
         us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
@@ -355,19 +369,22 @@ end
 # one (no alias: an old config fails, it is never read as the new setting).
 @testitem "GAIN_CORRECTIONS, OBSERVATION_NOISES: the tags, and the renamed tags refused by name" begin
     using Test
-    using PanoramaStitching: PanoramaStitching, IntensityGains, ChannelGains, IntensityNoise, IntensityAndPositionNoise
+    using PanoramaStitching: PanoramaStitching, IntensityGains, ChannelGains, PositionNoise
     import VisualGeometryToolkitCore as VgtkCore
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     @test G["intensity"] === IntensityGains && G["channel"] === ChannelGains && G["none"] === nothing
-    @test N["intensity"] === IntensityNoise && N["intensity_and_position"] === IntensityAndPositionNoise
-    @test VgtkCore.tag_of(G, IntensityGains) == "intensity" && VgtkCore.tag_of(N, IntensityAndPositionNoise) == "intensity_and_position"
+    @test N["none"] === nothing && N["position"] === PositionNoise
+    @test VgtkCore.tag_of(G, IntensityGains) == "intensity" && VgtkCore.tag_of(N, PositionNoise) == "position"
     renamed(reg, tag) = try
         reg[tag]; ""
     catch e
         e isa ArgumentError ? sprint(showerror, e) : rethrow()
     end
     m = renamed(G, "frame"); @test occursin("renamed", m) && occursin("\"intensity\"", m)
-    m = renamed(N, "sampson"); @test occursin("renamed", m) && occursin("\"intensity_and_position\"", m)
+    m = renamed(N, "sampson"); @test occursin("renamed", m) && occursin("\"position\"", m)
+    # 0.7: the tags of 0.4–0.6 name their successors
+    m = renamed(N, "intensity"); @test occursin("renamed", m) && occursin("\"none\"", m)
+    m = renamed(N, "intensity_and_position"); @test occursin("renamed", m) && occursin("\"position\"", m)
     @test_throws ArgumentError N["weights"]
     @test isempty(VgtkCore.tag_rule_violations(G)) && isempty(VgtkCore.tag_rule_violations(N))
 end
@@ -386,7 +403,7 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
-    for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration,
+    for name in (:RENAMED_KEYS, :RETIRED_VIGNETTING_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration,
                  :refuse_output, :refuse_inert_pair_keys)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
@@ -400,6 +417,8 @@ end
         end
         @test err isa ArgumentError && occursin("the key $old was renamed to $new", err.msg)
     end
+    # the constant σ of log I is retired (a specified RelativeNoise of the frames' sensor model): refused by name
+    @test_throws "RelativeNoise" refuse(Dict{String, Any}("log_intensity" * "_scale" => 0.01))
     # `[inputs] circle` is refused, naming the camera's lens coverage
     err = try
         Base.invokelatest(m.refuse_circle, Dict{String, Any}("circle" => [1.0, 2.0, 3.0]), "config [inputs]"); nothing
@@ -446,7 +465,7 @@ end
         # the pairs' local optimization is an Estimation strategy table, read by Estimation's own loader
         @test VgtkEstimation.optimization_strategy_from_toml(reg["local_optimization_strategy"]; class = :rotation) isa VgtkCore.AbstractOptimizationStrategy
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
-        @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["observation_noise"]] isa Type
+        @test refuse(v) === v && G[v["gain_correction"]] isa Any && (N[v["observation_noise"]]; true)
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
         @test all(k -> VgtkCore.VIGNETTING_TAGS[k] in (VgtkCore.RadialVignetting, VgtkCore.TensorProductVignetting),
                   vcat(v["model"], v["compare_models"]))
@@ -456,7 +475,7 @@ end
     @test VgtkCore.VIGNETTING_TAGS[arms["kind"]] === VgtkCore.RadialVignetting
     @test refuse(arms) === arms && length(arms["arms"]) == 12 && allunique(a["name"] for a in arms["arms"])
     for a in arms["arms"]
-        @test refuse(a) === a && N[a["observation_noise"]] isa Type && (G[a["gain_correction"]]; true)
+        @test refuse(a) === a && (N[a["observation_noise"]]; true) && (G[a["gain_correction"]]; true)
         @test !any(t -> occursin(t, a["name"]), ("intensity", "channel", "none", "frame", "sampson", "free", "fixed"))
     end
 end
@@ -489,4 +508,44 @@ end
     @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3))
     @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_characterisation" => "none"))
     @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst"))
+end
+
+# The uncertain path end to end (owner ruling D10): the frames as RAW mosaics decoded by Core's LinearRaw under a sensor model
+# whose noise feeds each value's variance — a specified RelativeNoise (Core's test fixture: tests never build a component) —
+# give fit_vignetting a StructArray of Uncertain values: their values are the plain decode's bit for bit, their variances
+# (σ_rel·x)², and the fit weights by them (value_variance), recovering V from exact frames.
+@testitem "fit_vignetting: LinearRaw's uncertain image (a sensor model's RelativeNoise) weights by the values' variances" setup = [VignettingSequence, BayerMaps] begin
+    using Test, Statistics, StaticArrays
+    using PanoramaStitching: PanoramaStitching, fit_vignetting, SparseCholesky
+    import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
+    c = SVector(430.0, 390.0)
+    radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
+    q = vignetting_sequence(radial)
+    black = 512.0; white = 16383.0
+    code(v) = UInt16(round(black + clamp(v, 0, 1) * (white - black)))
+    function mosaic(F)                                                      # RGGB: each photosite its plane's value
+        Hf, Wf = size(F, 1), size(F, 2); raw = Matrix{UInt16}(undef, 2Hf, 2Wf)
+        for j in 1:Wf, i in 1:Hf
+            raw[2i - 1, 2j - 1] = code(F[i, j, 1]); raw[2i - 1, 2j] = code(F[i, j, 2])
+            raw[2i, 2j - 1] = code(F[i, j, 2]); raw[2i, 2j] = code(F[i, j, 3])
+        end
+        return VgtkCore.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf), (; model = "synthetic"))
+    end
+    model = VgtkCore.sensor_fixture(; relative_noise = 0.01).model
+    @test model.noise isa VgtkCore.RelativeNoise
+    Ls = [VgtkCore.LinearRaw(mosaic(F); mode = :bin2, sensor_model = model) for F in q.frames]
+    plain = [VgtkCore.LinearRaw(mosaic(F); mode = :bin2).image for F in q.frames]
+    vals, vars = PanoramaStitching._frame_values(Ls[1].image)
+    @test vals == plain[1] && vars ≈ (0.01 .* plain[1]) .^ 2
+    v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
+    kw = (; free_directions = pole_regular_basis(v0), gain_correction = nothing, saturated = [L.saturated for L in Ls], frame_map = FRAME_MAP,
+          rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
+          vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky(), observation_noise = nothing)
+    u = fit_vignetting(v0, q.camera, [L.image for L in Ls], q.R; kw...)
+    p = fit_vignetting(v0, q.camera, plain, q.R; kw...)
+    @test u.metadata.value_variance && !p.metadata.value_variance
+    us = filter(x -> hypot(x[1] - 400, x[2] - 400) < 380, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
+    err(r) = (a = [log(VgtkCore.estimate(r)(x)) for x in us]; b = radial.(us); maximum(abs, (a .- mean(a)) .- (b .- mean(b))))
+    @test err(u) < 5.0e-3 && err(p) < 5.0e-3                               # 14-bit codes: the quantization, not the weights
 end

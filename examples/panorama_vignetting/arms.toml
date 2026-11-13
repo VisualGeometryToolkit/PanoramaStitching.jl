@@ -4,9 +4,9 @@
 #   vignetting         "free" (self-calibration: V fitted with the gains) or "fixed" (V held at the V of record: the arm named by
 #                      `fixed_from`'s fitted V, its log V(u) the fixed numbers: gain compensation under a given V)
 #   gain_correction    "none", "intensity" (one gain per frame, every plane) or "channel" (per frame and colour plane)
-#   observation_noise  "intensity" (noise in the value: weight I²) or "intensity_and_position" (the value and the sensor
-#                      position; the sensor point's σ the registration bundle's core scale, loss width / scale multiple, from the
-#                      set's rotations.json)
+#   observation_noise  "none" (the value's noise alone: the frames' own variance, else the read-noise fallback, weight I²) or
+#                      "position" (the sensor position too; the sensor point's σ the registration bundle's core scale, loss
+#                      width / scale multiple, from the set's rotations.json)
 # An arm's name is its own label: selfcal (V fitted) or given_v (V held at the V of record); no_gain, shared_gain (one gain per
 # frame, shared by the planes) or plane_gain (one per frame and colour plane); value (noise in the value) or value_point (in the value and the sensor
 # point).
@@ -17,77 +17,78 @@ output = "arms"                                    # under each set's output fol
 sets = ["config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml"]
 kind = "radial"                                    # the V model of every arm (the configs of record's)
 fixed_from = "selfcal_shared_gain_value"              # the V of record: the fit with the record's settings (one gain per frame, I²)
-log_intensity_scale = 0.01                         # intensity_and_position: σ of log I
-observation_noise_iterations = 1                   # intensity_and_position: its reweight-and-solve cycles after the I² solve
+relative_noise = 0.01                              # the position arms' value noise: a specified RelativeNoise σ_rel of the frames' sensor
+                                                   # model (Core; σ of log I = σ_rel, the 0.6 constant), when position arms run
+observation_noise_iterations = 1                   # position: its reweight-and-solve cycles after the first solve
 
 [[arms]]
 name = "selfcal_shared_gain_value"
 vignetting = "free"
 gain_correction = "intensity"
-observation_noise = "intensity"
+observation_noise = "none"
 
 [[arms]]
 name = "selfcal_no_gain_value"
 vignetting = "free"
 gain_correction = "none"
-observation_noise = "intensity"
+observation_noise = "none"
 
 [[arms]]
 name = "selfcal_plane_gain_value"
 vignetting = "free"
 gain_correction = "channel"
-observation_noise = "intensity"
+observation_noise = "none"
 
 [[arms]]
 name = "given_v_no_gain_value"
 vignetting = "fixed"
 gain_correction = "none"
-observation_noise = "intensity"
+observation_noise = "none"
 
 [[arms]]
 name = "given_v_shared_gain_value"
 vignetting = "fixed"
 gain_correction = "intensity"
-observation_noise = "intensity"
+observation_noise = "none"
 
 [[arms]]
 name = "given_v_plane_gain_value"
 vignetting = "fixed"
 gain_correction = "channel"
-observation_noise = "intensity"
+observation_noise = "none"
 
 [[arms]]
 name = "selfcal_no_gain_value_point"
 vignetting = "free"
 gain_correction = "none"
-observation_noise = "intensity_and_position"
+observation_noise = "position"
 
 [[arms]]
 name = "selfcal_shared_gain_value_point"
 vignetting = "free"
 gain_correction = "intensity"
-observation_noise = "intensity_and_position"
+observation_noise = "position"
 
 [[arms]]
 name = "selfcal_plane_gain_value_point"
 vignetting = "free"
 gain_correction = "channel"
-observation_noise = "intensity_and_position"
+observation_noise = "position"
 
 [[arms]]
 name = "given_v_no_gain_value_point"
 vignetting = "fixed"
 gain_correction = "none"
-observation_noise = "intensity_and_position"
+observation_noise = "position"
 
 [[arms]]
 name = "given_v_shared_gain_value_point"
 vignetting = "fixed"
 gain_correction = "intensity"
-observation_noise = "intensity_and_position"
+observation_noise = "position"
 
 [[arms]]
 name = "given_v_plane_gain_value_point"
 vignetting = "fixed"
 gain_correction = "channel"
-observation_noise = "intensity_and_position"
+observation_noise = "position"

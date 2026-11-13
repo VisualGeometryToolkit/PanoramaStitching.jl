@@ -70,7 +70,7 @@ function compare_arms(arms_path)
         for a in order
             cfg = deepcopy(C.cfg); v = cfg["vignetting"]
             v["gain_correction"] = a["gain_correction"]; v["observation_noise"] = a["observation_noise"]
-            v["log_intensity_scale"] = A["log_intensity_scale"]; v["observation_noise_iterations"] = A["observation_noise_iterations"]
+            v["observation_noise_iterations"] = A["observation_noise_iterations"]
             Ca = (; cfg, C.out, run = dir, C.path)
             fkw = (; vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
             fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
@@ -83,7 +83,7 @@ function compare_arms(arms_path)
             summ = vignetting_summary(V, pp, inp.frame_map, (Hf, Wf); mask = in_domain)
             row = Dict{String, Any}("arm" => a["name"], "vignetting" => a["vignetting"], "gain_correction" => a["gain_correction"],
                                     "observation_noise" => a["observation_noise"], "seconds" => dt,
-                                    "solves" => m.observation_noise isa IntensityAndPositionNoise ? 1 + m.observation_noise.iterations : 1,
+                                    "solves" => m.observation_noise isa PositionNoise ? 1 + m.observation_noise.iterations : 1,
                                     "rows" => r.n,
                                     "residual_mad" => m.residual_mad, "weighted_rms" => r.rms,
                                     "gains" => [collect(m.gains[k, :]) for k in axes(m.gains, 1)],

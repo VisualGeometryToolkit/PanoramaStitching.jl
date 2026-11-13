@@ -196,10 +196,11 @@ back-projection (computed once: every frame shares the pixel grid), the scene `l
 `LogVignetting`: V = exp(s), `s` a B-spline of log V in the distance from a centre (`RadialVignetting`) or over the sensor
 (`TensorProductVignetting`). The model is linear in log L, log V and the log gains, so the fit is one weighted linear least squares;
 its gauge is mean log V = 0 over the domain. Each row is the implicit constraint of its observation (sensor point, log I),
-weighted by its whitening by the observation noise that `observation_noise` chooses: [`IntensityNoise`](@ref) (the default:
-noise in the value only, read noise of constant σ, weight I²) or [`IntensityAndPositionNoise`](@ref) (noise in the value and
-the pixel's sensor position, the sensor point's from the registration's residual scale, at the I² solve's model, so a row
-where the scene's log I changes fast across the sensor counts less). `gain_correction = IntensityGains()` adds an exposure
+weighted by its whitening by its noise: the value's — each frame's own variance where its image carries one (a LinearRaw
+under a sensor model whose noise feeds it: weight I²/var(I)), else the read-noise fallback of a plain image (weight I²,
+these frames') — and, with `observation_noise =` [`PositionNoise`](@ref)`(…)`, the pixel's sensor position too (the sensor
+point's from the registration's residual scale, at the first solve's model, so a row where the scene's log I changes fast
+across the sensor counts less; it needs the frames' variances). `gain_correction = IntensityGains()` adds an exposure
 gain per frame shared by every colour plane, `I_k = g_k·L·V` (gauge `g₁ = 1`), and [`ChannelGains`](@ref)`()` one per
 frame and colour plane, `I_kc = g_kc·L_c·V` (a white
 balance or a light colour that drifts too; V stays one for all planes): a fixed exposure under changing light needs them, or V
@@ -216,8 +217,9 @@ res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCo
                      gain_correction = ChannelGains(), saturated, frame_map, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
                      chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
-                     solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
-# or observation_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration's
+                     solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000),   # or SparseCholesky()
+                     observation_noise = nothing)
+# or observation_noise = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)), on frames with variances: σ_u the registration's
 # pooled noise scale reg.bundle_sigma (the bundle's width over its efficiency constant), px
 V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)

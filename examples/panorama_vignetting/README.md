@@ -92,10 +92,11 @@ Under `$VGTK_DATA_ROOT`:
    penalty) fitted together with V. log V is a cubic B-spline, RADIAL in the distance from a centre or a 2-D TENSOR spline
    over the sensor (VisualGeometryToolkitCore's `LogVignetting`). The model is linear in log L, log V and the log gains: one
    linear least squares, each row the constraint of its observation — sensor point and log I — weighted by its whitening by
-   the observation noise `vignetting.observation_noise` chooses: `"intensity"` (noise in the value only: weight I²) or
-   `"intensity_and_position"` (the value and the sensor position, the sensor point's σ the registration bundle's core scale,
-   loss width over its efficiency constant, recorded in the registration record (`registration_<key>.jld2`); `log_intensity_scale` the σ of log I;
-   `observation_noise_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
+   its noise: the value's — each frame's own variance when its image carries one (a LinearRaw under a sensor model whose
+   noise feeds it), else the read-noise fallback, weight I² (these configs: plain images, so the fits of 0.6 bit for bit) —
+   and what `vignetting.observation_noise` adds: `"none"` or `"position"` (the sensor position too, the sensor point's σ the
+   registration bundle's core scale, loss width over its efficiency constant, recorded in the registration record
+   (`registration_<key>.jld2`); `observation_noise_iterations` its reweight-and-solve cycles after the first solve). Its normal equations are accumulated on the GPU, and it is
    solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
    log V = 0 over the domain — no special point is pinned.
    *The frames' exposure gains* (`vignetting.gain_correction`, required: `"none"`, `"intensity"` or `"channel"`): with
@@ -132,8 +133,8 @@ Under `$VGTK_DATA_ROOT`:
 
 `arms.toml` is the comparison of record of `fit_vignetting`'s settings: twelve arms, V `"free"` (self-calibration) or
 `"fixed"` (held at the V of record, the `fixed_from` arm's fit, `selfcal_shared_gain_value`: one gain per frame and I²
-weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `observation_noise` (`"intensity"`,
-`"intensity_and_position"`), each on both sets (`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode,
+weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `observation_noise` (`"none"`,
+`"position"`), each on both sets (`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode,
 registration, domain, radial model and solver). An arm's name is its own label (`selfcal` or `given_v`; `no_gain`,
 `shared_gain` or `plane_gain`; `value` or `value_point`), not its tags.
 

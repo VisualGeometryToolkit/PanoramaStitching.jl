@@ -40,7 +40,14 @@ input_path(rel) = joinpath(VgtkEval.Experiments.data_root(), rel)
 const RENAMED_KEYS = ("weights" => ("observation_noise", "0.4"), "sampson_iterations" => ("observation_noise_iterations", "0.4"),
                       "measure" * "ment_noise" => ("observation_noise", "0.7"),
                       "measure" * "ment_noise_iterations" => ("observation_noise_iterations", "0.7"))
+# The vignetting key retired with no successor key (PanoramaStitching 0.7; spelled in fragments: check_naming retires the name):
+# the position noise's constant σ of log I is a specified RelativeNoise of the frames' sensor model.
+const RETIRED_VIGNETTING_KEYS = ("log_intensity" * "_scale" => "the value's noise is the frames' sensor model (Core's RelativeNoise, " *
+                                 "specified: σ_rel = the old σ of log I; arms.toml relative_noise)",)
 function refuse_renamed_keys(table, where)
+    for (old, why) in RETIRED_VIGNETTING_KEYS
+        haskey(table, old) && throw(ArgumentError("$where: the key $old is retired: $why (PanoramaStitching 0.7)"))
+    end
     for (old, (new, version)) in RENAMED_KEYS
         haskey(table, old) && throw(ArgumentError("$where: the key $old was renamed to $new (PanoramaStitching $version: " *
                                                   "see CHANGELOG.md)"))
@@ -224,7 +231,7 @@ end
 # v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's pooled_noise_scale; SIMFIT++ deleted).
 # v12: every bundle observation whitened by its detection's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
-# scale for IntensityAndPositionNoise.
+# scale for the position noise.
 const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v15 (pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
@@ -463,19 +470,18 @@ function vignetting_space(kind, C, lens, W, H)
     error("vignetting model \"$kind\" is not \"radial\" or \"tensor_product\" (log V is the spline of one)")
 end
 
-# The fit's observation noise of the config: in the value only, or in the value and the sensor position with the sensor point's σ
-# `point_scale_px` (camera pixels).
+# The fit's observation noise of the config beside the value's (the frames' own: their variance, or the read-noise fallback of a
+# plain image): none, or the sensor position with the sensor point's σ `point_scale_px` (camera pixels).
 function fit_observation_noise(v, point_scale_px)
-    N = PanoramaStitching.OBSERVATION_NOISES[v["observation_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
-    N === IntensityNoise && return IntensityNoise()
-    point_scale_px === nothing && error("vignetting.observation_noise = \"intensity_and_position\" is refused in this release: it awaits " *
+    N = PanoramaStitching.OBSERVATION_NOISES[v["observation_noise"]]      # "none" or "position" (an ArgumentError otherwise)
+    N === nothing && return nothing
+    point_scale_px === nothing && error("vignetting.observation_noise = \"position\" is refused in this release: it awaits " *
                                         "each pixel's position noise from the frames' rotation covariance (after the release)")
-    return IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), log_intensity_scale = v["log_intensity_scale"],
-                                     iterations = v["observation_noise_iterations"])
+    return PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), iterations = v["observation_noise_iterations"])
 end
 
 # One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
-# `point_scale_px` the sensor point's σ of IntensityAndPositionNoise (camera pixels).
+# `point_scale_px` the sensor point's σ of PositionNoise (camera pixels).
 function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_scale_px = nothing)
     v = C.cfg["vignetting"]; d = C.cfg["domain"]
     m, Z = vignetting === nothing ? vignetting_space(kind, C, lens, W, H) :

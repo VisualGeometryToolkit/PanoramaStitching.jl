@@ -52,8 +52,7 @@ AzimuthalChart
 VignettingMetadata
 ConjugateGradient
 SparseCholesky
-IntensityNoise
-IntensityAndPositionNoise
+PositionNoise
 IntensityGains
 ChannelGains
 PanoramaStitching.GAIN_CORRECTIONS
