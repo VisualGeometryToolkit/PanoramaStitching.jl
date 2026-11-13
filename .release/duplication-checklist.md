@@ -1,3 +1,11 @@
+# PanoramaStitching 0.6.4: the results' serialisation through IO (owner, 2026-11-13: no parallel path)
+
+- [x] the example's hand-made V record (run.jl `write_vignetting`: vignetting.json written field by field; vignetting_profile.csv and vignetting_map.csv, V sampled) → VisualGeometryToolkitIO's `save_panorama` (vgio/panorama/v1: the camera, rotations, V and gains in one record) (36165d4)
+- [x] check_duplication over the package and its tests: the new test's V fall-off is not a restated body of vignetting_tests' `radial` (657c35b)
+- [x] check_duplication against Core 0.9.5 flags `_AtPixelCentre`'s one-field-wrapper idiom beside Core's `Eliminable` and `Triggs`: different concepts, recorded in DUPLICATION.toml with its reason, as the 0.7 line does (0072826). The gate on 4728e7d: 0 findings
+
+---
+
 # PanoramaStitching: duplicate removals of the 0.9 cascade
 
 Owner decision 12 (2026-11-11): each item is REQUIRED in the release leg; it is closed by deleting PanoramaStitching's copy in

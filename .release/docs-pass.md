@@ -1,3 +1,23 @@
+docs-pass: 4728e7d
+
+# 0.6.4 docs pass (julia-docs-pass) — the results through VisualGeometryToolkitIO's vgio/panorama/v1
+
+PanoramaStitching 0.6.4 is a patch: no source file under src/ changed and no public name was added, removed or re-signatured.
+The example saves its results through `VgtkIO.save_panorama`, and its hand-made V record is deleted.
+- API diff since 0.6.3: none.
+- Guide (docs/src/guide.md): a new section, "5. Saving the results", an `# Illustrative` block (VisualGeometryToolkitIO is
+  one more package, so the block is counted and not run; readme_tests.jl pins three illustrative blocks). The intro links it.
+  The block's calls are the ones results_io_tests.jl runs: the Trajectory camera → world with zero translations,
+  `save_panorama(path, camera, rotations, V, g)`, `load_panorama`, and the loaded QuatRotations passed to render_panorama.
+- The example's README: the outputs table names panorama.json, panorama_map.png and the compare files, which replace
+  vignetting.json and the two CSVs. The stale "needs the 0.5 stack" paragraph is replaced by the IO 0.9.4 requirement.
+- README and landing page: unchanged. The install line and the example do not load IO, and IO is not a package dependency
+  (the owner's ruling, option A).
+- CHANGELOG: 0.6.4.
+- Docs build: strict, green in the fresh-clone gate on Julia 1.13.3 at 4728e7d (job 12563).
+
+---
+
 docs-pass: 346e52e
 
 # 0.6.3 docs pass (julia-docs-pass) — Julia 1.13
