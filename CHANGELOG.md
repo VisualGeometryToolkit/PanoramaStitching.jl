@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.4 (unreleased)
+
+A patch: no API change, the same results. The results are saved and loaded through VisualGeometryToolkitIO.
+
+- **The results through `vgio/panorama/v1`** (VisualGeometryToolkitIO 0.9.4, the owner's ruling of 2026-11-13: everything
+  an experiment produces or consumes is saved and loaded through IO). The example (`examples/panorama_vignetting/run.jl`)
+  writes its results of record as one `panorama.json` (and `panorama_compare_<model>.json` per comparison fit) with
+  `VgtkIO.save_panorama`: the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's
+  camera frame, zero translations, each frame's RAW file its image), the fitted V and the frames' gains. Its hand-made
+  serialisation of the same results is deleted, with no parallel path: `vignetting.json` (the spline space and
+  coefficients, written field by field), `vignetting_profile.csv` and `vignetting_map.csv` (V sampled on a radius and on
+  the sensor). `<stem>_map.png`, V as an image, stays: a picture, not a record. The example's environment requires
+  VisualGeometryToolkitIO "0.9.4".
+- The guide's new section 5, "Saving the results", and a test item (`results_io_tests.jl`) that saves a fit's results,
+  loads them and renders and scores the panorama with the loaded values as with the fit's own; the test environment
+  gains VisualGeometryToolkitIO "0.9.4".
+- The package's own `[deps]` does not gain VisualGeometryToolkitIO: its source writes no file, and VisualGeometryToolkitCore
+  0.9.5's stack allow-list (`configs/stack_dependencies.toml`) does not list IO for PanoramaStitching, which the quality
+  gate enforces.
+
 ## 0.6.3 (unreleased)
 
 A patch: requires Julia 1.13 (`julia = "1.13"` in the `[compat]` of the package, of its workspace

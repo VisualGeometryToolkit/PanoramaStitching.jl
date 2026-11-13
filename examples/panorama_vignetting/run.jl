@@ -24,8 +24,8 @@ import VisualGeometryToolkitEval as VgtkEval
 using StaticArrays: SVector, SMatrix, SA
 using LinearAlgebra: LinearAlgebra, norm, normalize, dot, cross, eigen, Symmetric
 using Statistics: mean, median, quantile
-using Printf: @sprintf
-import PNGFiles, JSON, TOML
+using Printf: @sprintf                             # compare_arms.jl's tables (it includes this file)
+import PNGFiles, JSON, TOML                        # JSON: the records of compare_arms.jl and autocalibration_check.jl (they include this file)
 
 const FPN = PNGFiles.FixedPointNumbers
 const CT = PNGFiles.ColorTypes
@@ -494,43 +494,22 @@ function save_ratio(path, M; lim = 0.3)
     PNGFiles.save(path, col.(M))
 end
 
-# ----------------------------------------------------------------------------- the record of V
+# ----------------------------------------------------------------------------- the results of record
 
-function write_vignetting(C, stem, res, W, H, frame_map, (Hf, Wf))
+# A run's results of record (a fit's): VisualGeometryToolkitIO's vgio/panorama/v1 — the camera, the frames' rotations camera → world
+# (d = R_k·f_k, the world the first frame's camera frame; zero translations: the camera only rotates; each frame's RAW file
+# its image), the fitted V and the frames' gains (none when vignetting.gain_correction = "none") — read back by
+# `VgtkIO.load_panorama`; and V as an image, normalized to its maximum (one value per frame pixel, at its centre in the
+# camera's pixels: the frames' map).
+function write_results(C, stem, lens, names, rotations, res, frame_map, (Hf, Wf))
     v = VgtkCore.estimate(res)
-    kx = VgtkCore.knot_vectors(v)
-    # a LogVignetting's control points are log V's (V = exp(s)); a V-form spline's (held fixed) are V's
-    logform = v isa VgtkCore.LogVignetting; s = logform ? VgtkCore.log_spline(v) : v
-    rec = Dict{String, Any}("gauge" => "mean log V = 0 over the fit domain's pixels", "control_points_of" => logform ? "log V" : "V",
-                            "control_points" => collect(vec(Matrix(VgtkCore.control_points(v)))),
-                            "knots" => collect.(kx), "degree" => collect(VgtkCore.spline_degree(v)),
-                            "pixel_frame" => "camera pixels, COLMAP (full-resolution sensor)")
-    if s isa VgtkCore.RadialVignetting
-        c = VgtkCore.center(v); r = VgtkCore.field_radius(v)
-        rec["model"] = Dict("kind" => VgtkCore.tag_of(VgtkCore.VIGNETTING_TAGS, VgtkCore.RadialVignetting), "center" => collect(c), "radius" => r, "controls" => VgtkCore.n_control_points(v),
-                            "spline" => "VisualGeometryToolkitCore RadialVignetting: a B-spline in ρ/radius on clamped knots over [0, 1]")
-        open(joinpath(C.run, stem * "_profile.csv"), "w") do io
-            println(io, "rho_px,V")
-            for ρ in 0.0:4.0:r
-                println(io, @sprintf("%.1f,%.6f", ρ, v(c + SVector(ρ, 0.0))))
-            end
-        end
-    else
-        rec["model"] = Dict("kind" => VgtkCore.tag_of(VgtkCore.VIGNETTING_TAGS, VgtkCore.TensorProductVignetting), "controls" => collect(size(VgtkCore.control_points(v))),
-                            "spline" => "VisualGeometryToolkitCore TensorProductVignetting: a tensor-product B-spline on clamped knots, x fastest")
-    end
-    open(io -> JSON.print(io, rec, 2), joinpath(C.run, stem * ".json"), "w")
-    # the map over the sensor, every 32 px (x, y, V), and as an image normalized to its maximum (one value per frame pixel, at
-    # its centre in the camera's pixels: the frames' map)
-    open(joinpath(C.run, stem * "_map.csv"), "w") do io
-        println(io, "x_px,y_px,V")
-        for y in 16.0:32.0:H, x in 16.0:32.0:W
-            println(io, @sprintf("%.1f,%.1f,%.6f", x, y, v(SVector(x, y))))
-        end
-    end
+    tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
+                             Dict(k => VgtkCore.EuclideanMap(R, zeros(3) .* VgtkCore.m) for (k, R) in enumerate(rotations));
+                             images = Dict(enumerate(names)))
+    VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v; gains = fit_gains(C, res))
     M = [v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
     PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
-    return M
+    return nothing
 end
 
 # V's summary on the domain: its range, where its maximum is, and its largest antipodal asymmetry about `center`, over every
@@ -587,7 +566,7 @@ function run_example(config_path)
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
-    M = write_vignetting(C, "vignetting", res, W, H, inp.frame_map, (Hf, Wf))
+    write_results(C, "panorama", lens, inp.names, reg.rotations, res, inp.frame_map, (Hf, Wf))
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
@@ -640,7 +619,7 @@ function run_example(config_path)
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
         s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
-        write_vignetting(C, "vignetting_compare_$k", r2, W, H, inp.frame_map, (Hf, Wf))
+        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, r2, inp.frame_map, (Hf, Wf))
         push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
