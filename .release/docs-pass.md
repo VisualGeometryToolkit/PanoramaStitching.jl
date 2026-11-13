@@ -1,3 +1,32 @@
+docs-pass: 1e0160b
+landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.7.0 docs pass (julia-docs-pass), at the release tree resolved from General alone
+
+The release tree: w10-ps 6ab1330 (the wave work and the track check; gated green as w10-ps-tmp ad2f3059 on up-v13) with
+GitHub main (0.6.5) merged (91c4a7d) and no temporary [sources] (only the members' own path to the repository). Resolved from
+General (refreshed from GitHub) alone: Core 0.10.0, IO 0.10.0, Features 0.9.0, Estimation 0.11.0 (job 15032); floor_compat
+--raise: 0 entries raised (the stack entries "0.10", "0.9", "0.11" are the registered wave versions' ranges); --latest: 0.
+[x] API diff since 0.6.5: added sweep_up, up_frame(up), coverage_extent, vignetting_summary, PositionNoise, OBSERVATION_NOISES,
+    the sensor-model keywords, register_rotations' near_duplicate_deg / check_tracks, Registration.near_duplicates /
+    track_check, RotationBundleMetadata.inlier_rms; removed IntensityNoise, IntensityAndPositionNoise, MEASUREMENT_NOISES,
+    measurement_noise, detection_noise (refused by name). Every added name is in docs/src/api.md (checkdocs = :public);
+    no removed name appears in README.md, docs/src or the example's README and configs (grep).
+[x] Guide: the registration steps now name the near-duplicate pairs (step 5) and the track check (step 7), on by default.
+    The vignetting section already states observation_noise = nothing | PositionNoise and the frames' sensor model.
+[x] Docstrings: register_rotations' Registration field list lost a doubled "its". The suite's docs item (undocumented
+    public, signature drift, detached docstrings) runs in the release gate.
+[x] CHANGELOG 0.7.0: the track check / near-duplicate item (behaviour change: the rotations differ from 0.6's with
+    check_tracks on) added; 0.6.5 kept below 0.7.0; dated.
+[x] Install lines: README's pkg> add names only General packages and no other registry; the readme item resolves it from
+    the registry in the release gate (the known pre-registration failure on every -tmp gate).
+[x] The 0.6.5 fix is present: examples/panorama_vignetting/run.jl:538 builds each pose with a static zero translation
+    (EuclideanMap(R, zero(SVector{3, Float64}) .* m)), the guide's section 5 the same (docs/src/guide.md:262), and
+    write_results_check.jl runs from run_checks.jl:10.
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
+
 docs-pass: 90db87d
 
 # 0.6.5 docs pass (julia-docs-pass) — the example writes its results of record again
