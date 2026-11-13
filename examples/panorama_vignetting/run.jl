@@ -10,7 +10,6 @@
 # `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
-using JLD2                                         # Features' FileCache: the decoded-RAW cache (its package extension)
 using CUDA                                         # the [compute] device's kernels
 # LoMa's ONNX Runtime CUDA provider (registration.execution_provider = "auto" or "cuda") takes its CUDA 12 runtime and cuDNN
 # from this environment's CUDA_Runtime_jll and CUDNN_jll (VisualGeometryToolkitFeatures loads them for ONNX Runtime alone,
@@ -122,6 +121,10 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 # decoder), and read back as decoded, value for value. The frames' and the planes' maps onto the camera's pixels are
 # Core's (`raw_frame_map`, `bayer_plane_map`) of the set's first frame (all the set's frames share the Bayer phase).
 
+# The decoded-RAW cache is OPT-IN (`[decode] cache = true`): a derived store (Features' FileCache, keyed by the RAW file's SHA-256,
+# the mode, the gain and the decoder; regenerable from the RAW files), backed by JLD2 through Features' package extension. This
+# file loads no JLD2 itself: VisualGeometryToolkitEval (imported above) depends on it, so it is loaded with Eval and Features'
+# extension with it — a caller that includes this file needs no JLD2 of its own.
 "The frames as linear images (H × W × 3 Float32), their saturation masks with `masks = true`, their maps and the daylight white balance; each RAW decoded once, cached."
 function decoded_frames(C; masks::Bool, log = devnull)
     dec = C.cfg["decode"]; mode = dec["mode"]; gain = Float64(dec["gain"])
@@ -129,15 +132,17 @@ function decoded_frames(C; masks::Bool, log = devnull)
     dir = joinpath(C.out, "decoded"); mkpath(dir)
     raw_dir = input_path(C.cfg["inputs"]["raw_dir"])
     raws = sort([f for f in readdir(raw_dir) if endswith(f, C.cfg["inputs"]["raw_extension"])])
-    cache = VgtkFeatures.open_cache(joinpath(dir, "linear_raws.jld2"))
-    lins = try
-        map(raws) do f
-            lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, decoder = VgtkFeatures.LibRawDecoder(), cache)
-            say(log, "  $f ($(count(lin.saturated)) saturated quads)")
-            lin
+    decode(f, cache) = (lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, decoder = VgtkFeatures.LibRawDecoder(), cache);
+                        say(log, "  $f ($(count(lin.saturated)) saturated quads)"); lin)
+    lins = if dec["cache"]
+        cache = VgtkFeatures.open_cache(joinpath(dir, "linear_raws.jld2"))
+        try
+            map(f -> decode(f, cache), raws)
+        finally
+            VgtkFeatures.close_cache(cache)
         end
-    finally
-        VgtkFeatures.close_cache(cache)
+    else
+        map(f -> decode(f, nothing), raws)
     end
     lin1 = first(lins)
     return (; names = raws, frames = [Float32.(l.image) for l in lins], saturated = masks ? [l.saturated for l in lins] : BitMatrix[],

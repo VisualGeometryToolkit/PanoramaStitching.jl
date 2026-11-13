@@ -28,7 +28,7 @@ function stage_cache_check()
     foreach(n -> write(joinpath(root, "raw", n), n), ("a.ARW", "b.ARW"))
     strat(t, l, k, v) = Dict{String, Any}("type" => t, "loss" => l, k => v)
     cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW"),
-                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0),
+                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false),
                                      "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
                                                                                "averaging_optimization_strategy" => strat("irls", "huber", "max_iter", 100),
                                                                                "bundle_optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0)),

@@ -68,7 +68,8 @@ Under `$VGTK_DATA_ROOT`:
    LibRaw_jll; the two steps `load_raw_mosaic` then `LinearRaw(mosaic; mode = :bin2, gain)`): 2 × 2 Bayer quads become one
    pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (the frames' map onto the
    camera's pixels is VisualGeometryToolkitCore's `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
-   centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Decoding is done once and cached (below).
+   centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). With `[decode] cache = true`
+   (opt-in; the configs of record set it) each RAW is decoded once and cached (below); with `false` every run decodes.
 2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (`find_rotation`, the
@@ -147,7 +148,7 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 
 | file | content |
 |---|---|
-| `decoded/linear_raws.jld2` | the decoded frames: VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content and decode settings |
+| `decoded/linear_raws.jld2` | with `[decode] cache = true`: the decoded frames, VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content and decode settings — a derived cache, regenerable from the RAW files |
 | `verified_pairs_<key>.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
 | `registration_<key>.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting |
 | `run-<run key>/` | the run's outputs below, keyed by the whole config, with Eval's run records (`write_run_records`: the config of record, the key, the driver, the inputs read) |

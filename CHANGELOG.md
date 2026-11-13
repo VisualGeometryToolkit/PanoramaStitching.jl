@@ -39,6 +39,9 @@ model entity an **observation** (Core's `conventions/naming.md`).
   refused naming them; with `:tone` neither is given. The example resolves each frame's noise (`frame_noise`: the RAW files'
   capture settings, the body's `[registration] sensor_noise_record` — a `vgio/sensor_noise` file or `"none"` — and Core's
   `sensor_noise`), decodes the LinearRaw with it, and refuses the 0.6 keys `electrons_per_dn` and `read_noise_dn` by name.
+- The example's decoded-RAW cache is opt-in, `[decode] cache = true | false` (the configs of record set `true`), and the example
+  loads no JLD2 itself: VisualGeometryToolkitEval brings it, and with it Features' FileCache extension. A caller that includes
+  run.jl (RC's cvpr2027) needs no JLD2 of its own; the example's environment drops its direct JLD2 entry.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation", the example's cache formats
   and their version history included (owner, 2026-11-13): its verified-pairs record is format v11, so 0.6 caches are
   recomputed, not reused.

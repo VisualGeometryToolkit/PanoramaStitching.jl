@@ -27,6 +27,7 @@ device = "cuda"                                    # "cuda" or "cpu": the same k
 [decode]
 mode = "bin2"                                      # Features' load_raw: 2 × 2 Bayer quads (R, mean G, B); raw_frame_map x ↦ 2x
 gain = 1.0                                         # linear values, 1.0 = the white level
+cache = true                                       # the decoded-RAW cache (opt-in; JLD2 from the example's environment)
 
 [registration]                                     # register_rotations (every keyword stated)
 tone_percentile = 99.5
