@@ -18,6 +18,8 @@ The pipeline has four steps:
 4. [`fit_vignetting`](@ref) — the camera's vignetting from the frames alone (every pixel of every frame, at its own pixel
    centre, is the scene's radiance times V), and [`score_seams`](@ref), how well a vignetting makes overlapping frames agree.
 
+[Saving the results](#5.-Saving-the-results) writes them to a file.
+
 Steps 2 and 3 run on VisualGeometryToolkitCore's warping machinery — `image_warp`/`image_warp!`, `image_sample!` and
 `pointwise!`, KernelAbstractions kernels — on the backend that owns the frames: GPU arrays (`CuArray`) run on the device,
 host arrays run the same code on the CPU.
@@ -235,3 +237,21 @@ corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, 
 ```
 
 The example's frames carry no vignetting and one exposure, so here V comes back close to 1 and every gain close to 1.
+
+## 5. Saving the results
+
+The results — the camera, the frames' rotations, the vignetting and the frames' gains — are saved and loaded through
+VisualGeometryToolkitIO's `vgio/panorama/v2.0` kind (`save_panorama`, `load_panorama`; IO 0.10 or later). Its rotations are a
+VisualGeometryToolkitCore `Trajectory` from the camera's frame to the world, `d = R_k·f_k` with the world the first frame's
+camera frame, and a zero translation (a length: the camera only rotates):
+
+```julia
+# Illustrative: VisualGeometryToolkitIO, one more package (pkg> add VisualGeometryToolkitIO)
+import VisualGeometryToolkitIO as VgtkIO
+using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, EuclideanMap, m
+rotations = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(R, zeros(3) .* m) for (k, R) in enumerate(reg.rotations)))
+VgtkIO.save_panorama("panorama.json", camera, rotations, V, g)        # g = nothing: no gains fitted
+p = VgtkIO.load_panorama("panorama.json")         # (; camera, rotations, vignetting, gains)
+Rs = [p.rotations[k].R for k in 1:length(p.rotations)]   # the rotations render_panorama and score_seams take
+```
+

@@ -25,6 +25,11 @@ model entity an **observation** (Core's `conventions/naming.md`).
   The example's configs of record drop the two keys (they use `pairs = "all"`), which re-keys their verified-pairs stage;
   the example refuses the two keys with `pairs = "all"` when it reads a config. Its registration record is format v15
   (`pairs_removed` the filters' only), so records of 0.6 are recomputed, not reused.
+- The results of record through VisualGeometryToolkitIO 0.10's `vgio/panorama/v2.0` (0.6.4's v1, reshaped by IO 0.10: the
+  envelope's units and conventions, the rotations' `frame_index`; IO reads a 0.6.4 v1 file through its step). The example
+  and the test environment require VisualGeometryToolkitIO "0.10"; `save_panorama` and `load_panorama` keep their
+  signatures, and the example names PanoramaStitching as the file's generator (`VgtkIO.with_caller`). V stays inside the
+  panorama file (its `vignetting` is the `vgio/vignetting` body): no separate vignetting file.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation" (the example's cache-format
   string `PAIRS_FORMAT` and the formats' version history keep their words: the format string is the cached stage's key).
 
@@ -41,6 +46,26 @@ model entity an **observation** (Core's `conventions/naming.md`).
 - `pairs = :lag_overlap`: a lag pair with no determined covariance that splits the frames no longer stops the registration
   before the pairs past the lag are tried; the joining pair across the split is tried, and the final graph is checked.
 - Core's `with_model` replaces PanoramaStitching's private copy; `docs/Project.toml`'s Core compat aligned with the package's.
+
+## 0.6.4 (unreleased)
+
+A patch: no API change, the same results. The results are saved and loaded through VisualGeometryToolkitIO.
+
+- **The results through `vgio/panorama/v1`** (VisualGeometryToolkitIO 0.9.4, the owner's ruling of 2026-11-13: everything
+  an experiment produces or consumes is saved and loaded through IO). The example (`examples/panorama_vignetting/run.jl`)
+  writes its results of record as one `panorama.json` (and `panorama_compare_<model>.json` per comparison fit) with
+  `VgtkIO.save_panorama`: the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's
+  camera frame, zero translations, each frame's RAW file its image), the fitted V and the frames' gains. Its hand-made
+  serialisation of the same results is deleted, with no parallel path: `vignetting.json` (the spline space and
+  coefficients, written field by field), `vignetting_profile.csv` and `vignetting_map.csv` (V sampled on a radius and on
+  the sensor). `<stem>_map.png`, V as an image, stays: a picture, not a record. The example's environment requires
+  VisualGeometryToolkitIO "0.9.4".
+- The guide's new section 5, "Saving the results", and a test item (`results_io_tests.jl`) that saves a fit's results,
+  loads them and renders and scores the panorama with the loaded values as with the fit's own; the test environment
+  gains VisualGeometryToolkitIO "0.9.4".
+- The package's own `[deps]` does not gain VisualGeometryToolkitIO: its source writes no file, and VisualGeometryToolkitCore
+  0.9.5's stack allow-list (`configs/stack_dependencies.toml`) does not list IO for PanoramaStitching, which the quality
+  gate enforces.
 
 ## 0.6.3 (unreleased)
 

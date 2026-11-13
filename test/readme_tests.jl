@@ -22,7 +22,7 @@
     guide = filter(!illustrative, guide_all)
     @test length(example) == 1 && !illustrative(only(example))   # pin the counts
     @test landing == example                                    # one example, shown twice
-    @test length(guide) == 6 && count(illustrative, guide_all) == 2
+    @test length(guide) == 6 && count(illustrative, guide_all) == 3
 
     # The install line adds exactly the packages the examples load, and no registry line precedes it.
     install = [m[1] for m in eachmatch(r"^pkg> add (.+)$"m, readme)]

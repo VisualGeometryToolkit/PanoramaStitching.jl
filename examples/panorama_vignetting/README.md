@@ -19,9 +19,8 @@ julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vign
 `<env>` is a Julia environment with PanoramaStitching, VisualGeometryToolkitCore, VisualGeometryToolkitEstimation,
 VisualGeometryToolkitFeatures, VisualGeometryToolkitIO, CUDA, CUDA_Runtime_jll, CUDNN_jll, LibRaw_jll, PNGFiles, JSON, SHA
 and TOML; `Project.toml` in this folder is that environment (`julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'`).
-**It needs the VisualGeometryToolkit 0.5 stack** (VisualGeometryToolkitCore 0.5, VisualGeometryToolkitEstimation 0.6, and
-the Features release that ships `load_raw`). Until those are registered, use an environment whose `[sources]` point at a
-checkout of the monorepo (the author's scratch environment does exactly that).
+It needs VisualGeometryToolkitIO 0.10 or later (the `vgio/panorama/v2.0` kind its results are written in) with the
+VisualGeometryToolkit stack the folder's `Project.toml` names, all registered in General.
 
 Every setting is in the config — nothing in `run.jl` has a default — and every input path is relative to `$VGTK_DATA_ROOT`.
 Everything the run writes goes under VisualGeometryToolkitEval's results root (`$VGTK_RESULTS_ROOT`):
@@ -152,8 +151,8 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 | `verified_pairs_<key>.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
 | `registration_<key>.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting |
 | `run-<run key>/` | the run's outputs below, keyed by the whole config, with Eval's run records (`write_run_records`: the config of record, the key, the driver, the inputs read) |
-| `vignetting.json`, `vignetting_profile.csv`, `vignetting_map.csv`, `vignetting_map.png` | the fitted V of record: its spline space and log-V coefficients; V(ρ) every 4 px (radial); V on the sensor every 32 px; V as an image (normalized to its maximum) |
-| `vignetting_compare_<model>.*` | the comparison fits (`compare_models`), the same record |
+| `panorama.json`, `panorama_map.png` | the results of record, a `vgio/panorama/v2.0` file (VisualGeometryToolkitIO's `save_panorama`; read it with `VgtkIO.load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`); V as an image (normalized to its maximum) |
+| `panorama_compare_<model>.json`, `panorama_compare_<model>_map.png` | the comparison fits (`compare_models`), the same record |
 | `seams_uncorrected.png`, `seams_corrected.png` | the seam-ratio maps |
 | `cylindrical_*.png`, `equal_area_*.png`, `rectilinear_*.png` | the renders, `_corrected` and `_uncorrected` at the same exposure |
 | `summary.md`, `run.log` | the numbers: registration, the fits (retcode, residual spread, V's range, maximum and asymmetry), the seam spreads, the wall times |
