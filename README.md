@@ -12,7 +12,7 @@ of the
 
 ## Installation
 
-PanoramaStitching and the packages it is built on are registered in General. Julia 1.12 or later. Add the package and
+PanoramaStitching and the packages it is built on are registered in General. Julia 1.13 or later. Add the package and
 the packages the example also loads:
 
 ```julia-repl

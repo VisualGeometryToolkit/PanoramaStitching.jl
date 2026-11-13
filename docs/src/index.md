@@ -23,7 +23,7 @@ VisualGeometryToolkitCore's warping machinery): GPU arrays run on the device, ho
 
 ## Installation
 
-PanoramaStitching and the packages it is built on are registered in General. Julia 1.12 or later. Add the package and
+PanoramaStitching and the packages it is built on are registered in General. Julia 1.13 or later. Add the package and
 the packages the example also loads:
 
 ```julia-repl

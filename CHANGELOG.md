@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.6.2 (unreleased)
+## 0.6.3 (unreleased)
+
+A patch: requires Julia 1.13 (`julia = "1.13"` in the `[compat]` of the package, of its workspace
+members test and docs, and of the example environment examples/panorama_vignetting). CI runs Julia 1.13 only. No API change.
+
+## 0.6.2 (2026-11-13)
 
 A patch: no API change, the same results. On VisualGeometryToolkitEstimation 0.10 (`[compat]`
 VisualGeometryToolkitEstimation "0.10" in the package, test and example environments), whose `fit_forward_spline` the
