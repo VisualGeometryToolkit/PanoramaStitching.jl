@@ -80,3 +80,9 @@ the MSAC threshold key retired) and, with `scoring = nothing`, by Estimation's d
 
 Nothing to delete: the release widens one compat entry; the stack duplication audit lists no item for PanoramaStitching at
 this release (its open items: none). `check_duplication` runs in the suite.
+
+## 0.6.3 (Julia 1.13)
+
+A compat-only patch: no source, test or paper code is added, so nothing new can duplicate the stack.
+
+- [x] 0.6.3: no new duplicate (the diff since the registered release adds no code; `check_duplication(PanoramaStitching)` re-runs in the fresh-clone gate of this commit)
