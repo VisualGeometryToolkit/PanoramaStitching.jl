@@ -417,13 +417,6 @@ function registration(C, inp, lens; log)
             bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, b.iterations, b.rms, b.n, nothing)))
 end
 
-    E = eigen(Symmetric(A)); a = SVector{3}(E.vectors[:, 1])
-    down = sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in rotations)
-    a = dot(a, down) > 0 ? -a : a
-    z = SVector(0.0, 0.0, 1.0); zt = normalize(z - dot(z, a) * a); yt = -a
-    return hcat(cross(yt, zt), yt, zt), E.values
-end
-
 # ----------------------------------------------------------------------------- vignetting spaces from the config
 
 # The fit's domain (camera pixels) is the package's own `PanoramaStitching.frame_region`, which the fit, the sampling and the
@@ -507,7 +500,6 @@ gains_text(G; d = 4) = join([join(round.(G[k, :]; digits = d), " / ") for k in a
 "No vignetting correction: V ≡ 1."
 no_vignetting(u, f) = 1.0
 
-
 "An H × W × 3 linear image as 8-bit sRGB at a fixed exposure, each plane times its white-balance factor (NaN, no frame: black): Features' `srgb_image`."
 save_srgb(path, img, exposure, wb) = PNGFiles.save(path, VgtkFeatures.srgb_image(img; exposure, white_balance = wb))
 "A seam-ratio map: red where the other frames are brighter than the shown one, blue darker, ±`lim` in log; grey unmeasured."
@@ -536,10 +528,6 @@ function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_m
     M = [v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
     PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
     return nothing
-end
-
-    return (; V_min = exp(minimum(lv)), V_max = exp(lv[imax]), max_at = pts[imax], max_offset_px = norm(pts[imax] - center),
-            asymmetry = asym)
 end
 
 # ----------------------------------------------------------------------------- the run
