@@ -46,15 +46,7 @@ end
     import VisualGeometryToolkitFeatures as VgtkFeatures
     q = sequence(; K = 1)
     frame = 0.5f0 .* q.frames[1]; Hf, Wf = size(frame, 1), size(frame, 2)
-    # the frame as an RGGB mosaic (black 512, white 16383): each photosite its plane's value, so its :bin2 LinearRaw is the frame
-    black = 512.0; white = 16383.0
-    code(v) = UInt16(round(black + clamp(v, 0, 1) * (white - black)))
-    raw = Matrix{UInt16}(undef, 2Hf, 2Wf)
-    for j in 1:Wf, i in 1:Hf
-        raw[2i - 1, 2j - 1] = code(frame[i, j, 1]); raw[2i - 1, 2j] = code(frame[i, j, 2])
-        raw[2i, 2j - 1] = code(frame[i, j, 2]); raw[2i, 2j] = code(frame[i, j, 3])
-    end
-    mosaic = VgtkCore.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf), (; model = "synthetic"))
+    mosaic = rggb_mosaic(frame)          # the frame as an RGGB mosaic: its :bin2 LinearRaw is the frame
     # the frame's sensor model through Core's ONE resolver, `sensor_model`, of a characterisation with a gain (a
     # PoissonGaussian, Core's test fixture: tests never build a component themselves), the LinearRaw decoded with it
     pg = VgtkCore.sensor_fixture(; gain = 5.63, read_noise = ntuple(_ -> 0.82, 4), source = VgtkCore.SensorSource.measured)

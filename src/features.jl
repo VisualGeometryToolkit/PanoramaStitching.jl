@@ -44,10 +44,7 @@ const _RETIRED_DETECTION_NOISE = "the frame's noise is its `sensor_model` (Visua
 
 # A frame's linear `H × W × 3` image: the frame itself, or a VisualGeometryToolkitCore `LinearRaw`'s (`:bin2`) image.
 _frame_image(frame::AbstractArray{<:Real, 3}) = frame
-_frame_image(frame::VgtkCore.LinearRaw) = _values(frame.image)
-# A LinearRaw's values: its plain image, or the value plane of its uncertain image (a model whose noise feeds a variance).
-_values(img::AbstractArray{<:Real}) = img
-_values(img::AbstractArray) = map(VgtkCore.value_of, img)
+_frame_image(frame::VgtkCore.LinearRaw) = first(_frame_values(frame.image))   # its values (an uncertain image's value plane)
 
 # A frame's clip mask (`true` where a value is clipped: Features' detection `exclusion_mask`): the caller's, else a `LinearRaw`'s own
 # saturation, else none.

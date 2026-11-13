@@ -522,20 +522,10 @@ end
     c = SVector(430.0, 390.0)
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
     q = vignetting_sequence(radial)
-    black = 512.0; white = 16383.0
-    code(v) = UInt16(round(black + clamp(v, 0, 1) * (white - black)))
-    function mosaic(F)                                                      # RGGB: each photosite its plane's value
-        Hf, Wf = size(F, 1), size(F, 2); raw = Matrix{UInt16}(undef, 2Hf, 2Wf)
-        for j in 1:Wf, i in 1:Hf
-            raw[2i - 1, 2j - 1] = code(F[i, j, 1]); raw[2i - 1, 2j] = code(F[i, j, 2])
-            raw[2i, 2j - 1] = code(F[i, j, 2]); raw[2i, 2j] = code(F[i, j, 3])
-        end
-        return VgtkCore.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf), (; model = "synthetic"))
-    end
     model = VgtkCore.sensor_fixture(; relative_noise = 0.01).model
     @test model.noise isa VgtkCore.RelativeNoise
-    Ls = [VgtkCore.LinearRaw(mosaic(F); mode = :bin2, sensor_model = model) for F in q.frames]
-    plain = [VgtkCore.LinearRaw(mosaic(F); mode = :bin2).image for F in q.frames]
+    Ls = [VgtkCore.LinearRaw(rggb_mosaic(F); mode = :bin2, sensor_model = model) for F in q.frames]
+    plain = [VgtkCore.LinearRaw(rggb_mosaic(F); mode = :bin2).image for F in q.frames]
     vals, vars = PanoramaStitching._frame_values(Ls[1].image)
     @test vals == plain[1] && vars ≈ (0.01 .* plain[1]) .^ 2
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
