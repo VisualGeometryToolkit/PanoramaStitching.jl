@@ -101,8 +101,8 @@ NLLSsolver.computeresidual(r::_Observation, ch::VgtkCore.RotationChart, d::VgtkC
 
 # One observation of the autocalibration bundle: as `_Observation`, its camera the third variable (`varind` = frame,
 # direction, camera), the model's `ParameterManifold` restricted to the free parameters, its projection and its valid domain
-# read from that variable's model. `M` is that variable's type (the restricted chart), asserted by `getvars`.
-struct _CameraObservation{E, L, W, M} <: NLLSsolver.AbstractResidual
+# read from that variable's model.
+struct _CameraObservation{E, L, W} <: NLLSsolver.AbstractResidual
     x::SVector{2, Float64}
     varind::SVector{3, Int}
     kernel::L
@@ -111,10 +111,8 @@ end
 NLLSsolver.ndeps(::_CameraObservation) = static(3)
 NLLSsolver.nres(::_CameraObservation) = static(2)
 NLLSsolver.varindices(r::_CameraObservation) = r.varind
-# The camera variable asserted as the block's own chart type `M`, so inference never reads a frame or direction variable
-# as the camera.
-NLLSsolver.getvars(r::_CameraObservation{E, L, W, M}, vars::Vector) where {E, L, W, M} =
-    (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[3]]::M)
+NLLSsolver.getvars(r::_CameraObservation{E}, vars::Vector) where {E} =
+    (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[3]])
 NLLSsolver.robustkernel(r::_CameraObservation) = r.kernel
 Base.eltype(::_CameraObservation) = Float64
 
@@ -125,8 +123,13 @@ Base.eltype(::_CameraObservation) = Float64
     p = _image(m, f)
     return VgtkCore.Point2(p[1], p[2]) ∈ VgtkCore.valid_domain(m) ? p : SVector(NaN, NaN)
 end
+# The camera of the camera variable: the model of its chart (Core's `restrict` of the `ParameterManifold`, a
+# `SubsetManifold`). Another variable in that slot is a construction error, refused by name; the method also keeps
+# inference from reading a frame or direction variable as the camera (NLLSsolver's cost loop is generic over the blocks).
+_camera_model(c::VgtkCore.SubsetManifold) = VgtkCore.model(c)
+_camera_model(c) = throw(ArgumentError("refine_camera_and_rotations: the camera variable must be its restricted ParameterManifold, got a $(typeof(c))"))
 @inline _pixel_residual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
-    _project_model(VgtkCore.model(c), _camera_direction(ch, d)) - r.x
+    _project_model(_camera_model(c), _camera_direction(ch, d)) - r.x
 NLLSsolver.computeresidual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
     _whiten(r.whitening, _pixel_residual(r, ch, d, c))
 
@@ -140,7 +143,7 @@ NLLSsolver.computecost(vars::AbstractVector, r::Union{_Observation, _CameraObser
 # ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
 # the camera; only the free variables' columns are returned, in that order.
 function NLLSsolver.computeresjac(varflags, r::_CameraObservation, ch::_FrameChart, d::VgtkCore.Eliminable, c)
-    m = VgtkCore.model(c)
+    m = _camera_model(c)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
     u = _project_model(m, f)
     _, M = VgtkCore.backproject_with_jacobian(m, u)
@@ -440,8 +443,8 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     ic = nf + length(tracks) + 1
     observation(kernel, j, i, o) = chc === nothing ?
         _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j), kernel, whitenings[j][i]) :
-        _CameraObservation{E, typeof(kernel), Wt, typeof(chc)}(pixel(o), SVector(fid[first(o)], nf + j, ic), kernel, whitenings[j][i])
-    residual_type(kernel) = chc === nothing ? _Observation{E, C, P, typeof(kernel), Wt} : _CameraObservation{E, typeof(kernel), Wt, typeof(chc)}
+        _CameraObservation{E, typeof(kernel), Wt}(pixel(o), SVector(fid[first(o)], nf + j, ic), kernel, whitenings[j][i])
+    residual_type(kernel) = chc === nothing ? _Observation{E, C, P, typeof(kernel), Wt} : _CameraObservation{E, typeof(kernel), Wt}
     all_free = chc === nothing ? 3 : 7
     # the observations kept, a fixed point: an observation whose residual or Jacobian is not finite at its track's start (a
     # start prediction off the model's valid domain has neither) is dropped, a track left in fewer than two frames is dropped
