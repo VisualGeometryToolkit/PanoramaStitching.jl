@@ -13,6 +13,7 @@ const BGGR = VgtkCore.LinearRaw(VgtkCore.RawMosaic(zeros(UInt16, 4, 4), UInt8[2 
 const FRAME_MAP = VgtkCore.raw_frame_map(BGGR)                                     # x ↦ 2x
 const PLANE_MAPS = ntuple(c -> VgtkCore.bayer_plane_map(BGGR, c), 3)
 const IDENTITY_MAP = VgtkCore.SimilarityMap(1.0, one(RotMatrix{2, Float64}), SVector(0.0, 0.0))            # a frame at the camera's own pixels
-# A frame's detections' centres (its described features) in the camera's pixels, through the frame's map.
-detection_pixels(features, frame_map = FRAME_MAP) = [frame_map(SVector{2, Float64}(d.center...)) for d in features]
+# A frame's detections' centres (its described features; Core's `center` of the frame, the FeatureFrame interface) in the
+# camera's pixels, through the frame's map.
+detection_pixels(features, frame_map = FRAME_MAP) = [frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(d)))) for d in features]
 end

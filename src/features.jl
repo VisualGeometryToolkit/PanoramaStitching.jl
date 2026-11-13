@@ -101,7 +101,7 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
     # index-sampled RANSAC downstream are the same run to run
     dets = _asift(frame, toned, Val(detection_image), detection_noise, asift_tilts, _clip_mask(frame, saturated))
     kept = _imaged_less_rim(camera, detector_margin_px)
-    at(d) = frame_map(SVector{2, Float64}(d.center[1], d.center[2]))         # a detection's centre in the camera's pixels
+    at(d) = frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(d))))         # a detection's centre in the camera's pixels
     dets = filter(d -> VgtkCore.Point2(at(d)...) ∈ kept, dets)
     # described on the toned RGB as a 3 × H × W channelview, the detections in the frame's own pixels (the descriptor resamples
     # the image to its network's input, and keeps about max_detections of them spread over it: the kept set is the described one)
@@ -123,8 +123,8 @@ back-project is dropped).
 function pair_bearings(camera, fa, fb, matches; frame_map)
     ms = VgtkCore.correspondences(fa, fb, matches)          # Features' method of Core's correspondences: the matched features and their score
     # each detection's centre in the camera's pixels, through the frame map
-    ua = [frame_map(SVector{2, Float64}(f.center[1], f.center[2])) for f in VgtkCore.sources(ms)]
-    ub = [frame_map(SVector{2, Float64}(f.center[1], f.center[2])) for f in VgtkCore.targets(ms)]
+    ua = [frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(f)))) for f in VgtkCore.sources(ms)]
+    ub = [frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(f)))) for f in VgtkCore.targets(ms)]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
     bs = VgtkCore.bearing_correspondences(cm, cm, ua .=> ub)  # Core's: the bearings and their M₁/M₂
     f1 = VgtkCore.sources(bs); f2 = VgtkCore.targets(bs)

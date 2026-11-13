@@ -362,7 +362,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
     σ = Float64(VgtkCore.noise_scale(pooled))
     say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales, px, the bundle's scale")
     # every observation its detection's centre in the camera's pixels, through the frame map
-    obs = [[k => frame_map(SVector{2, Float64}(feats[k][kp].center[1], feats[k][kp].center[2])) for (k, kp) in t] for t in ts]
+    obs = [[k => frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(feats[k][kp])))) for (k, kp) in t] for t in ts]
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; optimization_strategy = bundle_optimization_strategy, scale = pooled,
                               max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     say("  bundle: $(bundle.n) observations, $(bundle.iterations) iterations, rms $(round(bundle.rms; digits = 3)) px, loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
