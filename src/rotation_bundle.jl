@@ -111,8 +111,11 @@ end
 NLLSsolver.ndeps(::_CameraObservation) = static(3)
 NLLSsolver.nres(::_CameraObservation) = static(2)
 NLLSsolver.varindices(r::_CameraObservation) = r.varind
+# The camera variable is the model's `ParameterManifold` restricted to the free parameters (`refine_camera_and_rotations`:
+# Core's `restrict`, a `SubsetManifold`); asserted, so inference never reads a frame or direction variable as the camera.
 NLLSsolver.getvars(r::_CameraObservation{E}, vars::Vector) where {E} =
-    (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[3]])
+    (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart},
+     vars[r.varind[3]]::VgtkCore.SubsetManifold{<:VgtkCore.ParameterManifold})
 NLLSsolver.robustkernel(r::_CameraObservation) = r.kernel
 Base.eltype(::_CameraObservation) = Float64
 
