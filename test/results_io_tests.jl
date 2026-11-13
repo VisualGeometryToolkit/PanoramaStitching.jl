@@ -19,7 +19,7 @@
                        chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6,
                        solver = SparseCholesky())
     # the rotations as the panorama's trajectory: camera → world (d = R_k·f_k), zero translations, each frame's image
-    tr = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(RotMatrix(R), zeros(3) .* m) for (k, R) in enumerate(q.R));
+    tr = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(RotMatrix(R), zero(SVector{3, Float64}) .* m) for (k, R) in enumerate(q.R));
                     images = Dict(k => "frame_$(k).ARW" for k in eachindex(q.R)))
     mktempdir() do dir
         p = joinpath(dir, "panorama.json")
