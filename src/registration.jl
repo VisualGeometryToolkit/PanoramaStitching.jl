@@ -2,7 +2,7 @@
 # register_rotations — the rotations of a pure-rotation sequence
 # =============================================================================
 #
-#   features   per frame (features.jl): ASIFT keypoints, DeDoDe descriptions
+#   features   per frame (features.jl): ASIFT detections, DeDoDe descriptions
 #   pairs      per frame pair: the LoMa matches as unit bearings with their back-projection
 #              Jacobians, VisualGeometryToolkitEstimation's `find_rotation` (the RANSAC of the
 #              pure rotation on bearings, its scorer and local optimization the caller's)
@@ -38,12 +38,12 @@ not edges, sorted), `pairs` (per verified pair
 `(i, j)`, kept or removed: matches, inliers, the rms Sampson residual of its inliers in pixels and its rotation angle in
 degrees), `averaging` (the averaging fitted on `graph`,
 VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging`: the edges' covariances carry the scale, so it records scale 1,
-`ScaleUpstream`; the edges sharing a keypoint are treated as independent, the first-order approximation), `tracks` (of the kept pairs, as `(frame, keypoint)` observations), `dropped`
+`ScaleUpstream`; the edges sharing a detection are treated as independent, the first-order approximation), `tracks` (of the kept pairs, as `(frame, detection)` observations), `dropped`
 (inconsistent tracks dropped), `bundle` (the `refine_rotations` result; its
 its `retcode`/`stop_rule` (Core's termination record) and its metadata's `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `bundle_sigma` (the
-pooled noise scale σ̂ of the kept pairs, px, the bundle's `scale`), `features` (the frames' described features, [`detect_features`](@ref): a track's `(frame, keypoint)` is
-keypoint `keypoint` of `features[frame]`, in the frame's pixels) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
+pooled noise scale σ̂ of the kept pairs, px, the bundle's `scale`), `features` (the frames' described features, [`detect_features`](@ref): a track's `(frame, detection)` is
+detection `detection` of `features[frame]`, in the frame's pixels) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'
 `loma_provenance` of the descriptor and of the matcher — the models, the ONNX Runtime
 provider used and its threads).
 """
@@ -72,7 +72,7 @@ described features, [`detect_features`](@ref): VisualGeometryToolkitFeatures'
 its rotation `R_ij`, `f_j = R_ij·f_i`, its inlier count and its absolute rotation
 `covariance` (rad², the so(3) chart: `uncertain_rotation`; `nothing` when not determined):
 what the view graph and the rotation averaging consume), `inlier_matches` (per verified pair its
-inliers as keypoint index pairs `(a, b)`, keypoint `a` of frame `i` ↔ keypoint `b`
+inliers as detection index pairs `(a, b)`, detection `a` of frame `i` ↔ detection `b`
 of frame `j`: what the tracks consume) and `stats` (per verified pair: matches,
 inliers, the rms Sampson residual of its inliers in pixels and its rotation angle in degrees), `scales` (per verified
 pair its noise scale: `sigma`, px per coordinate of its Sampson residual, its RANSAC scorer's own (`NaN` when the result
@@ -133,7 +133,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
     feats = map(1:K) do k
         f = detect_features(camera, frames[k], desc; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                             selection, detection_image, detection_noise, saturated = saturated === nothing ? nothing : saturated[k])
-        say("  frame $(k - 1): $(length(f)) keypoints kept")
+        say("  frame $(k - 1): $(length(f)) detections kept")
         f
     end
     sz(k) = (size(_frame_image(frames[k]), 1), size(_frame_image(frames[k]), 2))                         # the image a frame's features are in: the frame
@@ -201,7 +201,7 @@ const _RETIRED_REGISTRATION_KEYWORDS = (;
     averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)`",
     local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy`",
     # the retired whitening switch, spelled in fragments (check_naming lists the retired name)
-    Symbol("bundle_" * "whitening") => "the bundle's observations are the keypoints' pixels (no keypoint covariance in this " *
+    Symbol("bundle_" * "whitening") => "the bundle's observations are the detections' pixels (no detection covariance in this " *
                                        "release)")
 function _refuse_retired_registration_keywords(what, kwargs)
     for (k, _) in pairs(kwargs)
@@ -252,7 +252,7 @@ RANSAC's:
   `local_optimization_strategy` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
   with at least `min_inliers` inliers. Its residuals are in the camera's pixels
-  ([`pair_bearings`](@ref): plain keypoints).
+  ([`pair_bearings`](@ref): plain detections).
 - graph: VisualGeometryToolkitEstimation's `fit_filtered_rotation_averaging` of the
   verified pairs' view graph, its strategy `averaging_optimization_strategy` (an `Irls{Shape}`; by default
   VisualGeometryToolkitEstimation's `[fit_rotation_averaging] optimization_strategy`): the pairs off a cycle
@@ -273,7 +273,7 @@ RANSAC's:
   constant × σ̂), σ̂ the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,
   `bundle_ftol`, `bundle_xtol`: [`refine_rotations`](@ref)), the width fixed.
   No kept pair with a scale is an `ArgumentError`. Every observation is its
-  keypoint's centre in the camera's pixels (through the frames' `frame_map`), the
+  detection's centre in the camera's pixels (through the frames' `frame_map`), the
   residuals in pixels. The bundle holds the camera's calibration (`refine_rotations`); the
   retired `bundle_camera_free`, `bundle_scale_multiple`, the whitening switch and `local_optimization` are an
   `ArgumentError` naming their successors (the autocalibration of a rotating camera is
@@ -342,7 +342,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
         throw(ArgumentError("register_rotations: no kept pair has a noise scale: the bundle has no width"))
     σ = Float64(VgtkCore.noise_scale(pooled))
     say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales, px, the bundle's scale")
-    # every observation its keypoint's centre in the camera's pixels, through the frame map
+    # every observation its detection's centre in the camera's pixels, through the frame map
     obs = [[k => frame_map(SVector{2, Float64}(feats[k][kp].center[1], feats[k][kp].center[2])) for (k, kp) in t] for t in ts]
     bundle = refine_rotations(camera, VgtkCore.estimate(avg), obs; optimization_strategy = bundle_optimization_strategy, scale = pooled,
                               max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)

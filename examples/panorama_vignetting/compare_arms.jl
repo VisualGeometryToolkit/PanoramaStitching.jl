@@ -1,4 +1,4 @@
-# The comparison of fit_vignetting's settings: every arm of arms.toml (V free or fixed × the gain correction × the measurement noise) on
+# The comparison of fit_vignetting's settings: every arm of arms.toml (V free or fixed × the gain correction × the observation noise) on
 # every set of record, each run keyed by its configs (README.md, "The comparison of the fit's settings").
 #
 #     julia --project=<env> examples/panorama_vignetting/compare_arms.jl examples/panorama_vignetting/arms.toml
@@ -34,7 +34,7 @@ function compare_arms(arms_path)
     for a in A["arms"]
         a["vignetting"] in ("free", "fixed") || error("arms.toml: arm $(a["name"]): vignetting = $(a["vignetting"])")
         PanoramaStitching.GAIN_CORRECTIONS[a["gain_correction"]]                    # an ArgumentError names the tags
-        PanoramaStitching.MEASUREMENT_NOISES[a["measurement_noise"]]
+        PanoramaStitching.OBSERVATION_NOISES[a["observation_noise"]]
     end
     # the V of record first: the fixed arms hold its V
     order = vcat(ref, [a for a in A["arms"] if a !== ref])
@@ -69,8 +69,8 @@ function compare_arms(arms_path)
         rows = Dict{String, Any}[]
         for a in order
             cfg = deepcopy(C.cfg); v = cfg["vignetting"]
-            v["gain_correction"] = a["gain_correction"]; v["measurement_noise"] = a["measurement_noise"]
-            v["log_intensity_scale"] = A["log_intensity_scale"]; v["measurement_noise_iterations"] = A["measurement_noise_iterations"]
+            v["gain_correction"] = a["gain_correction"]; v["observation_noise"] = a["observation_noise"]
+            v["log_intensity_scale"] = A["log_intensity_scale"]; v["observation_noise_iterations"] = A["observation_noise_iterations"]
             Ca = (; cfg, C.out, run = dir, C.path)
             fkw = (; vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
             fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
@@ -82,8 +82,8 @@ function compare_arms(arms_path)
             pooled = vcat([filter(!isnan, vec(Array(s.ratio))) for s in seams]...)
             summ = vignetting_summary(V, lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)
             row = Dict{String, Any}("arm" => a["name"], "vignetting" => a["vignetting"], "gain_correction" => a["gain_correction"],
-                                    "measurement_noise" => a["measurement_noise"], "seconds" => dt,
-                                    "solves" => m.measurement_noise isa IntensityAndPositionNoise ? 1 + m.measurement_noise.iterations : 1,
+                                    "observation_noise" => a["observation_noise"], "seconds" => dt,
+                                    "solves" => m.observation_noise isa IntensityAndPositionNoise ? 1 + m.observation_noise.iterations : 1,
                                     "rows" => r.n,
                                     "residual_mad" => m.residual_mad, "weighted_rms" => r.rms,
                                     "gains" => [collect(m.gains[k, :]) for k in axes(m.gains, 1)],
@@ -102,12 +102,12 @@ function compare_arms(arms_path)
         open(joinpath(dir, "results.md"), "w") do io
             println(io, "# fit_vignetting settings: $(C.cfg["name"])\n")
             println(io, "Key $key; the V of record (fixed arms): $(A["fixed_from"]); seams 1.4826·MAD of the log ratio.\n")
-            println(io, "| arm | V | gains | measurement noise | seam MAD R | G | B | all | seam rms all | V_min | V asym % | gain range (G) | s |")
+            println(io, "| arm | V | gains | observation noise | seam MAD R | G | B | all | seam rms all | V_min | V asym % | gain range (G) | s |")
             println(io, "|---|---|---|---|---|---|---|---|---|---|---|---|---|")
             f4(x) = @sprintf("%.4f", x)
             for r in rows
                 g = reduce(hcat, r["gains"])'                    # K × 3
-                println(io, "| $(r["arm"]) | $(r["vignetting"]) | $(r["gain_correction"]) | $(r["measurement_noise"]) | " *
+                println(io, "| $(r["arm"]) | $(r["vignetting"]) | $(r["gain_correction"]) | $(r["observation_noise"]) | " *
                             join(f4.(r["seam_mad"]), " | ") * " | $(f4(r["seam_mad_all"])) | $(f4(r["seam_rms_all"])) | " *
                             "$(@sprintf("%.3f", r["V_min"])) | $(@sprintf("%.1f", 100r["V_asymmetry"])) | " *
                             "$(@sprintf("%.3f", minimum(g[:, 2])))–$(@sprintf("%.3f", maximum(g[:, 2]))) | $(@sprintf("%.2f", r["seconds"])) |")

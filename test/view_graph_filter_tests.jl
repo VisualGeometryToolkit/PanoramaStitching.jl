@@ -14,17 +14,17 @@
 
     # The verified pairs of a 6-frame sweep (frame k at yaw 0.5(k − 1) rad): every pair sharing ≥ 25 tracks verified with its true
     # rotation R_ij = R_jᵀR_i and its true matches, but `alias` (i, j) verified 12° off about the vertical (one bay of a periodic
-    # hall) with its matches one keypoint off (the aliased correspondences).
+    # hall) with its matches one detection off (the aliased correspondences).
     function aliased_pairs(; alias = (2, 4), rng = MersenneTwister(3))
         R = sweep_rotations(rng, 6)
         ts, _, _ = sweep_tracks(rng, R, 800; σ = 0.3)
         K = length(R)
         pixels = [SVector{2, Float64}[] for _ in 1:K]
-        index = [Dict{Int, Int}() for _ in 1:K]                     # track → keypoint, per frame
+        index = [Dict{Int, Int}() for _ in 1:K]                     # track → detection, per frame
         for (t, obs) in enumerate(ts), (k, u) in obs
             push!(pixels[k], u); index[k][t] = length(pixels[k])
         end
-        feats = [described(pixels[k]) for k in 1:K]                  # plain keypoints: the pixel residuals
+        feats = [described(pixels[k]) for k in 1:K]                  # plain detections: the pixel residuals
         verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
         matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
         stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
@@ -62,7 +62,7 @@
     # both skipped: the pair stays, its aliased matches in the tracks
     off = register_rotations(vp, BCAM; bkw..., cycle_tol = nothing, orientation_tol = nothing)
     @test isempty(off.removed) && haskey(off.graph, 2, 4)
-    # the aliased matches chain true tracks of frames 2 and 4 into inconsistent ones (two keypoints of a frame), which chain_tracks
+    # the aliased matches chain true tracks of frames 2 and 4 into inconsistent ones (two detections of a frame), which chain_tracks
     # drops: with the filters none is
     @test reg.dropped == 0
     @test off.dropped > 0 && length(off.tracks) < length(reg.tracks)

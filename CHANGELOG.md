@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+The breaking wave of the stack (VisualGeometryToolkitCore 0.10, IO 0.10, Features 0.9, Estimation 0.11): the terminology
+taxonomy — a detector's output is a **detection**, a hypothesised pairing a **correspondence**, a detection associated with a
+model entity an **observation** (Core's `conventions/naming.md`).
+
+### Breaking
+
+- `fit_vignetting`'s keyword `measurement_noise` → `observation_noise`, and `VignettingMetadata`'s field of the same name; the
+  old keyword is refused naming the new one (`ArgumentError`), no alias.
+- `MEASUREMENT_NOISES` → `OBSERVATION_NOISES` (the `TagRegistry` family `:observation_noise`; its tags unchanged:
+  `"intensity"`, `"intensity_and_position"`).
+- The example's TOML keys `vignetting.measurement_noise` → `vignetting.observation_noise` and `measurement_noise_iterations`
+  → `observation_noise_iterations` (in `arms.toml` too); a config holding an old key is refused by name.
+- On VisualGeometryToolkitCore 0.10's names: `correspondences` (was `csponds`) and `bearing_correspondences` (was
+  `bearing_csponds`) in `pair_bearings`; no API change of PanoramaStitching's own from them.
+- Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation" (the example's cache-format
+  strings `REGISTRATION_FORMAT`/`PAIRS_FORMAT` keep their words: they are the cached stages' keys).
+
 ## 0.6.3 (unreleased)
 
 A patch: requires Julia 1.13 (`julia = "1.13"` in the `[compat]` of the package, of its workspace

@@ -18,12 +18,12 @@
         push!(u1, VgtkCore.project(CAM, f) + 0.7 * randn(rng, SVector{2, Float64}))
         push!(u2, VgtkCore.project(CAM, g) + 0.7 * randn(rng, SVector{2, Float64}))
     end
-    fa = described(u1); fb = described(u2)                         # plain keypoints (no keypoint covariance in this release)
+    fa = described(u1); fb = described(u2)                         # plain detections (no detection covariance in this release)
     ms = [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)]
     cs, kept = pair_bearings(bcam, fa, fb, ms; frame_map = IDENTITY_MAP)
     # plain endpoints: no covariance columns (unit isotropic pixel noise)
     @test !VgtkCore.hasattr(cs, :Σ₁) && !VgtkCore.hasattr(cs, :Σ₂) && kept[1] == (1, 1)
-    @test VgtkCore.hasattr(cs, :score) && cs.score[1] == 1.0                       # Features' csponds' score column
+    @test VgtkCore.hasattr(cs, :score) && cs.score[1] == 1.0                       # Features' correspondences' score column
     res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
                                        scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0))
     Σ = PanoramaStitching._verified_rotation_covariance(cs, res)

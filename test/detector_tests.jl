@@ -1,11 +1,11 @@
 # =============================================================================
 # detect_features' variants: the selection (:spread, VisualGeometryToolkitFeatures' spread_strongest through the descriptor,
 # the one selection) and the detection image (:tone; :vst, the variance-stabilized green cells of the frame's
-# LinearRaw), the kept keypoints the described set (Features' described features, plain: no keypoint covariance), and the
+# LinearRaw), the kept detections the described set (Features' described features, plain: no detection covariance), and the
 # refusals.
 # =============================================================================
 
-@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept keypoints are the described set, plain" setup = [SyntheticSequence, BayerMaps] begin
+@testitem "detect_features: :spread covers a dim half the global top N leaves empty; the kept detections are the described set, plain" setup = [SyntheticSequence, BayerMaps] begin
     using Test, StaticArrays, Statistics, LinearAlgebra
     using PanoramaStitching: PanoramaStitching, detect_features
     import VisualGeometryToolkitCore as VgtkCore
@@ -16,11 +16,11 @@
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
-    px = keypoint_pixels                                                            # the keypoints' centres in the camera's pixels
+    px = detection_pixels                                                            # the detections' centres in the camera's pixels
     sp = detect_features(q.cam, frame, desc; kw..., selection = :spread)
     @test VgtkFeatures.descriptor_matrix(sp) isa AbstractMatrix{Float32}             # Features' StructArray{DescribedFeature}, as the descriptor returns it
     @test px(detect_features(q.cam, frame, desc; kw...)) == px(sp)                  # :spread and :tone the defaults
-    # keypoint covariances are off in this release: every keypoint is the detector's plain detection
+    # detection covariances are off in this release: every detection is the detector's plain detection
     @test !any(f -> f.detection isa VgtkCore.Attributed{<:VgtkCore.Uncertain}, sp)
     @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(sp))
     @test round(Int, 0.9N) <= length(sp) <= round(Int, 1.1N)
@@ -33,7 +33,7 @@
     top = inside[sortperm(abs.(getproperty.(inside, :response)); rev = true)[1:N]]
     dim(px) = count(u -> u[1] < VgtkCore.scale(FRAME_MAP) * Wf / 2, px) / length(px)
     dim_top = dim([FRAME_MAP(SVector{2, Float64}(d.center...)) for d in top])
-    @info "detect_features: the dim half holds $(round(dim(px(sp)); digits = 3)) of :spread's keypoints, $(round(dim_top; digits = 3)) of the global top N"
+    @info "detect_features: the dim half holds $(round(dim(px(sp)); digits = 3)) of :spread's detections, $(round(dim_top; digits = 3)) of the global top N"
     @test dim(px(sp)) > 0.15
     @test dim_top < dim(px(sp)) / 3
     @test_throws ArgumentError detect_features(q.cam, frame, desc; kw..., selection = :global)   # :spread is the one selection
@@ -60,7 +60,7 @@ end
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
     noise = (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0)
-    px = keypoint_pixels
+    px = detection_pixels
     # :tone reads a LinearRaw's image as it reads the array
     @test px(detect_features(q.cam, L, desc; kw...)) == px(detect_features(q.cam, L.image, desc; kw...))
     v = detect_features(q.cam, L, desc; kw..., detection_image = :vst, detection_noise = noise)
@@ -83,7 +83,7 @@ end
                                                   bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
 end
 
-@testitem "detect_features: no keypoint reads a clipped pixel; the tilt schedule by name" setup = [SyntheticSequence, BayerMaps] begin
+@testitem "detect_features: no detection reads a clipped pixel; the tilt schedule by name" setup = [SyntheticSequence, BayerMaps] begin
     # Features' detection mask (`asift_detect(…; exclusion_mask)`): a detection within three of its scales of a clipped pixel is dropped.
     # `saturated` is the frame's clip mask (a LinearRaw's own saturation by default); `asift_tilts` takes Features'
     # `tilt_schedule` names (`:untilted` is the identity warp alone).
@@ -97,7 +97,7 @@ end
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = :untilted, max_detections = N)
-    px = keypoint_pixels
+    px = detection_pixels
     free = detect_features(q.cam, frame, desc; kw...)
     masked = detect_features(q.cam, frame, desc; kw..., saturated = clip)
     in_window(p) = all(c -> 2 * (150 - 1) <= c <= 2 * 350, p)                   # camera pixels of the clipped window

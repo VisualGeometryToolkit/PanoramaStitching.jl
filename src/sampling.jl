@@ -72,7 +72,7 @@ frame_region(camera::VgtkCore.BoundedCamera, width, height, rim_margin_px) =
     VgtkCore.Rect(2.0, 2.0, width - 4.0, height - 4.0) ∩ _imaged_less_rim(camera, rim_margin_px)
 
 # Whether a frame sees a direction: its sensor point `u` is finite and in the region and its ray `f` within the field angle of
-# the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. A measurement (the sampling, the seam score) also
+# the camera frame's z axis (`f₃ > cos θ_max·‖f‖`) — the render's mask. An observation (the sampling, the seam score) also
 # needs the saturated mask's bilinear sample zero at every plane's sample position: no saturated pixel among those any plane's
 # value blends (`sample_frames`).
 struct _Sees{R, T}

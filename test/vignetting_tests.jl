@@ -75,7 +75,10 @@ end
     @info "fit_vignetting radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.iterations) CG iterations, rms $(cg.rms)"
     @test VgtkCore.converged(cg) && VgtkCore.stop_rule(cg) == VgtkCore.ToleranceMet && VgtkCore.retcode_symbol(cg) === :converged
     @test VgtkCore.converged(ch) && VgtkCore.stop_rule(ch) == VgtkCore.ClosedForm && VgtkCore.retcode_symbol(ch) === :solved
-    @test cg.metadata.log_change == 0 && cg.metadata.measurement_noise === PanoramaStitching.IntensityNoise()
+    @test cg.metadata.log_change == 0 && cg.metadata.observation_noise === PanoramaStitching.IntensityNoise()
+    # the noise keyword of 0.4–0.6 is refused naming its successor (spelled in fragments: check_naming retires its word)
+    @test_throws "renamed `observation_noise`" fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, saturated = q.saturated,
+                                                              solver = cgs, Symbol("measure" * "ment_noise") => PanoramaStitching.IntensityNoise(), kw...)
     @test e_cg[1] < 2.0e-3 && e_ch[1] < 2.0e-3
     @test maximum(abs.(control_points(VgtkCore.estimate(cg)) .- control_points(VgtkCore.estimate(ch)))) < 1.0e-5
     @test cg.rms < 0.02
@@ -141,8 +144,8 @@ end
         # the value-and-position noise's weights on the device (the observation's constraint, ForwardDiff and Core's whitening
         # in the kernels)
         sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 2)
-        hs = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, measurement_noise = sw, kw...)
-        dsf = fit_vignetting(v0, q.camera, df, q.R; saturated = ds, measurement_noise = sw, kw...)
+        hs = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, observation_noise = sw, kw...)
+        dsf = fit_vignetting(v0, q.camera, df, q.R; saturated = ds, observation_noise = sw, kw...)
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
@@ -216,8 +219,8 @@ end
     # the model exactly give the same V and gains; the weights come from the I² solve's model, so V held fixed takes them too
     sw = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5), iterations = 2)
     sam = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(), solver = SparseCholesky(),
-                         measurement_noise = sw, kw...)
-    @test sam.metadata.measurement_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
+                         observation_noise = sw, kw...)
+    @test sam.metadata.observation_noise === sw && sam.metadata.log_change > 0   # two reweight-and-solve cycles after the I² solve
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(VgtkCore.estimate(sam)) < 2.0e-3
     # the termination is every solve's (Core's worst_retcode), not the last one's: the cold first solve capped by the CG
     # budget, the warm-started reweighted solves after it within it — the fit is MaxIters (its legacy Symbol :max_iterations)
@@ -226,14 +229,14 @@ end
     @test VgtkCore.converged(single) && VgtkCore.stop_rule(single) == VgtkCore.ToleranceMet
     budget = single.iterations ÷ 2                           # the cold solve capped well short (its CG count varies by an iteration or so: threaded scatter-adds)
     capped = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, gain_correction = IntensityGains(),
-                            (; kw..., solver = cg(budget), measurement_noise = sw)...)
+                            (; kw..., solver = cg(budget), observation_noise = sw)...)
     @test capped.iterations < 3 * budget                     # a later solve met the tolerance within the budget
     @test VgtkCore.retcode(capped) == VgtkCore.ReturnCode.MaxIters && VgtkCore.stop_rule(capped) == VgtkCore.IterationCap
     @test VgtkCore.retcode_symbol(capped) === :max_iterations && !VgtkCore.converged(capped)
     sf = fit_vignetting(VgtkCore.estimate(with), q.camera, q.frames, q.R; free_directions = zeros(n_control_points(v0), 0),
                         gain_correction = IntensityGains(), solver = SparseCholesky(),
-                        measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)), kw...)
-    @test sf.metadata.measurement_noise.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
+                        observation_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5)), kw...)
+    @test sf.metadata.observation_noise.iterations == 1 && maximum(abs.(sf.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3
     @test_throws UndefKeywordError IntensityAndPositionNoise()                                     # the point's noise is required
     @test_throws TypeError IntensityAndPositionNoise(; point_covariance = [1.0 0; 0 1])            # a CovMat, not a bare matrix
     @test_throws ArgumentError IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 3)
@@ -347,14 +350,14 @@ end
     @test_throws ArgumentError fit_vignetting(dark, q.camera, q.frames, q.R; free_directions = zeros(0, 0), gain_correction = IntensityGains(), kw...)
 end
 
-# The TOML tags of the gain correction and the measurement noise: the current tags select their types (the tag rule: snake_case
+# The TOML tags of the gain correction and the observation noise: the current tags select their types (the tag rule: snake_case
 # of the type's name less the family's suffix), and the tags of earlier releases are refused with an ArgumentError naming the new
 # one (no alias: an old config fails, it is never read as the new setting).
-@testitem "GAIN_CORRECTIONS, MEASUREMENT_NOISES: the tags, and the renamed tags refused by name" begin
+@testitem "GAIN_CORRECTIONS, OBSERVATION_NOISES: the tags, and the renamed tags refused by name" begin
     using Test
     using PanoramaStitching: PanoramaStitching, IntensityGains, ChannelGains, IntensityNoise, IntensityAndPositionNoise
     import VisualGeometryToolkitCore as VgtkCore
-    G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.MEASUREMENT_NOISES
+    G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     @test G["intensity"] === IntensityGains && G["channel"] === ChannelGains && G["none"] === nothing
     @test N["intensity"] === IntensityNoise && N["intensity_and_position"] === IntensityAndPositionNoise
     @test VgtkCore.tag_of(G, IntensityGains) == "intensity" && VgtkCore.tag_of(N, IntensityAndPositionNoise) == "intensity_and_position"
@@ -388,7 +391,8 @@ end
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
-    for (old, new) in (("weights", "measurement_noise"), ("sampson_iterations", "measurement_noise_iterations"))
+    for (old, new) in (("weights", "observation_noise"), ("sampson_iterations", "observation_noise_iterations"),
+                       ("measure" * "ment_noise", "observation_noise"), ("measure" * "ment_noise_iterations", "observation_noise_iterations"))
         err = try
             refuse(Dict{String, Any}(old => 1)); nothing
         catch e
@@ -421,7 +425,7 @@ end
         e
     end
     @test err isa ArgumentError && occursin("bundle_iterations", err.msg)
-    G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.MEASUREMENT_NOISES
+    G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
@@ -431,7 +435,7 @@ end
         # the pairs' local optimization is an Estimation strategy table, read by Estimation's own loader
         @test VgtkEstimation.optimization_strategy_from_toml(reg["local_optimization_strategy"]; class = :rotation) isa VgtkCore.AbstractOptimizationStrategy
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
-        @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["measurement_noise"]] isa Type
+        @test refuse(v) === v && G[v["gain_correction"]] isa Any && N[v["observation_noise"]] isa Type
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
         @test all(k -> VgtkCore.VIGNETTING_TAGS[k] in (VgtkCore.RadialVignetting, VgtkCore.TensorProductVignetting),
                   vcat(v["model"], v["compare_models"]))
@@ -441,7 +445,7 @@ end
     @test VgtkCore.VIGNETTING_TAGS[arms["kind"]] === VgtkCore.RadialVignetting
     @test refuse(arms) === arms && length(arms["arms"]) == 12 && allunique(a["name"] for a in arms["arms"])
     for a in arms["arms"]
-        @test refuse(a) === a && N[a["measurement_noise"]] isa Type && (G[a["gain_correction"]]; true)
+        @test refuse(a) === a && N[a["observation_noise"]] isa Type && (G[a["gain_correction"]]; true)
         @test !any(t -> occursin(t, a["name"]), ("intensity", "channel", "none", "frame", "sampson", "free", "fixed"))
     end
 end

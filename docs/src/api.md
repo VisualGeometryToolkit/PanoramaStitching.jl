@@ -55,6 +55,6 @@ IntensityAndPositionNoise
 IntensityGains
 ChannelGains
 PanoramaStitching.GAIN_CORRECTIONS
-PanoramaStitching.MEASUREMENT_NOISES
+PanoramaStitching.OBSERVATION_NOISES
 score_seams
 ```

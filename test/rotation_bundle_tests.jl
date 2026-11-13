@@ -35,7 +35,7 @@ function sweep_tracks(rng, R, n; σ = 0.5, outl = 0.0, θmax = deg2rad(100))
     return out, dirs, past90
 end
 # A frame's features as the detector gives them, Features' described features (`StructArray{DescribedFeature}`), at `pixels`
-# (a frame at the camera's own pixels): each a detection of a Disc (the detector's default: no keypoint covariance),
+# (a frame at the camera's own pixels): each a detection of a Disc (the detector's default: no detection covariance),
 # described by one zero.
 # A bundle residual block as a function of its frame's and its direction's chart steps, δ[1:3] and δ[4:5] (any further
 # variables at their anchors): what a closed-form Jacobian is checked against with ForwardDiff.
@@ -49,7 +49,7 @@ end
     using Test
     using PanoramaStitching: PanoramaStitching, chain_tracks
     @test !isdefined(PanoramaStitching, :ViewGraph)                       # one view graph across the stack: Estimation's
-    # 1:5 ↔ 2:7 ↔ 3:1 chains into one track; 1:6 ↔ 2:8 and 2:8 ↔ 3:2 and 3:2 ↔ 1:9 put two keypoints of frame 1 in one track: dropped
+    # 1:5 ↔ 2:7 ↔ 3:1 chains into one track; 1:6 ↔ 2:8 and 2:8 ↔ 3:2 and 3:2 ↔ 1:9 put two detections of frame 1 in one track: dropped
     ts, dropped = chain_tracks(Dict((1, 2) => [(5, 7), (6, 8)], (2, 3) => [(7, 1), (8, 2)], (1, 3) => [(9, 2)]))
     @test ts == [[(1, 5), (2, 7), (3, 1)]]
     @test dropped == 1

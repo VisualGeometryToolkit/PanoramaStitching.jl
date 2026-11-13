@@ -4,7 +4,7 @@
 #   vignetting         "free" (self-calibration: V fitted with the gains) or "fixed" (V held at the V of record: the arm named by
 #                      `fixed_from`'s fitted V, its log V(u) the fixed numbers: gain compensation under a given V)
 #   gain_correction    "none", "intensity" (one gain per frame, every plane) or "channel" (per frame and colour plane)
-#   measurement_noise  "intensity" (noise in the value: weight I²) or "intensity_and_position" (the value and the sensor
+#   observation_noise  "intensity" (noise in the value: weight I²) or "intensity_and_position" (the value and the sensor
 #                      position; the sensor point's σ the registration bundle's core scale, loss width / scale multiple, from the
 #                      set's rotations.json)
 # An arm's name is its own label: selfcal (V fitted) or given_v (V held at the V of record); no_gain, shared_gain (one gain per
@@ -18,76 +18,76 @@ sets = ["config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml"]
 kind = "radial"                                    # the V model of every arm (the configs of record's)
 fixed_from = "selfcal_shared_gain_value"              # the V of record: the fit with the record's settings (one gain per frame, I²)
 log_intensity_scale = 0.01                         # intensity_and_position: σ of log I
-measurement_noise_iterations = 1                   # intensity_and_position: its reweight-and-solve cycles after the I² solve
+observation_noise_iterations = 1                   # intensity_and_position: its reweight-and-solve cycles after the I² solve
 
 [[arms]]
 name = "selfcal_shared_gain_value"
 vignetting = "free"
 gain_correction = "intensity"
-measurement_noise = "intensity"
+observation_noise = "intensity"
 
 [[arms]]
 name = "selfcal_no_gain_value"
 vignetting = "free"
 gain_correction = "none"
-measurement_noise = "intensity"
+observation_noise = "intensity"
 
 [[arms]]
 name = "selfcal_plane_gain_value"
 vignetting = "free"
 gain_correction = "channel"
-measurement_noise = "intensity"
+observation_noise = "intensity"
 
 [[arms]]
 name = "given_v_no_gain_value"
 vignetting = "fixed"
 gain_correction = "none"
-measurement_noise = "intensity"
+observation_noise = "intensity"
 
 [[arms]]
 name = "given_v_shared_gain_value"
 vignetting = "fixed"
 gain_correction = "intensity"
-measurement_noise = "intensity"
+observation_noise = "intensity"
 
 [[arms]]
 name = "given_v_plane_gain_value"
 vignetting = "fixed"
 gain_correction = "channel"
-measurement_noise = "intensity"
+observation_noise = "intensity"
 
 [[arms]]
 name = "selfcal_no_gain_value_point"
 vignetting = "free"
 gain_correction = "none"
-measurement_noise = "intensity_and_position"
+observation_noise = "intensity_and_position"
 
 [[arms]]
 name = "selfcal_shared_gain_value_point"
 vignetting = "free"
 gain_correction = "intensity"
-measurement_noise = "intensity_and_position"
+observation_noise = "intensity_and_position"
 
 [[arms]]
 name = "selfcal_plane_gain_value_point"
 vignetting = "free"
 gain_correction = "channel"
-measurement_noise = "intensity_and_position"
+observation_noise = "intensity_and_position"
 
 [[arms]]
 name = "given_v_no_gain_value_point"
 vignetting = "fixed"
 gain_correction = "none"
-measurement_noise = "intensity_and_position"
+observation_noise = "intensity_and_position"
 
 [[arms]]
 name = "given_v_shared_gain_value_point"
 vignetting = "fixed"
 gain_correction = "intensity"
-measurement_noise = "intensity_and_position"
+observation_noise = "intensity_and_position"
 
 [[arms]]
 name = "given_v_plane_gain_value_point"
 vignetting = "fixed"
 gain_correction = "channel"
-measurement_noise = "intensity_and_position"
+observation_noise = "intensity_and_position"

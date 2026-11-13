@@ -84,7 +84,7 @@ end
 
 @testitem "sample_frames: a saturated pixel that any plane's sample blends masks the direction" setup = [BayerMaps] begin
     # the planes are read at their own sample positions (a 2 × 2 Bayer binning's R and B at ±¼ px): a direction is a
-    # measurement only when none of the pixels ANY plane's bilinear value blends is saturated, not only the centre's four
+    # observation only when none of the pixels ANY plane's bilinear value blends is saturated, not only the centre's four
     using Test, LinearAlgebra, StaticArrays
     using PanoramaStitching: sample_frames
     using VisualGeometryToolkitCore: CameraModel, BoundedCamera, Size2, Lens, Perspective, px, backproject
@@ -137,7 +137,7 @@ end
     # the averaging's gauge is the first frame: its rotation is the identity
     @test VgtkCore.estimate(reg.averaging)[1] ≈ one(SMatrix{3, 3, Float64, 9}) atol = 1e-12
     # every kept feature lies in the camera's imaged region eroded by the detector margin (the image circle less 20 px)
-    px = keypoint_pixels
+    px = detection_pixels
     @test all(f -> all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(f)), reg.features)
     @test all(f -> !isempty(f), reg.features)
     # the frames sampled at directions spread uniformly over the covered sphere, the vignetting read on the ray: every frame
@@ -164,8 +164,8 @@ end
 end
 
 @testitem "register_rotations: a dropped lag pair, the overlap pairs connect the frames" setup = [SyntheticSequence, BayerMaps] begin
-    # frames at yaw 0°, 180° and 90° in capture order, keypoints inside the circle less 60 px (r ≤ 420 px: ~84° off axis): the
-    # lag pair 0-1 shares no keypoint's scene and is dropped, which leaves frame 0 a part of its own; the pair 0-2, between the
+    # frames at yaw 0°, 180° and 90° in capture order, detections inside the circle less 60 px (r ≤ 420 px: ~84° off axis): the
+    # lag pair 0-1 shares no detection's scene and is dropped, which leaves frame 0 a part of its own; the pair 0-2, between the
     # two parts, is verified and joins them (with the 20 px margin of the sweep above, the ~13° rim of 0-1 is verified)
     using Test, LinearAlgebra, StaticArrays
     using PanoramaStitching: register_rotations, verify_pairs, VerifiedPairs
@@ -193,7 +193,7 @@ end
     # another averaging loss from the same pairs: no feature detected again, the rotations as good
     reg3 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 100), bkw...)
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg3.rotations[k])' * q.R[k]))), 1:3) < 0.05
-    # the bundle always whitens by the keypoints' covariances: the retired whitening switch is refused by name
+    # the bundle always whitens by the detections' covariances: the retired whitening switch is refused by name
     @test_throws Regex("bundle_" * "whitening. is retired") register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., Symbol("bundle_" * "whitening") => :none)
 end
 
@@ -247,7 +247,7 @@ end
     on_ray(u, f) = q.V(VgtkCore.angle_between(f, q.axis))                           # V defined on the ray's direction
     on_sensor(u, f) = q.V(VgtkCore.angle_between(VgtkCore.backproject(q.cam, u), q.axis))   # V defined on the sensor
     kw = (; frame_map = FRAME_MAP, rim_margin_px = 12.0, fov_deg = 89.0)
-    saturated = [falses(Hf, Wf) for _ in 1:3]                                       # the sampling's measurement masks
+    saturated = [falses(Hf, Wf) for _ in 1:3]                                       # the sampling's observation masks
     eq = panorama_view(VgtkCore.Equirectangular(), (-80.0, 150.0, -60.0, 60.0), 0.5)
     pano(cam, view = eq; vignetting = on_ray) = render_panorama(cam, frames, q.R, view; vignetting, kw...)
     g = pano(q.cam); p = pano(q.model)
@@ -298,7 +298,7 @@ end
 @testitem "a camera with no stored lens coverage registers as in 0.5.1, its frames lit to the sensor's edge" setup = [SyntheticSequence, BayerMaps] begin
     # Review focus 4. A parametric camera bounded by its sensor alone (coverage the whole sensor, 0.5.1's `circle =
     # WholePlane()`), its frames lit to the sensor's edge: the margins erode only a lens coverage's edge, so the features reach
-    # the sensor's edge whatever `detector_margin_px` (the same keypoints, in the same order: detect_features' order is
+    # the sensor's edge whatever `detector_margin_px` (the same detections, in the same order: detect_features' order is
     # deterministic); the bundle converges, and its rotations are those of the bundle through the bare CameraModel — 0.5.1's
     # bundle, whose residual nothing masks — to 1e-9 (the lens coverage does not enter the bundle).
     using Test, LinearAlgebra, StaticArrays
@@ -318,7 +318,7 @@ end
                                      bundle_optimization_strategy = bkw.optimization_strategy,
                                      bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
     a, b = reg(0.0), reg(30.0)
-    px = keypoint_pixels
+    px = detection_pixels
     @test [px(f) for f in a.features] == [px(f) for f in b.features]
     edge(p) = min(p[1], p[2], 1000 - p[1], 1000 - p[2])
     @test any(f -> any(p -> edge(p) < 30.0, px(f)), b.features)                 # kept within the margin of the sensor's edge

@@ -55,21 +55,21 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
 
 [`register_rotations`](@ref) composes the stack's estimators and does no estimation of its own:
 
-1. **Features** ([`PanoramaStitching.detect_features`](@ref)): ASIFT keypoints inside the camera's imaged region less
+1. **Features** ([`PanoramaStitching.detect_features`](@ref)): ASIFT detections inside the camera's imaged region less
    `detector_margin_px`, described by
    VisualGeometryToolkitFeatures' DeDoDe/LoMa descriptor (`descriptor = :b`), at most `max_detections` per frame.
    `tone_percentile` sets the exposure the detector sees; `asift_tilts = [(1.0, 0.0)]` is the untilted view only.
 2. **Pairs**: `pairs = :all` matches every frame pair; `pairs = :lag_overlap` only those at most `max_lag` apart in capture
    order, plus those whose averaged optical axes are within `overlap_deg`. Matches come from the LoMa matcher
    (`matcher = :b128`) and become bearing correspondences through the camera
-   ([`PanoramaStitching.pair_bearings`](@ref)), plain keypoints, so a pair's residuals are in the camera's pixels.
+   ([`PanoramaStitching.pair_bearings`](@ref)), plain detections, so a pair's residuals are in the camera's pixels.
 3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `find_rotation` (RANSAC on bearings, its sampler seeded from
    `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
 4. **Rotation averaging**: the verified pairs form VisualGeometryToolkitEstimation's `ViewGraph` (each edge the pair's rotation, weighted by its
    inlier count); Estimation's `fit_rotation_averaging` of it with `averaging_optimization_strategy` (an `Irls`; by default
    Estimation's own) gives every frame's rotation.
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
-   Estimation's `ViewGraph` on the observations); inconsistent tracks (two keypoints
+   Estimation's `ViewGraph` on the observations); inconsistent tracks (two detections
    of one frame) are dropped.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
    robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
@@ -123,7 +123,7 @@ rerun [`register_rotations`](@ref) with the refined camera to verify the pairs t
 # Illustrative: VisualGeometryToolkitCore's Triggs strategy
 using VisualGeometryToolkitCore: Triggs
 
-# the tracks as frame => pixel observations (each keypoint's centre through the frames' map), and the registration's
+# the tracks as frame => pixel observations (each detection's centre through the frames' map), and the registration's
 # rotations as the start, keyed by frame
 tracks = [[k => frame_map(SA[reg.features[k][kp].center...]) for (k, kp) in t] for t in reg.tracks]
 start = Dict(enumerate(reg.rotations))
@@ -156,7 +156,7 @@ error, and `I_k = L(d)·V(u_k)` is the equation of a panorama vignetting fit.
 [`panorama_view`](@ref) builds the raster and its pixel → ray map; [`render_panorama`](@ref) warps every frame into it (Core's
 `image_warp`, one fused map `camera ∘ R_kᵀ ∘ rays` per frame), divides by the vignetting and keeps, at each pixel, the LAST
 frame that sees it — no gain, no seam, no blend. It renders the frames as they are: a saturated pixel keeps its clipped value
-(the masks are for measurements — the sampling, the fit and the seam score — not for pictures):
+(the masks are for observations — the sampling, the fit and the seam score — not for pictures):
 
 ```julia
 cyl = panorama_view(VgtkCore.Cylindrical(), (-120.0, 120.0, -40.0, 40.0), 0.25)  # columns longitude, rows tan(latitude)
@@ -193,8 +193,8 @@ back-projection (computed once: every frame shares the pixel grid), the scene `l
 [`AzimuthalChart`](@ref) of the covered sphere with a difference penalty, and V VisualGeometryToolkitCore's
 `LogVignetting`: V = exp(s), `s` a B-spline of log V in the distance from a centre (`RadialVignetting`) or over the sensor
 (`TensorProductVignetting`). The model is linear in log L, log V and the log gains, so the fit is one weighted linear least squares;
-its gauge is mean log V = 0 over the domain. Each row is the implicit constraint of its measurement (sensor point, log I),
-weighted by its whitening by the measurement noise that `measurement_noise` chooses: [`IntensityNoise`](@ref) (the default:
+its gauge is mean log V = 0 over the domain. Each row is the implicit constraint of its observation (sensor point, log I),
+weighted by its whitening by the observation noise that `observation_noise` chooses: [`IntensityNoise`](@ref) (the default:
 noise in the value only, read noise of constant σ, weight I²) or [`IntensityAndPositionNoise`](@ref) (noise in the value and
 the pixel's sensor position, the sensor point's from the registration's residual scale, at the I² solve's model, so a row
 where the scene's log I changes fast across the sensor counts less). `gain_correction = IntensityGains()` adds an exposure
@@ -215,7 +215,7 @@ res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCo
                      chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000))   # or SparseCholesky()
-# or measurement_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration's
+# or observation_noise = IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)): σ_u the registration's
 # pooled noise scale reg.bundle_sigma (the bundle's width over its efficiency constant), px
 V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)

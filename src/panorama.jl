@@ -128,7 +128,7 @@ A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z ax
 `imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain) less `rim_margin_px` at its lens coverage's edge,
 and at least 2 px inside the frame — the geometric masks of [`sample_frames`](@ref), evaluated as batches at the warp's own
 sensor points. The render shows the frames as they are: a saturated pixel is rendered with its clipped value (a window that
-clips in every frame comes out bright, not empty); saturation masks measurements only ([`sample_frames`](@ref),
+clips in every frame comes out bright, not empty); saturation masks observations only ([`sample_frames`](@ref),
 [`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images. `frame_map` is the frames' map
 onto the camera's pixels (VisualGeometryToolkitCore's `raw_frame_map(L)`), and `plane_maps` each plane's
 (`bayer_plane_map(L, c)`; by default every plane's is the frame's); plane c is read through

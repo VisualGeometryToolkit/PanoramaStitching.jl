@@ -1,12 +1,12 @@
 # =============================================================================
 # The whitened rotation bundle (src/rotation_bundle.jl): observations that carry their
-# keypoints' pixel covariances (`frame => Uncertain(pixel, CovMat(Σ))`) are whitened by L⁻¹ (Σ = LLᵀ). On a synthetic fisheye
-# sweep with known anisotropic, heteroscedastic keypoint noise the whitened bundle recovers the rotations better than the
+# detections' pixel covariances (`frame => Uncertain(pixel, CovMat(Σ))`) are whitened by L⁻¹ (Σ = LLᵀ). On a synthetic fisheye
+# sweep with known anisotropic, heteroscedastic detection noise the whitened bundle recovers the rotations better than the
 # unweighted one; its closed-form Jacobian matches ForwardDiff; the refusals; register_rotations' observations plain pixels
-# (keypoint covariances off in this release), with no consumer default.
+# (detection covariances off in this release), with no consumer default.
 # =============================================================================
 
-@testitem "refine_rotations whitened by known anisotropic keypoint covariances beats the unweighted bundle" setup = [SweepScene] begin
+@testitem "refine_rotations whitened by known anisotropic detection covariances beats the unweighted bundle" setup = [SweepScene] begin
     using Test, Random, LinearAlgebra, StaticArrays, Statistics
     import Rotations
     using PanoramaStitching: refine_rotations
@@ -79,9 +79,9 @@ end
     @test_throws ArgumentError refine_rotations(CAM, R, [[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]]; kw...)
 end
 
-@testitem "keypoint covariances off: the pairs and the bundle read plain pixels, no consumer default" setup = [SweepScene, BayerMaps] begin
-    # This release runs the detector at its default (no keypoint covariance): the pairs' correspondences carry no covariance
-    # columns and the bundle's observations are the keypoints' pixels; PanoramaStitching normalises and substitutes none.
+@testitem "detection covariances off: the pairs and the bundle read plain pixels, no consumer default" setup = [SweepScene, BayerMaps] begin
+    # This release runs the detector at its default (no detection covariance): the pairs' correspondences carry no covariance
+    # columns and the bundle's observations are the detections' pixels; PanoramaStitching normalises and substitutes none.
     using Test, StaticArrays, Statistics
     import PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore

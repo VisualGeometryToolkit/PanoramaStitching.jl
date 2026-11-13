@@ -46,7 +46,7 @@ min_inliers = 25                                   # 40 left frames 1 and 7 a co
 seed = 1
 outlier_halfwidth_px = 2120.0                      # StudentTUniformScoring on RotationProblem: the outlier half-width a (px; half the FX3's
                                                    # 4240 px long side), Jeffreys scale and flat label priors; from the hetero-cov
-                                                   # validation, exact for these plain keypoints (ℓ ≡ 0)
+                                                   # validation, exact for these plain detections (ℓ ≡ 0)
 local_optimization_strategy = { type = "irls", loss = "tls" }   # the pairs' RANSAC local optimization (Estimation's strategy table; Irls{TLSShape} its rotation default)
 max_trials = 10000
 min_trials = 100
@@ -59,7 +59,7 @@ bundle_ftol = 1.0e-10                              # the relative cost decrease 
 bundle_xtol = 1.0e-6                               # the largest step that stops it: radians of a rotation or a direction
 execution_provider = "cuda"                        # LoMa's ONNX Runtime provider: "auto" (CUDA where it runs, else the CPU), "cpu" or "cuda"
 
-[domain]                                           # the pixels a measurement may use (fit and seam score)
+[domain]                                           # the pixels an observation may use (fit and seam score)
 rim_margin_px = 120.0                              # the circle's soft edge (the falloff from ρ ≈ 1520 px to the 1680 px midpoint)
 fov_deg = 89.0                                     # rays within 89° of the optical axis
 plane = 2                                          # the GREEN plane (the quad's two greens, at the quad centre)
@@ -86,11 +86,11 @@ vignetting_penalty_weight = 1.0e-6                 # the weak Δ² on V's contro
 # indoor light or the exposure drifted by up to 6.7 %); with them the seam spread fell from 1.4826·MAD 0.1066 (rms 0.4042) to
 # 0.1021 (rms 0.3998) and the residual MAD from 0.168 to 0.164, and V moved by under 1 % at ρ = 200 … 1400 px (summary.md).
 gain_correction = "channel"                        # "none", "intensity" (one gain per frame, every plane) or "channel" (per frame and colour plane)
-measurement_noise = "intensity"                    # "intensity" (noise in the value: weight I², one solve) or "intensity_and_position"
+observation_noise = "intensity"                    # "intensity" (noise in the value: weight I², one solve) or "intensity_and_position"
                                                    # (the value and the sensor position: the sensor point's σ the registration bundle's
                                                    # core scale, loss width / scale multiple); the weights are the whitening by it
 log_intensity_scale = 0.01                         # intensity_and_position: σ of log I (a constant floor)
-measurement_noise_iterations = 1                   # intensity_and_position: its reweight-and-solve cycles after the I² solve (2: G_x re-evaluated once more)
+observation_noise_iterations = 1                   # intensity_and_position: its reweight-and-solve cycles after the I² solve (2: G_x re-evaluated once more)
 solver = "cg"                                    # "cg" (ConjugateGradient on the device) or "cholesky" (SparseCholesky, host)
 cg_tolerance = 1.0e-9                              # the CG's relative residual
 cg_max_iter = 40000                                # the CG's budget

@@ -78,7 +78,7 @@ Base.eltype(::_Observation) = Float64
 end
 
 # An observation's pixel and whitening: a bare pixel has none; an `Uncertain` pixel's is Core's `whitening_factor` of the
-# residual π − x (its measurement Jacobian −I, so L⁻¹ of the covariance Σ = LLᵀ), refused unless Σ is finite and positive
+# residual π − x (its observation Jacobian −I, so L⁻¹ of the covariance Σ = LLᵀ), refused unless Σ is finite and positive
 # definite (Core's factor is NaN or zero then).
 _observed_pixel(x) = x
 _observed_pixel(x::VgtkCore.Uncertain) = VgtkCore.geom(x)
@@ -522,7 +522,7 @@ _with_camera_model(::VgtkCore.CameraModel, m) = m
 
 # The autocalibration's information at the result (`RotationBundleMetadata`'s `calibration`): every kept observation's
 # Jacobian rows (its loss's IRLS weight at the result folded in, √w) over the free frames, its track's direction and the camera
-# chart — the gauge frame and the held frames left out — grouped by frame, each group's measurement Jacobian −I (the rows are
+# chart — the gauge frame and the held frames left out — grouped by frame, each group's observation Jacobian −I (the rows are
 # already whitened); their covariance is Core's `implicit_covariance` (the Gauss–Newton (AᵀA)⁻¹ of every unknown, the directions
 # included: their marginal is the Schur complement's), times s² = Σ wᵢ‖rᵢ‖² / ν; the camera block mapped from the chart to the
 # parameters. The gauge-fixed reduced information is the inverse of the frames' and the camera's marginal; each kept direction's

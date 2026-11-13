@@ -70,7 +70,7 @@ Under `$VGTK_DATA_ROOT`:
    pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (the frames' map onto the
    camera's pixels is VisualGeometryToolkitCore's `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
    centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Decoding is done once and cached (below).
-2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT keypoints (none within three scales of a saturated
+2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (`find_rotation`, the
    Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), cached in
@@ -91,11 +91,11 @@ Under `$VGTK_DATA_ROOT`:
    back-projection, and the scene is a B-spline on the sphere (an azimuthal-equidistant chart, 1° controls, a Δ³ smoothness
    penalty) fitted together with V. log V is a cubic B-spline, RADIAL in the distance from a centre or a 2-D TENSOR spline
    over the sensor (VisualGeometryToolkitCore's `LogVignetting`). The model is linear in log L, log V and the log gains: one
-   linear least squares, each row the constraint of its measurement — sensor point and log I — weighted by its whitening by
-   the measurement noise `vignetting.measurement_noise` chooses: `"intensity"` (noise in the value only: weight I²) or
+   linear least squares, each row the constraint of its observation — sensor point and log I — weighted by its whitening by
+   the observation noise `vignetting.observation_noise` chooses: `"intensity"` (noise in the value only: weight I²) or
    `"intensity_and_position"` (the value and the sensor position, the sensor point's σ the registration bundle's core scale,
    loss width over its efficiency constant, recorded in the registration record (`registration_<key>.jld2`); `log_intensity_scale` the σ of log I;
-   `measurement_noise_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
+   `observation_noise_iterations` its reweight-and-solve cycles after the I² solve). Its normal equations are accumulated on the GPU, and it is
    solved by conjugate gradients there. V's scale is not observable (L can take any factor), so V is reported with mean
    log V = 0 over the domain — no special point is pinned.
    *The frames' exposure gains* (`vignetting.gain_correction`, required: `"none"`, `"intensity"` or `"channel"`): with
@@ -118,7 +118,7 @@ Under `$VGTK_DATA_ROOT`:
    frames: the median over the other frames of `log(I_k/V_k) − log(I_last/V_last)`, the frame shown last being the one the
    unblended render keeps. With the right V only noise, misregistration and parallax remain. Its rms and robust spread
    (1.4826·MAD) are reported for no correction and for the fitted V. **Saturated pixels are excluded** (a clipped value is
-   no measurement). `seams_*.png` map it: red where the other frames are brighter than the shown one, blue darker (±0.3 in
+   no observation). `seams_*.png` map it: red where the other frames are brighter than the shown one, blue darker (±0.3 in
    log), grey where fewer than two frames measure the pixel.
 5. **Render** (`render_panorama`). Cylindrical, cylindrical equal-area and a rectilinear virtual camera, each corrected
    (divided by V) and uncorrected, unblended (the last frame that sees a pixel wins, so a wrong V shows as a step at every
@@ -132,7 +132,7 @@ Under `$VGTK_DATA_ROOT`:
 
 `arms.toml` is the comparison of record of `fit_vignetting`'s settings: twelve arms, V `"free"` (self-calibration) or
 `"fixed"` (held at the V of record, the `fixed_from` arm's fit, `selfcal_shared_gain_value`: one gain per frame and I²
-weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `measurement_noise` (`"intensity"`,
+weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `observation_noise` (`"intensity"`,
 `"intensity_and_position"`), each on both sets (`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode,
 registration, domain, radial model and solver). An arm's name is its own label (`selfcal` or `given_v`; `no_gain`,
 `shared_gain` or `plane_gain`; `value` or `value_point`), not its tags.
@@ -149,7 +149,7 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 | file | content |
 |---|---|
 | `decoded/linear_raws.jld2` | the decoded frames: VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content and decode settings |
-| `verified_pairs_<key>.jld2` | the verified pairs (the frames' keypoints and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
+| `verified_pairs_<key>.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
 | `registration_<key>.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting |
 | `run-<run key>/` | the run's outputs below, keyed by the whole config, with Eval's run records (`write_run_records`: the config of record, the key, the driver, the inputs read) |
 | `vignetting.json`, `vignetting_profile.csv`, `vignetting_map.csv`, `vignetting_map.png` | the fitted V of record: its spline space and log-V coefficients; V(ρ) every 4 px (radial); V on the sensor every 32 px; V as an image (normalized to its maximum) |

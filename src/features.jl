@@ -1,8 +1,8 @@
 # =============================================================================
-# Features: per frame, the keypoints and their descriptions; per frame pair, the matches
+# Features: per frame, the detections and their descriptions; per frame pair, the matches
 # =============================================================================
 #
-# VisualGeometryToolkitFeatures' ASIFT keypoints (affine frames with their covariances) on
+# VisualGeometryToolkitFeatures' ASIFT detections (affine frames with their covariances) on
 # the tone-mapped or the variance-stabilized green inside the camera's imaged region, about N of the strongest spread over the
 # frame (VisualGeometryToolkitFeatures' `spread_strongest`, SSC), described by DeDoDe at them (`LoMaDescriptor`, which resamples
 # the frame to its network's fixed input), and matched by the LoMa matcher (`LoMaMatcher`, LightGlue architecture).
@@ -80,10 +80,10 @@ descriptor resamples the image to its network's input).
 
 The result is the descriptor's own: VisualGeometryToolkitFeatures' described
 features (`StructArray{DescribedFeature}`), each a `Detection` in the frame's
-pixels (the detector's default: no keypoint covariance) and its DeDoDe description —
+pixels (the detector's default: no detection covariance) and its DeDoDe description —
 the one feature store, in Features' canonical order of the detections (a function of
 the image: the same run to run, on any number of threads). `frame_map` takes a
-keypoint's centre to the camera's pixels ([`pair_bearings`](@ref), the bundle of
+detection's centre to the camera's pixels ([`pair_bearings`](@ref), the bundle of
 [`register_rotations`](@ref)).
 """
 function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; frame_map,
@@ -112,21 +112,21 @@ end
     pair_bearings(camera, fa, fb, matches; frame_map) -> (cs, kept)
 
 The `matches` of two frames' described features `fa`, `fb` ([`detect_features`](@ref))
-as unit-bearing correspondences: VisualGeometryToolkitFeatures' `csponds` of the
-matched features (their `:score` column kept), each keypoint's centre taken to the
+as unit-bearing correspondences: VisualGeometryToolkitFeatures' `correspondences` of the
+matched features (their `:score` column kept), each detection's centre taken to the
 camera's pixels by the frames' `frame_map` and back-projected with its Jacobian as the
-`M₁`/`M₂` columns (VisualGeometryToolkitCore's `bearing_csponds` through the calibrated
+`M₁`/`M₂` columns (VisualGeometryToolkitCore's `bearing_correspondences` through the calibrated
 `camera`: the whole field, past 90°), plain points, so the pair's residuals are in
-camera pixels; and the keypoint index pairs kept (a pixel the camera cannot
+camera pixels; and the detection index pairs kept (a pixel the camera cannot
 back-project is dropped).
 """
 function pair_bearings(camera, fa, fb, matches; frame_map)
-    ms = VgtkCore.csponds(fa, fb, matches)          # Features' method of Core's csponds: the matched features and their score
-    # each keypoint's centre in the camera's pixels, through the frame map
+    ms = VgtkCore.correspondences(fa, fb, matches)          # Features' method of Core's correspondences: the matched features and their score
+    # each detection's centre in the camera's pixels, through the frame map
     ua = [frame_map(SVector{2, Float64}(f.center[1], f.center[2])) for f in VgtkCore.sources(ms)]
     ub = [frame_map(SVector{2, Float64}(f.center[1], f.center[2])) for f in VgtkCore.targets(ms)]
     cm = VgtkCore.model(camera)                       # the back-projection and its Jacobian are the model's
-    bs = VgtkCore.bearing_csponds(cm, cm, ua .=> ub)  # Core's: the bearings and their M₁/M₂
+    bs = VgtkCore.bearing_correspondences(cm, cm, ua .=> ub)  # Core's: the bearings and their M₁/M₂
     f1 = VgtkCore.sources(bs); f2 = VgtkCore.targets(bs)
     keep = [i for i in eachindex(ua) if all(isfinite, f1[i]) && all(isfinite, f2[i]) && all(isfinite, bs.M₁[i]) && all(isfinite, bs.M₂[i])]
     cs = VgtkCore.withattrs(bs[keep]; score = ms.score[keep])

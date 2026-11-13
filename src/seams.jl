@@ -11,7 +11,7 @@ function _check_gains(f, gains, K, C)
     return nothing
 end
 
-# Whether frame k holds a measurement of direction i: seen (the masks, saturation included) with a positive value and
+# Whether frame k holds an observation of direction i: seen (the masks, saturation included) with a positive value and
 # vignetting.
 @inline _measured(vals, vig, seen, i, k) = seen[i, k] && vals[i, k] > 0 && vig[i, k] > 0
 
@@ -65,7 +65,7 @@ How well `vignetting` makes the frames agree where they overlap, at every
 pixel of the panorama raster `view` ([`panorama_view`](@ref)): the pixel's ray
 is sampled in every frame ([`sample_frames`](@ref): the exact sub-pixel sensor
 point, the frame's bilinear value of `plane`, the vignetting there, the masks —
-saturated pixels EXCLUDED, a clipped value is no measurement) and, where at
+saturated pixels EXCLUDED, a clipped value is no observation) and, where at
 least two frames measure it, `ratio` is the median over the other frames of
 `log(I_k/V_k) − log(I_last/V_last)`, `last` the frame the unblended
 [`render_panorama`](@ref) shows (the highest index). A correct V leaves only

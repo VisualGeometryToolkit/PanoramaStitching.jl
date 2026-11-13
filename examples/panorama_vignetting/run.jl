@@ -35,12 +35,15 @@ const CT = PNGFiles.ColorTypes
 # Every input path is relative to the data root: VisualGeometryToolkitEval.Experiments' `data_root` ($VGTK_DATA_ROOT, README "Inputs").
 input_path(rel) = joinpath(VgtkEval.Experiments.data_root(), rel)
 
-# The vignetting keys of earlier releases (PanoramaStitching 0.4 renamed them): a table that holds one is refused by name, never
-# read as the new setting.
-const RENAMED_KEYS = ("weights" => "measurement_noise", "sampson_iterations" => "measurement_noise_iterations")
+# The vignetting keys of earlier releases (PanoramaStitching 0.4 renamed the weights, 0.7 the noise: an observation's, the
+# terminology's word): a table that holds one is refused by name, never read as the new setting. The 0.4–0.6 key is spelled in
+# fragments (check_naming retires its word from every identifier).
+const RENAMED_KEYS = ("weights" => ("observation_noise", "0.4"), "sampson_iterations" => ("observation_noise_iterations", "0.4"),
+                      "measure" * "ment_noise" => ("observation_noise", "0.7"),
+                      "measure" * "ment_noise_iterations" => ("observation_noise_iterations", "0.7"))
 function refuse_renamed_keys(table, where)
-    for (old, new) in RENAMED_KEYS
-        haskey(table, old) && throw(ArgumentError("$where: the key $old was renamed to $new (PanoramaStitching 0.4; its tags too: " *
+    for (old, (new, version)) in RENAMED_KEYS
+        haskey(table, old) && throw(ArgumentError("$where: the key $old was renamed to $new (PanoramaStitching $version: " *
                                                   "see CHANGELOG.md)"))
     end
     return table
@@ -65,7 +68,7 @@ const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM 
                                    "averaging_loss" => "the averaging's strategy is the table averaging_optimization_strategy",
                                    "local_optimization" => "the pairs' RANSAC strategy table is local_optimization_strategy",
                                    "bundle_camera_free" => "the bundle holds the camera's calibration",
-                                   "bundle_" * "whitening" => "the bundle's observations are the keypoints' pixels (no keypoint covariance in this release)",
+                                   "bundle_" * "whitening" => "the bundle's observations are the detections' pixels (no detection covariance in this release)",
                                    "scoring_threshold" * "_px" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (no threshold)",
                                    "scoring_threshold" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (the MSAC threshold " *
                                    "is retired)")
@@ -355,7 +358,7 @@ function registration(C, inp, lens; log)
                           "bundle_loss_width" => reg.bundle.metadata.loss_width,
                           "bundle_optimization_strategy" => VgtkEstimation.config_dict(bundle_strategy(r)),
                           "bundle_scale" => VgtkCore.noise_scale(reg.bundle),
-                          # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the keypoints' covariances) and the LM
+                          # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the detections' covariances) and the LM
                           # iterations its one run took
                           "bundle_sigma" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.iterations,
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
@@ -437,15 +440,15 @@ function vignetting_space(kind, C, lens, W, H)
     error("vignetting model \"$kind\" is not \"radial\" or \"tensor_product\" (log V is the spline of one)")
 end
 
-# The fit's measurement noise of the config: in the value only, or in the value and the sensor position with the sensor point's σ
+# The fit's observation noise of the config: in the value only, or in the value and the sensor position with the sensor point's σ
 # `point_scale_px` (camera pixels).
-function fit_measurement_noise(v, point_scale_px)
-    N = PanoramaStitching.MEASUREMENT_NOISES[v["measurement_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
+function fit_observation_noise(v, point_scale_px)
+    N = PanoramaStitching.OBSERVATION_NOISES[v["observation_noise"]]      # "intensity" or "intensity_and_position" (an ArgumentError otherwise)
     N === IntensityNoise && return IntensityNoise()
-    point_scale_px === nothing && error("vignetting.measurement_noise = \"intensity_and_position\" is refused in this release: it awaits " *
+    point_scale_px === nothing && error("vignetting.observation_noise = \"intensity_and_position\" is refused in this release: it awaits " *
                                         "each pixel's position noise from the frames' rotation covariance (after the release)")
     return IntensityAndPositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), log_intensity_scale = v["log_intensity_scale"],
-                                     iterations = v["measurement_noise_iterations"])
+                                     iterations = v["observation_noise_iterations"])
 end
 
 # One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
@@ -463,7 +466,7 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
                           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_maps = dev.plane_maps,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
-                          measurement_noise = fit_measurement_noise(v, point_scale_px))
+                          observation_noise = fit_observation_noise(v, point_scale_px))
 end
 # The frames' exposure gains of a fit (K × 3), for the seam score and the renders: its metadata's when it fitted them, else none.
 fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] == "none" ? nothing : res.metadata.gains
@@ -583,7 +586,7 @@ function run_example(config_path)
     m = res.metadata
     say(log, "fit_vignetting ($kind): $(res.retcode), $(res.iterations) iterations, weighted rms $(round(res.rms; digits = 4)), " *
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
-    say(log, "  measurement noise $(m.measurement_noise) (the model's log I moved by $(m.log_change) in the last solve); " *
+    say(log, "  observation noise $(m.observation_noise) (the model's log I moved by $(m.log_change) in the last solve); " *
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
@@ -656,7 +659,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated quads (all frames): $(sum(count, inp.saturated)).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
-               "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the keypoints' covariances)"
+               "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the detections' covariances)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *
                     "covariance, not averaged$(isempty(reg.pairs_no_covariance) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_no_covariance], ", "))" *
                     "; $(length(reg.pairs_removed)) removed by the view-graph filters" *

@@ -9,7 +9,7 @@ averaging, the tracks and the rotation and direction bundle), the frames sampled
 (KernelAbstractions: GPU arrays or the host, one code path; no per-pixel or per-direction host loops), and the camera's
 vignetting from the frames alone (`fit_vignetting`, interpolation free: every pixel at its centre, the scene a spline on the
 sphere fitted with V) with the seams it leaves (`score_seams`). A package of the VisualGeometryToolkit stack; its only
-radiometry is that vignetting fit. Saturation masks measurements (`sample_frames`, `fit_vignetting`, `score_seams`), never a
+radiometry is that vignetting fit. Saturation masks observations (`sample_frames`, `fit_vignetting`, `score_seams`), never a
 render.
 
 ## Commands
@@ -26,7 +26,7 @@ from the registries (CauRegistry; General for those it holds).
 
 ## Layout
 
-- `src/features.jl` — per frame ASIFT keypoints and DeDoDe descriptions, per pair the LoMa matches as bearings with their
+- `src/features.jl` — per frame ASIFT detections and DeDoDe descriptions, per pair the LoMa matches as bearings with their
   back-projection Jacobians.
 - `src/registration.jl` — `register_rotations` and its `Registration`.
 - `src/tracks.jl` — `chain_tracks` (the components of the match graph, VisualGeometryToolkitEstimation's `ViewGraph`). The view
@@ -61,5 +61,5 @@ before changing code here; this file carries no copy. Where the folder is:
 
 How they land here: `register_rotations` is a task verb on images (it composes the estimators — `find_rotation`,
 `fit_rotation_averaging`, `refine_rotations` — and does no estimation of its own); every residual is in the camera's pixels
-(bearings carry their back-projection Jacobians), whitened by the keypoints' covariances (the detector's, Features'
+(bearings carry their back-projection Jacobians), whitened by the detections' covariances (the detector's, Features'
 described features the one feature store); the common frame is the first frame's camera frame.
