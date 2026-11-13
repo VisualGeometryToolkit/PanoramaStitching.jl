@@ -35,7 +35,7 @@ asift_tilts = "untilted"                           # Features' tilt_schedule ("u
 max_detections = 2048
 selection = "spread"                               # Features' spread_strongest (SSC): about max_detections spread over the frame
 detection_image = "tone"                           # "tone" (sqrt(G / p), tone_percentile) or "vst" (the RAW's variance-stabilized green; then
-                                                   # electrons_per_dn, read_noise_dn and noise_sigmas, the sensor's noise at the ISO and the threshold)
+                                                   # noise_sigmas, the threshold, and sensor_noise_record, the body's vgio/sensor_noise file or "none")
 descriptor = "b"
 matcher = "b128"
 min_score = 0.0

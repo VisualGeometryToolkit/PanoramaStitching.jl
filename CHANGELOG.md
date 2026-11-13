@@ -30,6 +30,13 @@ model entity an **observation** (Core's `conventions/naming.md`).
   and the test environment require VisualGeometryToolkitIO "0.10"; `save_panorama` and `load_panorama` keep their
   signatures, and the example names PanoramaStitching as the file's generator (`VgtkIO.with_caller`). V stays inside the
   panorama file (its `vignetting` is the `vgio/vignetting` body): no separate vignetting file.
+- The detector's noise is the frame's resolved sensor noise (VisualGeometryToolkitCore's `SensorNoise`, its ONE resolver
+  `sensor_noise`): `detect_features(...; detection_image = :vst, noise::SensorNoise, noise_sigmas)`, and
+  `verify_pairs` / `register_rotations(...; noise, noise_sigmas)` with one `SensorNoise` per frame (Features'
+  `variance_stabilize(L, noise)`). The 0.6 keyword `detection_noise = (; electrons_per_dn, read_noise, noise_sigmas)` is
+  refused naming them; with `:tone` neither is given. The example resolves each frame's noise (`frame_noise`: the RAW files'
+  capture settings, the body's `[registration] sensor_noise_record` — a `vgio/sensor_noise` file or `"none"` — and Core's
+  `sensor_noise`), decodes the LinearRaw with it, and refuses the 0.6 keys `electrons_per_dn` and `read_noise_dn` by name.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation", the example's cache formats
   and their version history included (owner, 2026-11-13): its verified-pairs record is format v11, so 0.6 caches are
   recomputed, not reused.

@@ -12,20 +12,29 @@
 const SELECTIONS = (:spread,)
 const DETECTION_IMAGES = (:tone, :vst)
 
-# The detector's settings, checked before any feature is detected: `detection_noise` is
-# `(; electrons_per_dn, read_noise, noise_sigmas)` with `detection_image = :vst` and `nothing` (read by nothing) with `:tone`.
-function _check_detector_settings(what, selection, detection_image, detection_noise)
+# The detector's settings, checked before any feature is detected: with `detection_image = :vst` the frames' resolved sensor
+# noise `noise` (VisualGeometryToolkitCore's `SensorNoise`, its `sensor_noise`; one per frame, `nframes` of them, or the one
+# frame's) and the threshold `noise_sigmas`; with `:tone` neither is read, so neither is given (no inert setting).
+function _check_detector_settings(what, selection, detection_image, noise, noise_sigmas; nframes = nothing)
     selection in SELECTIONS || throw(ArgumentError("$what: selection = :$selection is not :spread (Features' spread_strongest, SSC)"))
     detection_image in DETECTION_IMAGES || throw(ArgumentError("$what: detection_image = :$detection_image is not :tone or :vst"))
     if detection_image === :vst
-        detection_noise isa NamedTuple && all(k -> haskey(detection_noise, k), (:electrons_per_dn, :read_noise, :noise_sigmas)) ||
-            throw(ArgumentError("$what: detection_image = :vst needs detection_noise = (; electrons_per_dn, read_noise, noise_sigmas), got $detection_noise"))
+        noise === nothing && throw(ArgumentError("$what: detection_image = :vst needs the frames' resolved sensor noise, `noise` " *
+                                                 "(VisualGeometryToolkitCore's SensorNoise from sensor_noise$(nframes === nothing ? "" : ", one per frame"))"))
+        nframes === nothing || length(noise) == nframes ||
+            throw(DimensionMismatch("$what: $nframes frames and $(length(noise)) sensor noises"))
+        (noise_sigmas isa Real && isfinite(noise_sigmas) && noise_sigmas > 0) ||
+            throw(ArgumentError("$what: detection_image = :vst needs noise_sigmas, the threshold in noise σ (positive), got $noise_sigmas"))
     else
-        detection_noise === nothing ||
-            throw(ArgumentError("$what: detection_noise is read only by detection_image = :vst, not :$detection_image; leave it nothing"))
+        (noise === nothing && noise_sigmas === nothing) ||
+            throw(ArgumentError("$what: noise and noise_sigmas are read only by detection_image = :vst, not :$detection_image; leave them out"))
     end
     return nothing
 end
+
+# The detector's keyword of 0.6 (`(; electrons_per_dn, read_noise, noise_sigmas)`), refused naming its successors.
+const _RETIRED_DETECTION_NOISE = "the frames' resolved sensor noise is `noise` (VisualGeometryToolkitCore's SensorNoise, its " *
+                                 "sensor_noise: a record or the frame's own estimate) and the threshold `noise_sigmas`"
 
 # A frame's linear `H × W × 3` image: the frame itself, or a VisualGeometryToolkitCore `LinearRaw`'s (`:bin2`) image.
 _frame_image(frame::AbstractArray{<:Real, 3}) = frame
@@ -40,17 +49,16 @@ _clip_mask(frame, ::Nothing) = nothing
 # ASIFT on the detection image: the tone-mapped green (`toned`'s plane 2) at Features' default contrast threshold, or the
 # variance-stabilized green cells of a `LinearRaw` (Features' `variance_stabilize`, whose saturation Features masks) at
 # `noise_sigmas` noise σ; no detection reads a clipped pixel (Features' `exclusion_mask`: within three scales of one, dropped).
-_asift(frame, toned, ::Val{:tone}, noise, tilts, mask) =
+_asift(frame, toned, ::Val{:tone}, noise, noise_sigmas, tilts, mask) =
     VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, exclusion_mask = mask)
-_asift(frame::VgtkCore.LinearRaw, toned, ::Val{:vst}, noise, tilts, mask) =
-    VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame; noise.electrons_per_dn, noise.read_noise);
-                              noise.noise_sigmas, tilts, exclusion_mask = mask)
-_asift(frame, toned, ::Val{:vst}, noise, tilts, mask) =
+_asift(frame::VgtkCore.LinearRaw, toned, ::Val{:vst}, noise::VgtkCore.SensorNoise, noise_sigmas, tilts, mask) =
+    VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame, noise); noise_sigmas, tilts, exclusion_mask = mask)
+_asift(frame, toned, ::Val{:vst}, noise, noise_sigmas, tilts, mask) =
     throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
 
 """
     detect_features(camera::BoundedCamera, frame, descriptor; frame_map, tone_percentile, detector_margin_px, asift_tilts,
-                    max_detections, selection = :spread, detection_image = :tone, detection_noise = nothing,
+                    max_detections, selection = :spread, detection_image = :tone, noise = nothing, noise_sigmas = nothing,
                     saturated = nothing) -> StructArray{DescribedFeature}
 
 The features of one frame (`H × W × 3` linear, or a VisualGeometryToolkitCore
@@ -65,10 +73,13 @@ descriptor resamples the image to its network's input).
 - ASIFT (`asift_tilts`: a VisualGeometryToolkitFeatures `tilt_schedule` name,
   `:imas25` or `:untilted`, or its `(t, φ)` pairs) on the `detection_image`: `:tone`, that tone's green at Features'
   default contrast threshold; `:vst`, the frame's variance-stabilized green cells
-  (Features' `variance_stabilize`, noise σ = 1 at every level; the frame must be
-  its `LinearRaw`) at `detection_noise.noise_sigmas` noise σ, `detection_noise =
-  (; electrons_per_dn, read_noise, noise_sigmas)` the sensor's conversion gain and
-  read noise (raw codes) at the frame's ISO.
+  (Features' `variance_stabilize(frame, noise)`, noise σ = 1 at every level; the frame must be
+  its `LinearRaw`, best decoded with the same noise, `LinearRaw(mosaic; mode, noise)`) at
+  `noise_sigmas` noise σ, `noise` the frame's resolved sensor noise (VisualGeometryToolkitCore's
+  `SensorNoise`, from its `sensor_noise`: a record of the body at the frame's ISO, or the frame's
+  own photon-transfer estimate; a noise the resolver could not give is refused naming its
+  reason). With `:tone` neither `noise` nor `noise_sigmas` is given; the 0.6 keyword
+  `detection_noise` is refused naming them.
 - No detection within three of its scales of a clipped pixel (Features'
   detection `exclusion_mask`): `saturated`, the frame's `H × W` saturation mask (a
   `LinearRaw`'s own by default; `nothing` for an array frame: none).
@@ -88,9 +99,14 @@ detection's centre to the camera's pixels ([`pair_bearings`](@ref), the bundle o
 """
 function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; frame_map,
                          tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
-                         selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
-                         saturated::Union{Nothing, AbstractMatrix{Bool}} = nothing)
-    _check_detector_settings("detect_features", selection, detection_image, detection_noise)
+                         selection::Symbol = :spread, detection_image::Symbol = :tone,
+                         noise::Union{Nothing, VgtkCore.SensorNoise} = nothing, noise_sigmas::Union{Nothing, Real} = nothing,
+                         saturated::Union{Nothing, AbstractMatrix{Bool}} = nothing, retired...)
+    for k in keys(retired)
+        k === :detection_noise && throw(ArgumentError("detect_features: the keyword `detection_noise` is retired: $(_RETIRED_DETECTION_NOISE)"))
+        throw(ArgumentError("detect_features: unknown keyword `$k`"))
+    end
+    _check_detector_settings("detect_features", selection, detection_image, noise, noise_sigmas)
     img = _frame_image(frame)
     Hf, Wf = size(img, 1), size(img, 2)
     region = VgtkCore.imaged_region(camera)
@@ -99,7 +115,7 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
     toned = sqrt.(clamp.(Float64.(img) ./ p, 0, 1))
     # the detections in Features' canonical order (a function of the image), so the kept set, its order and every
     # index-sampled RANSAC downstream are the same run to run
-    dets = _asift(frame, toned, Val(detection_image), detection_noise, asift_tilts, _clip_mask(frame, saturated))
+    dets = _asift(frame, toned, Val(detection_image), noise, noise_sigmas, asift_tilts, _clip_mask(frame, saturated))
     kept = _imaged_less_rim(camera, detector_margin_px)
     at(d) = frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(d))))         # a detection's centre in the camera's pixels
     dets = filter(d -> VgtkCore.Point2(at(d)...) ∈ kept, dets)

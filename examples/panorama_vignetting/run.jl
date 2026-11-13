@@ -60,7 +60,9 @@ function refuse_circle(inputs, where)
 end
 
 # The [registration] keys retired (PanoramaStitching 0.6): refused by name, never read.
-const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM run of its bundle_optimization_strategy at the verified pairs' " *
+const RETIRED_REGISTRATION_KEYS = ("electrons_per_dn" => "the frames' noise is VisualGeometryToolkitCore's sensor_noise of the body's record (sensor_noise_record) or of the frame",
+                                   "read_noise_dn" => "the frames' noise is VisualGeometryToolkitCore's sensor_noise of the body's record (sensor_noise_record) or of the frame",
+                                   "bundle_iterations" => "the bundle is ONE LM run of its bundle_optimization_strategy at the verified pairs' " *
                                    "pooled RANSAC noise scale (register_rotations); remove the key",
                                    "bundle_scale_multiple" => "the bundle's strategy is the table bundle_optimization_strategy",
                                    "bundle_efficiency_constant" => "the bundle's strategy is the table bundle_optimization_strategy (its efficiency_constant)",
@@ -247,7 +249,13 @@ function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
 end
-pairs_stage_settings(C, inp, provider::Symbol) = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
+# The body's noise record keys the pairs by its content (its artifacts' SHA-256s are in it), not its path.
+function pairs_stage_settings(C, inp, provider::Symbol)
+    st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
+    record = get(C.cfg["registration"], "sensor_noise_record", "none")
+    record == "none" || (st["sensor_noise_record_sha256"] = open(VgtkCore.sha256_hex, input_path(record)))
+    return st
+end
 
 # The verified pairs as a record and back (frame indices 1-based; a matrix row by row): the features are the pairs' own,
 # Features' described features (`StructArray{DescribedFeature}`, the detections with their covariances and descriptions), held
@@ -286,24 +294,35 @@ asift_tilts(t::AbstractString) = Symbol(t)
 asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 
 # The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst") and, with
-# "vst" only, the sensor's noise at the frames' ISO (`electrons_per_dn`, `read_noise_dn`) and the threshold `noise_sigmas`: a noise
-# key with "tone" is refused, never read.
-const DETECTION_NOISE_KEYS = ("electrons_per_dn", "read_noise_dn", "noise_sigmas")
+# "vst" only, the threshold `noise_sigmas` and `sensor_noise_record`, the body's measured noise (a vgio/sensor_noise file under the
+# data root, or "none": no record, each frame's noise its own photon-transfer estimate; stated either way, never defaulted). The
+# frames' noise is VisualGeometryToolkitCore's resolver's (`frame_noise`). A noise key with "tone" is refused, never read; the
+# 0.6 constants `electrons_per_dn` and `read_noise_dn` are refused by name (RETIRED_REGISTRATION_KEYS).
+const DETECTION_NOISE_KEYS = ("noise_sigmas", "sensor_noise_record")
 function detector_settings(r)
     if r["detection_image"] == "vst"
-        noise = (; electrons_per_dn = Float64(r["electrons_per_dn"]), read_noise = Float64(r["read_noise_dn"]), noise_sigmas = Float64(r["noise_sigmas"]))
+        noise_sigmas = Float64(r["noise_sigmas"]); record = String(r["sensor_noise_record"])
     else
         inert = filter(k -> haskey(r, k), DETECTION_NOISE_KEYS)
         isempty(inert) || throw(ArgumentError("[registration] $(join(inert, ", ")): read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
-        noise = nothing
+        noise_sigmas = record = nothing
     end
-    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), detection_noise = noise)
+    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, record)
 end
 
-# The frames as VisualGeometryToolkitCore's LinearRaw (Features' load_raw at the decode settings, the one RAW path): detection_image = "vst"
-# reads their green cells' code spans, which the decode cache does not keep.
-linear_raws(C, inp) = [VgtkFeatures.load_raw(joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n); mode = Symbol(C.cfg["decode"]["mode"]),
-                                             gain = Float64(C.cfg["decode"]["gain"])) for n in inp.names]
+# The frames' resolved sensor noise and their LinearRaws decoded with it (the one black subtraction, Core's `LinearRaw`):
+# per frame VisualGeometryToolkitCore's `sensor_noise` (the ONE resolver) of the capture's settings (Features'
+# `extract_capture_settings`, the RAW files' EXIF) and the body's record (`sensor_noise_record`, read by IO's `load`, or none).
+function frame_noise(C, inp, record::AbstractString)
+    dir = input_path(C.cfg["inputs"]["raw_dir"])
+    mosaics = Dict(k => VgtkFeatures.load_raw_mosaic(joinpath(dir, n)) for (k, n) in enumerate(inp.names))
+    capture = VgtkFeatures.extract_capture_settings(mosaics)
+    rec = record == "none" ? nothing : VgtkIO.load(VgtkCore.SensorNoise, input_path(record))
+    noise = [VgtkCore.sensor_noise(capture, k => mosaics[k]; record = rec) for k in eachindex(inp.names)]
+    frames = [VgtkFeatures.load_raw(mosaics[k]; mode = Symbol(C.cfg["decode"]["mode"]), gain = Float64(C.cfg["decode"]["gain"]), noise = noise[k])
+              for k in eachindex(inp.names)]
+    return frames, noise
+end
 
 # The pairs' RANSAC local optimization, `[registration] local_optimization_strategy`: an Estimation strategy table
 # (`{ type = "triggs", loss = "welsch", efficiency_constant = 2.5 }`, `{ type = "irls", loss = "tls" }`), read by Estimation's own
@@ -318,10 +337,10 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
     rec, _ = staged_record("verified_pairs", C, pairs_stage_settings(C, inp, provider); log, what = "verified pairs") do
         t0 = time()
         det = detector_settings(r)
-        frames = det.detection_image === :vst ? linear_raws(C, inp) : inp.frames
+        frames, noise = det.detection_image === :vst ? frame_noise(C, inp, det.record) : (inp.frames, nothing)
         vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
-                          max_detections = r["max_detections"], det..., descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
+                          max_detections = r["max_detections"], det.selection, det.detection_image, noise, det.noise_sigmas, descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = get(r, "max_lag", nothing), overlap_deg = get(r, "overlap_deg", nothing),
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, Float64(r["outlier_halfwidth_px"]);

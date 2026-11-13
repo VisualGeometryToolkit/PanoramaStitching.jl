@@ -98,7 +98,7 @@ VerifiedPairs(features::Vector{F}, verified::AbstractDict, args...) where {F} =
 
 """
     verify_pairs(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                 selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag = nothing, overlap_deg = nothing, min_inliers, seed,
+                 selection = :spread, detection_image = :tone, noise = nothing, noise_sigmas = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag = nothing, overlap_deg = nothing, min_inliers, seed,
                  scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials, averaging_optimization_strategy = <Estimation's>,
                  execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
@@ -116,7 +116,8 @@ are an `ArgumentError` before any feature is detected.
 """
 function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; frame_map,
                       tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
-                      selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
+                      selection::Symbol = :spread, detection_image::Symbol = :tone,
+                      noise::Union{Nothing, AbstractVector{<:VgtkCore.SensorNoise}} = nothing, noise_sigmas::Union{Nothing, Real} = nothing,
                       saturated::Union{Nothing, AbstractVector} = nothing, descriptor::Symbol, matcher::Symbol,
                       min_score::Real, pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing,
                       overlap_deg::Union{Nothing, Real} = nothing, min_inliers::Integer, seed::Integer,
@@ -127,7 +128,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
     pairs === :all && !(averaging_optimization_strategy isa _NotGiven) &&
         throw(ArgumentError("verify_pairs: averaging_optimization_strategy is read only by pairs = :lag_overlap (its averaging aims " *
                             "the pairs past the lag); leave it out with pairs = :all"))
-    _check_frames("verify_pairs", frames, selection, detection_image, detection_noise)
+    _check_frames("verify_pairs", frames, selection, detection_image, noise, noise_sigmas)
     saturated === nothing || length(saturated) == length(frames) ||
         throw(DimensionMismatch("verify_pairs: $(length(frames)) frames and $(length(saturated)) saturation masks"))
     # resolved once (one warning on a fallback to the CPU), refusing an unknown provider, before any feature is detected
@@ -138,7 +139,8 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
     match = VgtkFeatures.LoMaMatcher(matcher; execution_provider = provider)
     feats = map(1:K) do k
         f = detect_features(camera, frames[k], desc; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                            selection, detection_image, detection_noise, saturated = saturated === nothing ? nothing : saturated[k])
+                            selection, detection_image, noise = noise === nothing ? nothing : noise[k], noise_sigmas,
+                            saturated = saturated === nothing ? nothing : saturated[k])
         say("  frame $(k - 1): $(length(f)) detections kept")
         f
     end
@@ -198,8 +200,8 @@ function _check_pair_settings(what, pairs, max_lag, overlap_deg)
     return nothing
 end
 # The detector's settings and, with detection_image = :vst, every frame a LinearRaw: before any feature is detected.
-function _check_frames(what, frames, selection, detection_image, detection_noise)
-    _check_detector_settings(what, selection, detection_image, detection_noise)
+function _check_frames(what, frames, selection, detection_image, noise, noise_sigmas)
+    _check_detector_settings(what, selection, detection_image, noise, noise_sigmas; nframes = length(frames))
     detection_image === :vst && !all(f -> f isa VgtkCore.LinearRaw, frames) &&
         throw(ArgumentError("$what: detection_image = :vst needs every frame a LinearRaw (its green cells' code spans)"))
     return nothing
@@ -214,6 +216,7 @@ const _RETIRED_REGISTRATION_KEYWORDS = (;
     bundle_loss = "the bundle's robust strategy is `bundle_optimization_strategy = Triggs{Shape}(…)`",
     averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)`",
     local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy`",
+    detection_noise = _RETIRED_DETECTION_NOISE,
     # the retired whitening switch, spelled in fragments (check_naming lists the retired name)
     Symbol("bundle_" * "whitening") => "the bundle's observations are the detections' pixels (no detection covariance in this " *
                                        "release)")
@@ -227,7 +230,7 @@ end
 
 """
     register_rotations(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                       selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing,
+                       selection = :spread, detection_image = :tone, noise = nothing, noise_sigmas = nothing, saturated = nothing,
                        descriptor, matcher, min_score, pairs, max_lag = nothing, overlap_deg = nothing, min_inliers, seed,
                        scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials,
                        averaging_optimization_strategy = <Estimation's>, cycle_tol = deg2rad(2), orientation_tol = deg2rad(5),
@@ -248,7 +251,8 @@ RANSAC's:
 - features: inside the camera's `imaged_region`; `tone_percentile`,
   `detector_margin_px`, `asift_tilts` (a Features `tilt_schedule` name, `:imas25`
   or `:untilted`, or its pairs), `max_detections`, `selection`,
-  `detection_image`, `detection_noise`, `saturated` (the frames' clip masks,
+  `detection_image`, `noise` (with `:vst`: one resolved VisualGeometryToolkitCore `SensorNoise` per
+  frame) and `noise_sigmas`, `saturated` (the frames' clip masks,
   `nothing`: a `LinearRaw`'s own, none for an array) — see
   [`detect_features`](@ref) (`detection_image = :vst`: the frames are `LinearRaw`s); `descriptor` and `matcher`, VisualGeometryToolkitFeatures'
   `LoMaDescriptor` and `LoMaMatcher` variants (`:b`, `:b128`), one ONNX session
@@ -312,7 +316,8 @@ common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `Argu
 """
 function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCamera; frame_map,
                             tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
-                            selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
+                            selection::Symbol = :spread, detection_image::Symbol = :tone,
+                            noise::Union{Nothing, AbstractVector{<:VgtkCore.SensorNoise}} = nothing, noise_sigmas::Union{Nothing, Real} = nothing,
                             saturated::Union{Nothing, AbstractVector} = nothing,
                             descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing, overlap_deg::Union{Nothing, Real} = nothing,
@@ -326,7 +331,7 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     _check_pair_settings("register_rotations", pairs, max_lag, overlap_deg)
     _check_tolerances("register_rotations", cycle_tol, orientation_tol)
     vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
-                      detection_image, detection_noise, saturated, descriptor, matcher,
+                      detection_image, noise, noise_sigmas, saturated, descriptor, matcher,
                       min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization_strategy, max_trials, min_trials,
                       averaging_optimization_strategy = pairs === :lag_overlap ? averaging_optimization_strategy : _NotGiven(),
                       execution_provider, say)
