@@ -23,7 +23,7 @@
                     images = Dict(k => "frame_$(k).ARW" for k in eachindex(q.R)))
     mktempdir() do dir
         p = joinpath(dir, "panorama.json")
-        VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r); gains = r.metadata.gains)
+        VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r), r.metadata.gains)
         b = VgtkIO.load_panorama(p)
         @test VgtkIO.camera_json(b.camera) == VgtkIO.camera_json(q.camera) && VgtkCore.lens_coverage(b.camera) == VgtkCore.lens_coverage(q.camera)
         @test typeof(b.vignetting) == typeof(VgtkCore.estimate(r)) && control_points(b.vignetting) == control_points(VgtkCore.estimate(r))
@@ -43,7 +43,7 @@
         sl = score_seams(b.camera, q.frames, Rq, view; vignetting = b.vignetting, gains = b.gains, sk...)
         @test sa.n == sl.n && isapprox(sa.rms, sl.rms; rtol = 1.0e-10)
         # no gains fitted: the file states none, and reads back `nothing`
-        VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r); gains = nothing)
+        VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r), nothing)
         @test VgtkIO.load_panorama(p).gains === nothing
     end
 end

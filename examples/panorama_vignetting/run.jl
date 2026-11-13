@@ -506,7 +506,7 @@ function write_results(C, stem, lens, names, rotations, res, frame_map, (Hf, Wf)
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
                              Dict(k => VgtkCore.EuclideanMap(R, zeros(3) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
-    VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v; gains = fit_gains(C, res))
+    VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res))
     M = [v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
     PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
     return nothing
