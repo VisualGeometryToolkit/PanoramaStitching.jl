@@ -119,16 +119,14 @@ Base.eltype(::_CameraObservation) = Float64
 # `restrict`, a `SubsetManifold`), and that model's `valid_domain`, computed ONCE per value of the variable (at construction
 # and at each LM update), not per residual: every observation shares the camera, and a lens with its own fold finds its domain
 # by a search of its view-angle limit (Core's image_circle.jl). NLLSsolver reads it through `nvars`/`update`, the chart's.
-struct _CameraVariable{S, D}
+# The domain of a parametric `CameraModel` (the only camera the autocalibration takes) is Core's whole plane or, inside a
+# fold, its pixel disc, an `Ellipse{Float64}`: the field holds either, so a fold appearing or vanishing at an LM update keeps
+# the variable's one type.
+struct _CameraVariable{S}
     chart::S
-    domain::D
+    domain::Union{VgtkCore.WholePlane, VgtkCore.Ellipse{Float64}}
 end
-# The domain's type is the model type's inferred `valid_domain` (Core's small Union: the whole plane, or the disc inside a
-# fold), so a value whose fold appears or vanishes at an LM update keeps the variable's one type.
-function _CameraVariable(c::VgtkCore.SubsetManifold)
-    m = VgtkCore.model(c)
-    return _CameraVariable{typeof(c), Base.promote_op(VgtkCore.valid_domain, typeof(m))}(c, VgtkCore.valid_domain(m))
-end
+_CameraVariable(c::VgtkCore.SubsetManifold) = _CameraVariable(c, VgtkCore.valid_domain(VgtkCore.model(c)))
 NLLSsolver.nvars(v::_CameraVariable) = NLLSsolver.nvars(v.chart)
 NLLSsolver.update(v::_CameraVariable, δ, start = 1) = _CameraVariable(NLLSsolver.update(v.chart, δ, start))
 

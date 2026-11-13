@@ -4,9 +4,9 @@
 # type parameter the field does not determine; the three bodies share that shape and nothing else. The idiom cap counts this
 # repository's definitions only, and PanoramaStitching has one such wrapper, so the shingle is not capped here.
 [[similar]]
-functions = ["src/panorama.jl::_AtPixelCentre", "VisualGeometryToolkitCore:src/robust/lm_core.jl::Eliminable"]
+functions = ["src/panorama.jl::_AtPixelCentre{T}", "VisualGeometryToolkitCore:src/robust/lm_core.jl::Eliminable{E}"]
 reason = "different concepts: a map evaluated at an output pixel's COLMAP centre in the element type T (an isbits device functor) vs Core's NLLSsolver variable the Schur system may eliminate (E a Bool flag); only the one-field wrapper idiom is shared"
 
 [[similar]]
-functions = ["src/panorama.jl::_AtPixelCentre", "VisualGeometryToolkitCore:src/robust/strategies.jl::Triggs"]
+functions = ["src/panorama.jl::_AtPixelCentre{T}", "VisualGeometryToolkitCore:src/robust/strategies.jl::Triggs{K}"]
 reason = "different concepts: a map evaluated at an output pixel's COLMAP centre in the element type T vs Core's Triggs robust strategy (K its loss shape, the field its width); only the one-field wrapper idiom is shared"
