@@ -64,7 +64,7 @@ end
     pooled = (ν = [scales[p].dof for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
               sqrt(sum(ν .* σ .^ 2) / sum(ν)))
     bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
-           bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
+           bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false)   # one bundle: its width checked
     reg = register_rotations(vp, bcam; bkw...)
     @test reg.bundle_sigma ≈ pooled
     @test reg.bundle.metadata.loss_width ≈ 2.5 * pooled

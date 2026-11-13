@@ -225,6 +225,8 @@ end
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 # v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
+# v16: the near-duplicate pairs left out of the chaining (`near_duplicate_deg`), the track check (`check_tracks`: per tested
+# solve its removals past 3.035 σ̂, rms and inlier rms), the bundle's inlier rms (residuals within its loss width).
 # v15: `bundle_fit`, the bundle's termination record as Core's values (the results file's `fit`); `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
 # pairs_no_covariance alone; PanoramaStitching 0.7); the format's words the terminology's (detections).
 # v14: detection covariances off: the bundle's observations the detections' pixels, its scale and width in pixels.
@@ -232,7 +234,7 @@ end
 # v12: every bundle observation whitened by its detection's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for the position noise.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v15 (pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v16 (the kept pairs; the near-duplicate pairs not chained; the track check, per solve its removals and rms; the bundle's inlier rms; pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -256,7 +258,7 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # in those sigmas.
 const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v11 (the terminology's words; plain detections, pixel residuals of the correspondences; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the detections' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
-                               "bundle_ftol", "bundle_xtol")
+                               "bundle_ftol", "bundle_xtol", "near_duplicate_deg", "check_tracks")
 function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
@@ -379,7 +381,7 @@ function registration(C, inp, lens; log)
                                  cycle_tol = deg2rad(r["cycle_tol_deg"]), orientation_tol = deg2rad(r["orientation_tol_deg"]),
                                  bundle_optimization_strategy = bundle_strategy(r),
                                  bundle_max_iter = r["bundle_max_iter"], bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"],
-                                 say = m -> say(log, m))
+                                 near_duplicate_deg = r["near_duplicate_deg"], check_tracks = r["check_tracks"], say = m -> say(log, m))
         Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
         Dict{String, Any}("convention" => "d = R_k·f_k, the first frame's camera frame the common frame; R row by row",
                           "frames" => inp.names, "rotations" => [[collect(R[i, :]) for i in 1:3] for R in Rs],
@@ -392,7 +394,13 @@ function registration(C, inp, lens; log)
                           "averaging_scale" => VgtkCore.noise_scale(reg.averaging),
                           "averaging_scale_source" => string(VgtkCore.scale_source(reg.averaging)),
                           "cycle_tol_deg" => Float64(r["cycle_tol_deg"]), "orientation_tol_deg" => Float64(r["orientation_tol_deg"]),
-                          "bundle_rms_px" => reg.bundle.rms, "seconds" => vp.seconds + time() - t0,
+                          "bundle_rms_px" => reg.bundle.rms, "bundle_inlier_rms_px" => reg.bundle.metadata.inlier_rms, "seconds" => vp.seconds + time() - t0,
+                          # the near-duplicate pairs (averaged, not chained; 0-based) and the track check's counts with the first
+                          # bundle's rms and inlier rms (px)
+                          "pairs_near_duplicate" => [[i - 1, j - 1] for (i, j) in reg.near_duplicates],
+                          # the pairs the view-graph filters kept: the averaging's edges (0-based)
+                          "pairs_kept" => sort!([[i - 1, j - 1] for (i, j) in keys(reg.pairs) if haskey(reg.graph, i, j)]),
+                          "track_check" => [Dict{String, Any}("removed" => h.removed, "rms_px" => h.rms, "inlier_rms_px" => h.inlier_rms) for h in reg.track_check],
                           # the bundle's termination record (Core's ReturnCode and StopRule, and the legacy retcode Symbol); the observations it
                           # dropped at its start (a start prediction off the camera model's valid domain); the frames it held at their
                           # start rotation (left with no kept observation: their 0-based indices)
@@ -416,7 +424,8 @@ function registration(C, inp, lens; log)
     end
     return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
             pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], pairs_no_covariance = rec["pairs_no_covariance"],
-            bundle_rms_px = rec["bundle_rms_px"],
+            bundle_rms_px = rec["bundle_rms_px"], bundle_inlier_rms_px = rec["bundle_inlier_rms_px"],
+            pairs_near_duplicate = rec["pairs_near_duplicate"], pairs_kept = rec["pairs_kept"], track_check = rec["track_check"],
             bundle_sigma = rec["bundle_sigma"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),

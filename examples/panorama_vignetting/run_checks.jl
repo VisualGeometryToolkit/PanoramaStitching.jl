@@ -4,10 +4,11 @@
 #
 # stage_cache_check.jl (the verified pairs reused when only the averaging or the bundle changes, recomputed when a pair
 # setting changes: Eval's keyed cache), write_results_check.jl (the results of record written and read back) and
-# autocalibration_check.jl (the 14 mm bundle-equivalence check; it needs its declared
+# provider_agreement_check.jl (LoMa on the CPU and on CUDA keep the same pairs and agree on the rotations: on a GPU, with the
+# 14 mm RAWs), autocalibration_check.jl (the 14 mm bundle-equivalence check; it needs its declared
 # inputs under the data root, and is reported as not run where they are absent). README.md, "Maintainers".
 const CHECKS = ("stage_cache_check.jl" => :stage_cache_check, "write_results_check.jl" => :write_results_check,
-                "autocalibration_check.jl" => :autocalibration_check)
+                "autocalibration_check.jl" => :autocalibration_check, "provider_agreement_check.jl" => :provider_agreement_check)
 failed = String[]
 for (file, f) in CHECKS
     m = Module(Symbol(splitext(file)[1], "_sandbox"))

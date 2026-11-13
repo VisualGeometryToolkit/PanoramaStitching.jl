@@ -233,7 +233,10 @@ end
 direction per track, the common frame), `residuals` (per track, the pixel
 reprojection error norm of each of its observations at the result, unwhitened),
 `loss_width` (the width the strategy ran at: px, or in whitened units when the
-observations carry covariances; `NaN` for the plain least squares), `scale` and
+observations carry covariances; `NaN` for the plain least squares), `inlier_rms`
+(the rms of the `residuals` within `loss_width` — the loss's own inliers, the
+result's `rms` taken over them alone, beside the plain `rms` over every kept
+observation; `NaN` for the plain least squares or with no residual within it), `scale` and
 `scale_source` (the scale record of the robust-estimation contract: the given
 `scale`, or `NaN` with `ScaleNone` for a `width` or the least squares; read
 through VisualGeometryToolkitCore's `noise_scale`/`scale_source`), `n_observations` (given), `n_dropped_start`
@@ -276,6 +279,7 @@ struct RotationBundleMetadata{K, C, I}
     directions::Vector{SVector{3, Float64}}
     residuals::Vector{Vector{Float64}}
     loss_width::Float64
+    inlier_rms::Float64
     scale::Float64
     scale_source::VgtkCore.ScaleSource
     n_observations::Int
@@ -560,9 +564,14 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         _autocalibration((vars[ic]::typeof(cv)).chart, free_names, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
                           (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : robustifier(), j, i, o),
                           vars, fid, nf, unconstrained)
-    return VgtkCore.FitResult(out, rc, rule, niter, sqrt(sum(abs2, flat) / max(length(flat), 1)), nkept,
-                              RotationBundleMetadata(dirs, rn, width, scale, scale_source, nobs, nobs - nkept, unconstrained, cam_out, calib))
+    return VgtkCore.FitResult(out, rc, rule, niter, _plain_rms(flat), nkept,
+                              RotationBundleMetadata(dirs, rn, width, _rms(filter(≤(width), flat)), scale, scale_source, nobs, nobs - nkept, unconstrained, cam_out, calib))
 end
+
+# The rms of residual norms: the result's `rms` over every kept observation (0 with none, as before), and its inliers' (those
+# within the loss width; NaN with none)
+_plain_rms(r) = sqrt(sum(abs2, r; init = 0.0) / max(length(r), 1))
+_rms(r) = isempty(r) ? NaN : _plain_rms(r)
 
 # The autocalibration's information at the result (`RotationBundleMetadata`'s `calibration`): the Gauss–Newton information
 # H = Σ w JᵀJ of every kept observation (its loss's IRLS weight w at the result; the rows already whitened) over the frames,
