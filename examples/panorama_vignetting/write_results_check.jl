@@ -19,7 +19,9 @@ function write_results_check()
     C = (; run = mktempdir(), cfg = Dict{String, Any}("vignetting" => Dict{String, Any}("gain_correction" => "channel")))
     frame_map = u -> 2.0 .* u                                         # frame pixels → camera pixels (2×2 bins)
     names = ["a.ARW", "b.ARW", "c.ARW"]
-    ts = @testset "write_results: the results of record end to end" begin
+    # an outermost @testset that records a failure or an error throws Test.TestSetException when it finishes: the check's false
+    ok = try
+    @testset "write_results: the results of record end to end" begin
         @test write_results(C, "panorama", lens, names, rotations, res, frame_map, (400, 400)) === nothing
         b = VgtkIO.load_panorama(joinpath(C.run, "panorama.json"))
         @test all(maximum(abs, SMatrix{3, 3, Float64, 9}(b.rotations[k].R) - rotations[k]) < 1.0e-15 for k in 1:3)
@@ -29,7 +31,12 @@ function write_results_check()
         @test b.gains == G
         @test isfile(joinpath(C.run, "panorama_map.png"))
     end
-    return !(ts.anynonpass)
+    true
+    catch e
+        e isa Test.TestSetException || rethrow()
+        false
+    end
+    return ok
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
