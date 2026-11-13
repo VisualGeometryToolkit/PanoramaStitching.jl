@@ -90,7 +90,12 @@ end
     import VisualGeometryToolkitCore as VgtkCore
     R = rows_rotations()
     free = (:f, :cx, :cy, :k1, :k2, :k3, :k4)
-    cc = VgtkCore.restrict(VgtkCore.ParameterManifold(TRUE_CAM), free)
+    chart = VgtkCore.restrict(VgtkCore.ParameterManifold(TRUE_CAM), free)
+    cc = PanoramaStitching._CameraVariable(chart)            # the camera variable: its chart and its model's valid domain
+    @test cc.domain == VgtkCore.valid_domain(TRUE_CAM)
+    # an LM update recomputes the domain, of the variable's one type (a fold appearing or vanishing keeps it)
+    cu = NLLSsolver.update(cc, [0.0, 0, 0, -0.3, 0, 0, 0])
+    @test typeof(cu) === typeof(cc) && cu.domain == VgtkCore.valid_domain(VgtkCore.model(cu.chart))
     d = normalize(SVector(0.4, -0.3, 1.0))
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[3])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(d))
     x = VgtkCore.project(TRUE_CAM, R[3]' * d) + SVector(0.3, -0.2)
@@ -100,7 +105,7 @@ end
     # chart's update (π without the valid-domain test, which Core evaluates on plain numbers only)
     f = updated_residual(obs, ch, dv, cc)
     @test J[:, 1:5] ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
-    g(δ) = PanoramaStitching._image(VgtkCore.model(NLLSsolver.update(cc, δ)), R[3]' * d)
+    g(δ) = PanoramaStitching._image(VgtkCore.model(NLLSsolver.update(chart, δ)), R[3]' * d)
     @test J[:, 6:12] ≈ ForwardDiff.jacobian(g, zeros(7)) rtol = 1.0e-9
     @test NLLSsolver.computeresidual(obs, ch, dv, cc) ≈ VgtkCore.project(TRUE_CAM, R[3]' * d) - x
     for (flags, cols) in ((1, 1:3), (2, 4:5), (3, 1:5), (4, 6:12), (5, [1:3; 6:12]), (6, 4:12))

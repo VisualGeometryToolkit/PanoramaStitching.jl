@@ -123,7 +123,12 @@ struct _CameraVariable{S, D}
     chart::S
     domain::D
 end
-_CameraVariable(c::VgtkCore.SubsetManifold) = _CameraVariable(c, VgtkCore.valid_domain(VgtkCore.model(c)))
+# The domain's type is the model type's inferred `valid_domain` (Core's small Union: the whole plane, or the disc inside a
+# fold), so a value whose fold appears or vanishes at an LM update keeps the variable's one type.
+function _CameraVariable(c::VgtkCore.SubsetManifold)
+    m = VgtkCore.model(c)
+    return _CameraVariable{typeof(c), Base.promote_op(VgtkCore.valid_domain, typeof(m))}(c, VgtkCore.valid_domain(m))
+end
 NLLSsolver.nvars(v::_CameraVariable) = NLLSsolver.nvars(v.chart)
 NLLSsolver.update(v::_CameraVariable, δ, start = 1) = _CameraVariable(NLLSsolver.update(v.chart, δ, start))
 
