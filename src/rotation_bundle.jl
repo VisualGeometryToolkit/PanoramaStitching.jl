@@ -159,6 +159,33 @@ NLLSsolver.computeresidual(r::_CameraObservation, ch::VgtkCore.RotationChart, d:
 NLLSsolver.computecost(vars::AbstractVector, r::Union{_Observation, _CameraObservation}) =
     VgtkCore.finite_cost(NLLSsolver.computecost(r, NLLSsolver.getvars(r, vars)...))
 
+# An observation of a HELD frame (the gauge: Core's LmProblem solves every variable it is given, so a held one is no
+# variable and the block carries its value, as Estimation's bundle blocks do): `obs`'s residual and Jacobian with the frame's
+# rotation `frame` fixed, its variables the direction (and the camera) only, `varind` their indices in the solve's variables.
+# NLLSsolver's variable flags count from the direction: shifted by one they are `obs`'s (bit 1 the frame, never set here).
+struct _HeldFrame{N, O} <: NLLSsolver.AbstractResidual
+    obs::O
+    frame::_FrameChart
+    varind::SVector{N, Int}
+end
+NLLSsolver.ndeps(::_HeldFrame{N}) where {N} = static(N)
+NLLSsolver.nres(::_HeldFrame) = static(2)
+NLLSsolver.varindices(r::_HeldFrame) = r.varind
+NLLSsolver.robustkernel(r::_HeldFrame) = NLLSsolver.robustkernel(r.obs)
+Base.eltype(::_HeldFrame) = Float64
+NLLSsolver.getvars(r::_HeldFrame{1, <:_Observation{E}}, vars::Vector) where {E} =
+    (r.frame, vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart})
+NLLSsolver.getvars(r::_HeldFrame{2, <:_CameraObservation{E}}, vars::Vector) where {E} =
+    (r.frame, vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[2]])
+NLLSsolver.computeresidual(r::_HeldFrame, args...) = NLLSsolver.computeresidual(r.obs, args...)
+NLLSsolver.computeresjac(varflags, r::_HeldFrame, args...) = NLLSsolver.computeresjac(Int(varflags) << 1, r.obs, args...)
+# The same observation with its variables' indices in the solve's variables (the held ones left out).
+_with_varind(o::_Observation{E, C, P, L, W}, varind) where {E, C, P, L, W} =
+    _Observation{E, C, P, L, W}(o.camera, o.projection, o.x, varind, o.kernel, o.whitening)
+_with_varind(o::_CameraObservation{E, L, W}, varind) where {E, L, W} = _CameraObservation{E, L, W}(o.x, varind, o.kernel, o.whitening)
+NLLSsolver.computecost(vars::AbstractVector, r::_HeldFrame) =
+    VgtkCore.finite_cost(NLLSsolver.computecost(r.obs, NLLSsolver.getvars(r, vars)...))
+
 # Its closed-form frame and direction blocks (those of `_Observation`, through the variable's model) and its camera block,
 # ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
 # the camera; only the free variables' columns are returned, in that order.
@@ -307,7 +334,7 @@ result's `n` is the number of observations kept; its metadata's
   `register_rotations` hands the verified pairs' RANSAC scales pooled by Estimation's `pooled_noise_scale`) — the width is the strategy's efficiency
   constant × σ — or `width = w` (the loss width). Neither, or both, is an `ArgumentError`. `max_iter`, `ftol` (the relative cost decrease) and `xtol`
   (the largest step in chart units: radians for a rotation or a direction)
-  are its stops (`nlls_options`); the result's `iterations` the LM iterations
+  are its stops (Core's `LmStops`, its one LM adapter `lmsolve_chart!` on an `LmProblem`); the result's `iterations` the LM iterations
   it took.
 - `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
   complement, where the loaded NLLSsolver has it); `false` solves every unknown
@@ -316,7 +343,7 @@ result's `n` is the number of observations kept; its metadata's
 A refine ends in the local minimum its start leads to; the result's termination
 record (Core's `retcode` and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `converged(result)` its success) says how
 the bundle ended: NLLSsolver's stop, a step-size or rejection stop `Success` only where the robust cost is stationary at the
-result (Core's `is_stationary` at Estimation's `[chart_lm] stationarity_tol`), `Stalled` otherwise; `max_iter = 0` (no
+result (Core's one success rule, at its `[lm] stationarity_tol`), `Stalled` otherwise; `max_iter = 0` (no
 solve: the start's rotations are the result) `MaxIters` with `IterationCap`. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
 without, a covariance that is not finite and positive definite, and a start
@@ -352,9 +379,6 @@ _estimation_strategy(table::AbstractString, key::AbstractString, class::Symbol) 
 # `optimization_strategy` (Triggs{Welsch} stating no efficiency constant: its width is Core's efficiency constant for a 2-D
 # residual, a pixel reprojection error, times the caller's `scale`).
 const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("refine_camera_and_poses", "optimization_strategy", :refine_camera_and_poses)
-# The bundles' stall postcondition (Core's `is_stationary`): Estimation's chart-LM tolerance of record, [chart_lm]
-# `stationarity_tol`, shared by every LM of the stack.
-const _STATIONARITY_TOL = Float64(VgtkCore.toml_default(_ESTIMATION_DEFAULTS, "chart_lm", "stationarity_tol"))
 
 """
     refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
@@ -464,7 +488,6 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     observation(kernel, j, i, o) = chc === nothing ?
         _Observation{E, C, P, typeof(kernel), Wt}(bc, fwd, pixel(o), SVector(fid[first(o)], nf + j), kernel, whitenings[j][i]) :
         _CameraObservation{E, typeof(kernel), Wt}(pixel(o), SVector(fid[first(o)], nf + j, ic), kernel, whitenings[j][i])
-    residual_type(kernel) = chc === nothing ? _Observation{E, C, P, typeof(kernel), Wt} : _CameraObservation{E, typeof(kernel), Wt}
     all_free = chc === nothing ? 3 : 7
     # the observations kept, a fixed point: an observation whose residual or Jacobian is not finite at its track's start (a
     # start prediction off the model's valid domain has neither) is dropped, a track left in fewer than two frames is dropped
@@ -500,34 +523,38 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     foreach(k -> (unfixed[fid[k]] = false), unconstrained)
     residual_norms(f) = [[active[j][i] ? (ob = observation(nothing, j, i, o); norm(f(ob, NLLSsolver.getvars(ob, vars)...))) : NaN
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
-    result = nothing
+    sol = nothing
     if max_iter > 0                                                          # ONE LM run at the given width
+        # Core's one multi-block LM (`LmProblem` + `lmsolve_chart!`, its one success rule: the √ρ′-weighted stationarity
+        # postcondition at Core's [lm] stationarity_tol), on the FREE variables only: the held ones (the gauge frame, the
+        # tracks left out, the unconstrained frames) are no variables, and a block of the held gauge frame carries its
+        # rotation (`_HeldFrame`)
         kernel = robustifier()
-        problem = NLLSsolver.NLLSProblem(V, residual_type(kernel))
-        for v in vars
-            NLLSsolver.addvariable!(problem, v)
-        end
+        newidx = cumsum(unfixed) .* unfixed                                 # a free variable's index in the solve, 0 held
+        blocks = NLLSsolver.AbstractResidual[]
         for (j, t) in enumerate(tracks), (i, o) in enumerate(t)
-            active[j][i] && NLLSsolver.addcost!(problem, observation(kernel, j, i, o))
+            active[j][i] || continue
+            ob = observation(kernel, j, i, o); vi = ob.varind
+            if unfixed[vi[1]]
+                push!(blocks, _with_varind(ob, SVector(Tuple(newidx[v] for v in vi))))
+            else
+                rest = SVector(Tuple(newidx[v] for v in vi[2:end]))
+                push!(blocks, _HeldFrame{length(rest), typeof(ob)}(ob, vars[vi[1]]::_FrameChart, rest))
+            end
         end
-        result = NLLSsolver.optimize!(problem, VgtkCore.nlls_options(; max_iter, ftol, xtol), unfixed)
-        vars = problem.variables
+        lp = VgtkCore.LmProblem(V[vars[v] for v in eachindex(vars) if unfixed[v]], blocks)
+        sol = VgtkCore.lmsolve_chart!(lp, VgtkCore.LmStops(; max_iter, ftol, xtol))
+        for v in eachindex(vars)                                            # the solution into the full variable vector
+            unfixed[v] && (vars[v] = lp.variables[newidx[v]])
+        end
     end
-    # The termination record (§14): NLLSsolver's stop as Core's ReturnCode and StopRule, a step-size or rejection stop a
-    # success only where the stall postcondition holds at the returned point — the robust cost's stationarity, Σ ρ′ Jᵀr = 0:
-    # each kept observation's rows and Jacobian scaled by √ρ′ (ρ′ its loss weight; 1 for the plain least squares), the held
-    # variables' columns (the gauge frame, the tracks left out, the unconstrained frames) left out. `max_iter = 0` runs no
-    # solve: the iteration cap.
-    function stationary()                                  # Core's stall postcondition on the residual blocks themselves
-        kernel = robustifier()
-        blocks = [observation(kernel, j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]]
-        return VgtkCore.is_stationary(blocks, vars, unfixed; tol = _STATIONARITY_TOL, ftol)
-    end
-    rc, rule = result === nothing ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : VgtkCore.nlls_termination(result, stationary)
+    # The termination record (§14): Core's adapter's (a stop other than a failure or the cap a success only where the
+    # stationarity postcondition holds); `max_iter = 0` runs no solve: the iteration cap.
+    rc, rule = sol === nothing ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (sol.code, sol.rule)
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]
     rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
-    niter = result === nothing ? 0 : result.niterations
+    niter = sol === nothing ? 0 : sol.iterations
     cam_out = chc === nothing ? camera : VgtkCore.with_model(camera, _camera_of_chart(vars[ic]))
     calib = chc === nothing ? nothing :
         _autocalibration((vars[ic]::typeof(cv)).chart, free_names, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
