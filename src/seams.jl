@@ -13,7 +13,7 @@ end
 
 # Whether frame k holds an observation of direction i: seen (the masks, saturation included) with a positive value and
 # vignetting.
-@inline _measured(vals, vig, seen, i, k) = seen[i, k] && vals[i, k] > 0 && vig[i, k] > 0
+@inline _observed(vals, vig, seen, i, k) = seen[i, k] && vals[i, k] > 0 && vig[i, k] > 0
 
 # Per direction i: the median over the other frames that measure it of log(I_k/V_k) − log(I_last/V_last), `last` the highest
 # index that measures it (the frame the unblended render shows); NaN unless at least two frames measure it. The median by rank
@@ -31,22 +31,22 @@ Adapt.@adapt_structure _SeamRatio
     @inbounds begin
         last = 0
         for k in 1:K
-            _measured(vals, vig, seen, i, k) && (last = k)
+            _observed(vals, vig, seen, i, k) && (last = k)
         end
         n = 0
         for k in 1:K
-            (k != last && _measured(vals, vig, seen, i, k)) && (n += 1)
+            (k != last && _observed(vals, vig, seen, i, k)) && (n += 1)
         end
         n == 0 && return NaN
         ref = log(Float64(vals[i, last]) / Float64(vig[i, last]))
         r1 = (n + 1) ÷ 2; r2 = n ÷ 2 + 1
         v1 = NaN; v2 = NaN
         for k in 1:K
-            (k != last && _measured(vals, vig, seen, i, k)) || continue
+            (k != last && _observed(vals, vig, seen, i, k)) || continue
             xk = log(Float64(vals[i, k]) / Float64(vig[i, k]))
             nless = 0; nleq = 0
             for l in 1:K
-                (l != last && _measured(vals, vig, seen, i, l)) || continue
+                (l != last && _observed(vals, vig, seen, i, l)) || continue
                 xl = log(Float64(vals[i, l]) / Float64(vig[i, l]))
                 nless += xl < xk; nleq += xl <= xk
             end

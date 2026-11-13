@@ -49,10 +49,14 @@
     # resolves the stack the package does; with none, everything but the package comes from the registries
     sources = get(TOML.parsefile(joinpath(root, "Project.toml")), "sources", Dict{String, Any}())
     sourced = [normpath(joinpath(root, s["path"])) for s in values(sources) if s isa AbstractDict && haskey(s, "path")]
+    # a `url` source (a repository at a revision, a package in its subdirectory) is added from there, before the package
+    urls = [(; url = s["url"], rev = get(s, "rev", nothing), subdir = get(s, "subdir", nothing))
+            for s in values(sources) if s isa AbstractDict && haskey(s, "url")]
     registered = filter(∉(keys(sources)), registered)                        # a sourced package is developed, not added
     script = joinpath(env, "run.jl")
     write(script, """
     using Pkg
+    isempty($(repr(urls))) || Pkg.add([Pkg.PackageSpec(; u...) for u in $(repr(urls))]; io = devnull)
     Pkg.develop([Pkg.PackageSpec(path = p) for p in $(repr([sourced; root]))]; io = devnull)
     Pkg.add($(repr(registered)); io = devnull)
     readme = Module(:ReadmeSandbox)
