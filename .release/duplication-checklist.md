@@ -1,3 +1,16 @@
+# PanoramaStitching 0.6.5: the example's poses (a plain-Vector translation beside an SMatrix rotation)
+
+- [x] concept search of Core 0.9.6 for a pure rotation or an identity-translation pose: `RotationMap` exists, but IO 0.9's
+  `save_panorama` takes a `Trajectory` of `EuclideanMap`s with a zero LENGTH translation; the existing boundary constructor
+  `EuclideanMap(::SMatrix{3, 3}, ::StaticVector{3})` takes the registration's rotations as they are. Used; no new Core method (43b4d46)
+- [x] every other `EuclideanMap(` / `SimilarityMap(` built from a plain Vector in the repository: the guide's section 5 (the same
+  bug), the results test's pose (a `RotMatrix` with a plain Vector: valid, made static the same way) (43b4d46); the test setup's
+  `SimilarityMap` takes an `SVector` already
+- [x] the new check (write_results_check.jl) restates no body: it calls the example's `write_results` and IO's `load_panorama`,
+  and its verdict is stage_cache_check.jl's idiom; check_duplication at 90db87d: 0 findings (the gate's checks task, job 14659)
+
+---
+
 # PanoramaStitching 0.6.4: the results' serialisation through IO (owner, 2026-11-13: no parallel path)
 
 - [x] the example's hand-made V record (run.jl `write_vignetting`: vignetting.json written field by field; vignetting_profile.csv and vignetting_map.csv, V sampled) → VisualGeometryToolkitIO's `save_panorama` (vgio/panorama/v1: the camera, rotations, V and gains in one record) (36165d4)

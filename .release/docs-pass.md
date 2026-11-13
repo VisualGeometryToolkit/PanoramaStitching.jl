@@ -1,3 +1,24 @@
+docs-pass: 90db87d
+
+# 0.6.5 docs pass (julia-docs-pass) — the example writes its results of record again
+
+PanoramaStitching 0.6.5 is a patch: no source file under src/ changed and no public name was added, removed or re-signatured.
+- API diff since 0.6.4: none.
+- The bug: examples/panorama_vignetting/run.jl `write_results` built each pose as `EuclideanMap(R, zeros(3) .* m)` with `R` an
+  `SMatrix{3, 3}`, a call no Core 0.9 method takes (MethodError after the vignetting fit, every run). Now
+  `zero(SVector{3, Float64}) .* m`, through Core's existing boundary constructor `EuclideanMap(::SMatrix{3, 3}, ::StaticVector{3})`.
+- Guide (docs/src/guide.md), section 5 "Saving the results": its illustrative block made the same call on the registration's
+  SMatrix rotations; corrected the same way (and `using StaticArrays: SVector`). The block stays illustrative (IO is one more
+  package), so readme_tests.jl's count of illustrative blocks is unchanged.
+- The example's README: unchanged (its outputs table already names panorama.json and panorama_map.png; the "Maintainers"
+  paragraph names run_checks.jl, which now also runs write_results_check.jl).
+- README and landing page: unchanged.
+- CHANGELOG: 0.6.5.
+- Docs build: strict, green in the fresh-clone gate on Julia 1.13.3 at 90db87d (job 14670), against the registered Core 0.9.6,
+  Estimation 0.10.2, Features 0.8.4, IO 0.9.5 and (the example) Eval 0.7.3; the example's checks green (job 14669: write_results_check 7/7).
+
+---
+
 docs-pass: 4728e7d
 
 # 0.6.4 docs pass (julia-docs-pass) — the results through VisualGeometryToolkitIO's vgio/panorama/v1
