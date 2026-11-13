@@ -25,7 +25,7 @@
     mktempdir() do dir
         p = joinpath(dir, "panorama.json")
         VgtkIO.with_caller(PanoramaStitching) do                       # the generator names the calling package (the example's)
-            VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r), r.metadata.gains)
+            VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r), r.metadata.gains, r)   # the fit's termination record
         end
         rec = JSON.parsefile(p)
         @test rec["schema"] == "vgio/panorama/v2.0" && rec["generator"]["caller"]["name"] == "PanoramaStitching"
@@ -33,6 +33,8 @@
         @test VgtkIO.camera_json(b.camera) == VgtkIO.camera_json(q.camera) && VgtkCore.lens_coverage(b.camera) == VgtkCore.lens_coverage(q.camera)
         @test typeof(b.vignetting) == typeof(VgtkCore.estimate(r)) && control_points(b.vignetting) == control_points(VgtkCore.estimate(r))
         @test b.gains == r.metadata.gains
+        @test (VgtkCore.retcode(b.fit), VgtkCore.stop_rule(b.fit), b.fit.iterations, b.fit.n) ==
+              (VgtkCore.retcode(r), VgtkCore.stop_rule(r), r.iterations, r.n) && b.fit.rms == r.rms
         R = [SMatrix{3, 3, Float64, 9}(RotMatrix(b.rotations[k].R)) for k in eachindex(q.R)]
         @test all(maximum(abs, R[k] - q.R[k]) < 1.0e-15 for k in eachindex(q.R))       # a matrix written as its quaternion
         @test b.rotations.images == tr.images

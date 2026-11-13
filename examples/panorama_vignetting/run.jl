@@ -213,7 +213,7 @@ end
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 # v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
-# v15: `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
+# v15: `bundle_fit`, the bundle's termination record as Core's values (the results file's `fit`); `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
 # pairs_no_covariance alone; PanoramaStitching 0.7); the format's words the terminology's (detections).
 # v14: detection covariances off: the bundle's observations the detections' pixels, its scale and width in pixels.
 # v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's pooled_noise_scale; SIMFIT++ deleted).
@@ -394,6 +394,9 @@ function registration(C, inp, lens; log)
                           # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the detections' covariances) and the LM
                           # iterations its one run took
                           "bundle_sigma" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.iterations,
+                          # the bundle's termination record as Core's values (the results file's `fit`: vgio/panorama's)
+                          "bundle_fit" => (retcode = VgtkCore.retcode(reg.bundle), stop_rule = VgtkCore.stop_rule(reg.bundle),
+                                           iterations = reg.bundle.iterations, rms = reg.bundle.rms, n = reg.bundle.n),
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
                           # the ONNX Runtime provider used, its threads and, on CUDA, the driver, runtime and cuDNN versions
                           "loma" => loma_record(reg.loma))
@@ -404,7 +407,9 @@ function registration(C, inp, lens; log)
             bundle_sigma = rec["bundle_sigma"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
-            loma = rec["loma"], record = file)
+            loma = rec["loma"], record = file,
+            # the bundle's termination record (no estimate, no metadata): what vgio/panorama's `fit` stores
+            bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, b.iterations, b.rms, b.n, nothing)))
 end
 
 # The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
@@ -534,17 +539,17 @@ end
 
 # A run's results of record (a fit's): VisualGeometryToolkitIO's vgio/panorama/v2.0 — the camera, the frames' rotations camera → world
 # (d = R_k·f_k, the world the first frame's camera frame; zero translations: the camera only rotates; each frame's RAW file
-# its image), the fitted V and the frames' gains (none when vignetting.gain_correction = "none") — read back by
+# its image), the fitted V, the frames' gains (none when vignetting.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
 # `VgtkIO.load_panorama`; and V as an image, normalized to its maximum (one value per frame pixel, at its centre in the
 # camera's pixels: the frames' map).
-function write_results(C, stem, lens, names, rotations, res, frame_map, (Hf, Wf))
+function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf))
     v = VgtkCore.estimate(res)
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
                              Dict(k => VgtkCore.EuclideanMap(R, zeros(3) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
     # the file's generator names PanoramaStitching beside IO (IO 0.10's envelope)
     VgtkIO.with_caller(PanoramaStitching) do
-        VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res))
+        VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit)
     end
     M = [v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
     PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
@@ -605,7 +610,7 @@ function run_example(config_path)
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
-    write_results(C, "panorama", lens, inp.names, reg.rotations, res, inp.frame_map, (Hf, Wf))
+    write_results(C, "panorama", lens, inp.names, reg.rotations, reg.bundle_fit, res, inp.frame_map, (Hf, Wf))
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
@@ -658,7 +663,7 @@ function run_example(config_path)
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
         s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
-        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, r2, inp.frame_map, (Hf, Wf))
+        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf))
         push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
