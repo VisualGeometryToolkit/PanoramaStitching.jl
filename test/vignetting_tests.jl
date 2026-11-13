@@ -489,7 +489,7 @@ end
     dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
     @test !any(x -> Meta.isexpr(x, (:error, :incomplete)), code.args)
-    for f in ("stage_cache_check.jl", "autocalibration_check.jl", "run_checks.jl")       # the example's checks parse too
+    for f in ("stage_cache_check.jl", "write_results_check.jl", "autocalibration_check.jl", "run_checks.jl")   # the example's checks parse too
         @test !any(x -> Meta.isexpr(x, (:error, :incomplete)), Meta.parseall(read(joinpath(dir, f), String)).args)
     end
     named(x, name) = x === name || (x isa Expr && x.head === :call && x.args[1] === name)
