@@ -30,8 +30,9 @@ model entity an **observation** (Core's `conventions/naming.md`).
   and the test environment require VisualGeometryToolkitIO "0.10"; `save_panorama` and `load_panorama` keep their
   signatures, and the example names PanoramaStitching as the file's generator (`VgtkIO.with_caller`). V stays inside the
   panorama file (its `vignetting` is the `vgio/vignetting` body): no separate vignetting file.
-- Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation" (the example's cache-format
-  string `PAIRS_FORMAT` and the formats' version history keep their words: the format string is the cached stage's key).
+- Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation", the example's cache formats
+  and their version history included (owner, 2026-11-13): its verified-pairs record is format v11, so 0.6 caches are
+  recomputed, not reused.
 
 ### Fixed
 

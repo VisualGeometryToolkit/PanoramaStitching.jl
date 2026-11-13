@@ -213,9 +213,9 @@ end
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
 # v15: `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
 # pairs_no_covariance alone; PanoramaStitching 0.7); the format's words the terminology's (detections).
-# v14: keypoint covariances off: the bundle's observations the keypoints' pixels, its scale and width in pixels.
+# v14: detection covariances off: the bundle's observations the detections' pixels, its scale and width in pixels.
 # v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's pooled_noise_scale; SIMFIT++ deleted).
-# v12: every bundle observation whitened by its keypoint's covariance, the detector's (the whitening switch retired); the bundle's
+# v12: every bundle observation whitened by its detection's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for IntensityAndPositionNoise.
 const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v15 (pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
@@ -225,20 +225,22 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # rotation averaging's and the bundle's, so changing those reuses the pairs. With pairs = "lag_overlap" the averaging loss aims
 # the pairs past the lag, so it keys the pairs too.
 # v3: the detector's selection and detection image (`selection`, `detection_image` and its noise keys), every ASIFT detection
-# refined (VisualGeometryToolkitFeatures 0.9), the kept keypoints the described set.
+# refined (VisualGeometryToolkitFeatures 0.9), the kept detections the described set.
 # v4: per pair its SIMFIT++ noise scale (sigma, success).
-# v6: the pairs are scored on the keypoints' covariance shapes (their median normalisation, retired) and each records its absolute rotation
+# v6: the pairs are scored on the detections' covariance shapes (their median normalisation, retired) and each records its absolute rotation
 # covariance (VisualGeometryToolkitEstimation's uncertain_rotation): the averaging's Uncertain edges.
-# v5: no keypoint within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
+# v5: no detection within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
 # Features' canonical order, the frames' map Features' raw_frame_map.
-# v10: keypoint covariances off (the detector's default): the pairs' residuals and scales in pixels.
+# v10: detection covariances off (the detector's default): the pairs' residuals and scales in pixels.
+# v11: the format's words the terminology's (detections, correspondences: PanoramaStitching 0.7); the configs of record
+# state no max_lag / overlap_deg with pairs = "all" (refused: no inert setting).
 # v9: the pairs scored by Student-t + uniform at outlier_halfwidth_px (the MSAC scoring_threshold retired), each pair's ŝ that
 # scorer's.
 # v8: per pair its RANSAC scorer's own ŝ and degrees of freedom (sigma, dof); SIMFIT++ deleted.
 # v7: the features are Features' described features as detected (their covariances the detector's, no normalisation), the pairs'
 # residuals whitened by them (scoring_threshold in sigmas of the unit noise; the px threshold retired), per pair its rms and σ̂
 # in those sigmas.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v10 (plain keypoints, pixel residuals; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the keypoints' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v11 (the terminology's words; plain detections, pixel residuals of the correspondences; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the detections' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
                                "bundle_ftol", "bundle_xtol")
 function pairs_settings(r)
