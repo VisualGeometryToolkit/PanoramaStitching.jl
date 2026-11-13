@@ -196,7 +196,7 @@ const _RETIRED_NOISE_KEYWORD = Symbol("measure" * "ment_noise")
 # A frame's values and, for an uncertain image (Core's LinearRaw under a sensor model whose noise feeds a variance), each value's
 # variance var(I); a plain image has none (`nothing`).
 _frame_values(F::AbstractArray{<:Real}) = (F, nothing)
-_frame_values(F::AbstractArray) = (map(VgtkCore.value_of, F), map(x -> Float64(Statistics.cov(x)[1]), F))
+_frame_values(F::AbstractArray) = (map(VgtkCore.value_of, F), map(x -> Float64(Statistics.var(x)), F))
 
 """
     AzimuthalChart(axis, half_extent, spacing)
