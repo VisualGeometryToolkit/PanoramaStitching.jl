@@ -1,11 +1,11 @@
-docs-pass: fd36c60
+docs-pass: 4decd45
 
 # 0.6.2 docs pass (julia-docs-pass) — on VisualGeometryToolkitEstimation 0.10
 
 PanoramaStitching 0.6.2 is a patch: `[compat]` VisualGeometryToolkitEstimation "0.10" in every member that declares it, and the
 CHANGELOG section. No public name added, removed or re-signatured.
 - API diff since the last release: none.
-- docstrings: `refine_rotations`' docstring and the forward map's comment in sampling.jl name VisualGeometryToolkitEstimation's `fit_forward_spline` for a held SplineLens camera's forward (89dd421); the autocalibration's SplineLens refusal comment says the stack refines such a camera only by back-projection, or holds it (b0815f9); the autocalibration observation's getvars asserts its camera variable (abc5740, a JET fix, no docs change).
+- docstrings: `refine_rotations`' docstring and the forward map's comment in sampling.jl name VisualGeometryToolkitEstimation's `fit_forward_spline` for a held SplineLens camera's forward (89dd421); the autocalibration's SplineLens refusal comment says the stack refines such a camera only by back-projection, or holds it (b0815f9); the autocalibration reads its camera variable through `_camera_model` (a JET fix on Estimation 0.10, no docs change).
 - stale mentions: nothing here names the SplineLens image-space refine Estimation 0.10.0 retired (its free route,
   `penalty`, the GCV and window metadata): checked by grep over src, docs, README and the paper projects.
 - README / install lines: unchanged (no version is named); the README rows resolve the registry and pass once
