@@ -35,7 +35,7 @@ model entity an **observation** (Core's `conventions/naming.md`).
 - The detector's noise is the frame's sensor model (VisualGeometryToolkitCore's `SensorModel`, its ONE resolver `sensor_model`
   of the body's characterisation): `detect_features(...; detection_image = :vst, sensor_model, noise_sigmas)`, and
   `verify_pairs` / `register_rotations(...; sensor_models, noise_sigmas)` with one model per frame (Features'
-  `variance_stabilize(L, sensor_model.noise)`); `:vst` needs a gain (a `PoissonGaussian`), any other noise refused naming the
+  `variance_stabilize(L, sensor_model)`); `:vst` needs a gain (a `PoissonGaussian`), any other noise refused naming the
   model's reason. The 0.6 keyword `detection_noise` is refused naming them; with `:tone` neither is given. The example
   resolves each frame's model (`frame_models`: the RAW files' capture settings, the body's `[registration]
   sensor_characterisation` — a `vgio/sensor_characterisation` file or `"none"` — and Core's `sensor_model`), decodes the

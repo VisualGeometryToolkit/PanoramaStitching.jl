@@ -61,7 +61,7 @@ _clip_mask(frame, ::Nothing) = nothing
 _asift(frame, toned, ::Val{:tone}, model, noise_sigmas, tilts, mask) =
     VgtkFeatures.asift_detect(Float32.(view(toned, :, :, 2)); tilts, exclusion_mask = mask)
 _asift(frame::VgtkCore.LinearRaw, toned, ::Val{:vst}, model::VgtkCore.SensorModel, noise_sigmas, tilts, mask) =
-    VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame, model.noise); noise_sigmas, tilts, exclusion_mask = mask)
+    VgtkFeatures.asift_detect(VgtkFeatures.variance_stabilize(frame, model); noise_sigmas, tilts, exclusion_mask = mask)
 _asift(frame, toned, ::Val{:vst}, model, noise_sigmas, tilts, mask) =
     throw(ArgumentError("detect_features: detection_image = :vst needs the frame's LinearRaw (its green cells' code spans), got a $(typeof(frame))"))
 
@@ -82,7 +82,7 @@ descriptor resamples the image to its network's input).
 - ASIFT (`asift_tilts`: a VisualGeometryToolkitFeatures `tilt_schedule` name,
   `:imas25` or `:untilted`, or its `(t, φ)` pairs) on the `detection_image`: `:tone`, that tone's green at Features'
   default contrast threshold; `:vst`, the frame's variance-stabilized green cells
-  (Features' `variance_stabilize(frame, sensor_model.noise)`, noise σ = 1 at every level; the frame
+  (Features' `variance_stabilize(frame, sensor_model)`, noise σ = 1 at every level; the frame
   must be its `LinearRaw`, decoded with the same model, `LinearRaw(mosaic; mode, sensor_model)`) at
   `noise_sigmas` noise σ, `sensor_model` the frame's VisualGeometryToolkitCore `SensorModel` (its
   `sensor_model` resolver of the body's characterisation at the frame's ISO), whose noise must
