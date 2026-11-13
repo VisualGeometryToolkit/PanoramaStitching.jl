@@ -1,4 +1,4 @@
-docs-pass: abc5740
+docs-pass: fd36c60
 
 # 0.6.2 docs pass (julia-docs-pass) — on VisualGeometryToolkitEstimation 0.10
 
