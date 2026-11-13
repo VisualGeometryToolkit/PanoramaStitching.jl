@@ -2,8 +2,11 @@
 
 ## 0.6.2 (unreleased)
 
-A patch: no API change, the same results. On VisualGeometryToolkitEstimation 0.9.2 (`[compat]`
-VisualGeometryToolkitEstimation "0.9.2"), whose `fit_forward_spline` the docs now name.
+A patch: no API change, the same results. On VisualGeometryToolkitEstimation 0.10 (`[compat]`
+VisualGeometryToolkitEstimation "0.10" in the package, test and example environments), whose `fit_forward_spline` the
+docs now name. Estimation 0.10.0 retired the image-space refine of a free SplineLens camera's controls;
+PanoramaStitching never called it (`refine_rotations` holds its camera, and `refine_camera_and_rotations` refuses a
+SplineLens camera).
 
 - Docs: `refine_rotations`' docstring (and the forward map's comment in `sampling.jl`) name
   VisualGeometryToolkitEstimation's `fit_forward_spline(camera; tolerance)` as the way to give a held SplineLens camera its

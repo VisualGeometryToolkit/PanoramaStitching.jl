@@ -376,8 +376,8 @@ function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::Ab
         "refine_camera_and_rotations: `fixed` holds every camera parameter: nothing to calibrate (refine_rotations is the bundle " *
         "with the calibration held)"))
     # the camera's variable: Core's ParameterManifold of its model restricted to the free parameters (names checked by
-    # `free_parameter_names`); a SplineLens camera (a gauge K: its parameters are its lattice's controls, Estimation's own
-    # spline route) is refused
+    # `free_parameter_names`); a SplineLens camera (a gauge K: its parameters are its lattice's controls, which the stack
+    # refines only by back-projection, or holds) is refused
     (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
         throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
     chc = VgtkCore.restrict(VgtkCore.ParameterManifold(m), names)
