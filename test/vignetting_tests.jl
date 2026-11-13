@@ -427,7 +427,7 @@ end
     @test err isa ArgumentError && occursin("bundle_iterations", err.msg)
     # the 0.6 noise constants are refused by name: the frames' noise is Core's resolver's
     for k in ("electrons_per_dn", "read_noise_dn")
-        @test_throws "sensor_noise" Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}(k => 1.0), "config [registration]")
+        @test_throws "sensor_characterisation" Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}(k => 1.0), "config [registration]")
     end
     # `max_lag` / `overlap_deg` with pairs = "all" are refused when the config is read (no inert setting, cached or not)
     inert(t) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}(t), "config [registration]")
@@ -483,10 +483,10 @@ end
     # the detector's settings: "vst" reads the noise keys, "tone" refuses them (never read)
     det(r) = call(:detector_settings, Dict{String, Any}(r))
     @test det(Dict("selection" => "spread", "detection_image" => "tone")) ==
-          (; selection = :spread, detection_image = :tone, noise_sigmas = nothing, record = nothing)
-    v = det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3, "sensor_noise_record" => "none"))
-    @test v == (; selection = :spread, detection_image = :vst, noise_sigmas = 3.0, record = "none")
+          (; selection = :spread, detection_image = :tone, noise_sigmas = nothing, characterisation = nothing)
+    v = det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3, "sensor_characterisation" => "none"))
+    @test v == (; selection = :spread, detection_image = :vst, noise_sigmas = 3.0, characterisation = "none")
     @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3))
-    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_noise_record" => "none"))
+    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_characterisation" => "none"))
     @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst"))
 end

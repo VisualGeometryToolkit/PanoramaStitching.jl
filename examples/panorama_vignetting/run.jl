@@ -59,8 +59,8 @@ function refuse_circle(inputs, where)
 end
 
 # The [registration] keys retired (PanoramaStitching 0.6): refused by name, never read.
-const RETIRED_REGISTRATION_KEYS = ("electrons_per_dn" => "the frames' noise is VisualGeometryToolkitCore's sensor_noise of the body's record (sensor_noise_record) or of the frame",
-                                   "read_noise_dn" => "the frames' noise is VisualGeometryToolkitCore's sensor_noise of the body's record (sensor_noise_record) or of the frame",
+const RETIRED_REGISTRATION_KEYS = ("electrons_per_dn" => "the frames' noise is their VisualGeometryToolkitCore sensor model, resolved from the body's characterisation (sensor_characterisation)",
+                                   "read_noise_dn" => "the frames' noise is their VisualGeometryToolkitCore sensor model, resolved from the body's characterisation (sensor_characterisation)",
                                    "bundle_iterations" => "the bundle is ONE LM run of its bundle_optimization_strategy at the verified pairs' " *
                                    "pooled RANSAC noise scale (register_rotations); remove the key",
                                    "bundle_scale_multiple" => "the bundle's strategy is the table bundle_optimization_strategy",
@@ -254,11 +254,11 @@ function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
 end
-# The body's noise record keys the pairs by its content (its artifacts' SHA-256s are in it), not its path.
+# The body's characterisation keys the pairs by its content (its artifacts' SHA-256s are in it), not its path.
 function pairs_stage_settings(C, inp, provider::Symbol)
     st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
-    record = get(C.cfg["registration"], "sensor_noise_record", "none")
-    record == "none" || (st["sensor_noise_record_sha256"] = open(VgtkCore.sha256_hex, input_path(record)))
+    char = get(C.cfg["registration"], "sensor_characterisation", "none")
+    char == "none" || (st["sensor_characterisation_sha256"] = open(VgtkCore.sha256_hex, input_path(char)))
     return st
 end
 
@@ -299,34 +299,35 @@ asift_tilts(t::AbstractString) = Symbol(t)
 asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 
 # The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst") and, with
-# "vst" only, the threshold `noise_sigmas` and `sensor_noise_record`, the body's measured noise (a vgio/sensor_noise file under the
-# data root, or "none": no record, each frame's noise its own photon-transfer estimate; stated either way, never defaulted). The
-# frames' noise is VisualGeometryToolkitCore's resolver's (`frame_noise`). A noise key with "tone" is refused, never read; the
-# 0.6 constants `electrons_per_dn` and `read_noise_dn` are refused by name (RETIRED_REGISTRATION_KEYS).
-const DETECTION_NOISE_KEYS = ("noise_sigmas", "sensor_noise_record")
+# "vst" only, the threshold `noise_sigmas` and `sensor_characterisation`, the body's sensor characterisation (a
+# vgio/sensor_characterisation file under the data root, or "none"; stated either way, never defaulted). The frames' models are
+# VisualGeometryToolkitCore's resolver's (`frame_models`). A noise key with "tone" is refused, never read; the 0.6 constants
+# `electrons_per_dn` and `read_noise_dn` are refused by name (RETIRED_REGISTRATION_KEYS).
+const DETECTION_NOISE_KEYS = ("noise_sigmas", "sensor_characterisation")
 function detector_settings(r)
     if r["detection_image"] == "vst"
-        noise_sigmas = Float64(r["noise_sigmas"]); record = String(r["sensor_noise_record"])
+        noise_sigmas = Float64(r["noise_sigmas"]); characterisation = String(r["sensor_characterisation"])
     else
         inert = filter(k -> haskey(r, k), DETECTION_NOISE_KEYS)
         isempty(inert) || throw(ArgumentError("[registration] $(join(inert, ", ")): read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
-        noise_sigmas = record = nothing
+        noise_sigmas = characterisation = nothing
     end
-    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, record)
+    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, characterisation)
 end
 
-# The frames' resolved sensor noise and their LinearRaws decoded with it (the one black subtraction, Core's `LinearRaw`):
-# per frame VisualGeometryToolkitCore's `sensor_noise` (the ONE resolver) of the capture's settings (Features'
-# `extract_capture_settings`, the RAW files' EXIF) and the body's record (`sensor_noise_record`, read by IO's `load`, or none).
-function frame_noise(C, inp, record::AbstractString)
+# The frames' sensor models and their LinearRaws decoded with them (the one black subtraction, Core's `LinearRaw`): per frame
+# VisualGeometryToolkitCore's `sensor_model` (the ONE resolver, a lookup) of the body's characterisation (IO's `load` of the
+# `sensor_characterisation` file, or none: the absent model) at the capture's settings (Features' `extract_capture_settings`,
+# the RAW files' EXIF).
+function frame_models(C, inp, characterisation::AbstractString)
     dir = input_path(C.cfg["inputs"]["raw_dir"])
     mosaics = Dict(k => VgtkFeatures.load_raw_mosaic(joinpath(dir, n)) for (k, n) in enumerate(inp.names))
     capture = VgtkFeatures.extract_capture_settings(mosaics)
-    rec = record == "none" ? nothing : VgtkIO.load(VgtkCore.SensorNoise, input_path(record))
-    noise = [VgtkCore.sensor_noise(capture, k => mosaics[k]; record = rec) for k in eachindex(inp.names)]
-    frames = [VgtkFeatures.load_raw(mosaics[k]; mode = Symbol(C.cfg["decode"]["mode"]), gain = Float64(C.cfg["decode"]["gain"]), noise = noise[k])
-              for k in eachindex(inp.names)]
-    return frames, noise
+    char = characterisation == "none" ? nothing : VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(characterisation))
+    models = [VgtkCore.sensor_model(char, capture, k) for k in eachindex(inp.names)]
+    frames = [VgtkFeatures.load_raw(mosaics[k]; mode = Symbol(C.cfg["decode"]["mode"]), gain = Float64(C.cfg["decode"]["gain"]),
+                                    sensor_model = models[k]) for k in eachindex(inp.names)]
+    return frames, models
 end
 
 # The pairs' RANSAC local optimization, `[registration] local_optimization_strategy`: an Estimation strategy table
@@ -342,10 +343,10 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
     rec, _ = staged_record("verified_pairs", C, pairs_stage_settings(C, inp, provider); log, what = "verified pairs") do
         t0 = time()
         det = detector_settings(r)
-        frames, noise = det.detection_image === :vst ? frame_noise(C, inp, det.record) : (inp.frames, nothing)
+        frames, models = det.detection_image === :vst ? frame_models(C, inp, det.characterisation) : (inp.frames, nothing)
         vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
-                          max_detections = r["max_detections"], det.selection, det.detection_image, noise, det.noise_sigmas, descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
+                          max_detections = r["max_detections"], det.selection, det.detection_image, sensor_models = models, det.noise_sigmas, descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
                           min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = get(r, "max_lag", nothing), overlap_deg = get(r, "overlap_deg", nothing),
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, Float64(r["outlier_halfwidth_px"]);

@@ -55,44 +55,42 @@ end
         raw[2i, 2j - 1] = code(frame[i, j, 2]); raw[2i, 2j] = code(frame[i, j, 3])
     end
     mosaic = VgtkCore.RawMosaic(raw, UInt8[0 1; 3 2], (black, black, black, black), white, (0, 0), (2Hf, 2Wf), (; model = "synthetic"))
-    # the frame's noise through Core's ONE resolver, sensor_noise: the body's measured record at the frame's ISO (case 1; a
-    # record is a producer's input, the dark frames' and flats' summary), the LinearRaw decoded with it (the one black subtraction)
-    body = VgtkCore.DeviceIdentity(; make = "Synthetic", model = "Sensor")
-    capture = VgtkCore.CaptureSettings(Dict(1 => (exposure = VgtkCore.ExposureSettings(0.01 * VgtkCore.parse_unit("s"), 4.0, 100.0),
-                                                  lens_settings = VgtkCore.LensSettings(0.014 * VgtkCore.m))); body)
-    record = VgtkCore.SensorNoise(; body, iso = 100.0, electrons_per_dn = VgtkCore.noise_value(5.63, :measured),
-                                  read_noise = VgtkCore.noise_value(ntuple(_ -> 0.82, 4), :measured))
-    noise = VgtkCore.sensor_noise(capture, 1 => mosaic; record)
-    @test VgtkCore.value_of(noise.electrons_per_dn) == 5.63 && noise.reason === nothing
-    L = VgtkCore.LinearRaw(mosaic; mode = :bin2, noise)
+    # the frame's sensor model through Core's ONE resolver, `sensor_model`, of a characterisation with a gain (a
+    # PoissonGaussian, Core's test fixture: tests never build a component themselves), the LinearRaw decoded with it
+    pg = VgtkCore.sensor_fixture(; gain = 5.63, read_noise = ntuple(_ -> 0.82, 4), source = VgtkCore.SensorSource.measured)
+    model = pg.model
+    @test model.noise isa VgtkCore.PoissonGaussian
+    L = VgtkCore.LinearRaw(mosaic; mode = :bin2, sensor_model = model)
+    L0 = VgtkCore.LinearRaw(mosaic; mode = :bin2)                                   # the absent model: the plain image
     N = 300
     desc = VgtkFeatures.LoMaDescriptor(:b; max_detections = N, execution_provider = :cpu)
     kw = (; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = N)
     px = detection_pixels
-    # :tone reads a LinearRaw's image as it reads the array
-    @test px(detect_features(q.cam, L, desc; kw...)) == px(detect_features(q.cam, L.image, desc; kw...))
-    v = detect_features(q.cam, L, desc; kw..., detection_image = :vst, noise, noise_sigmas = 3.0)
+    # :tone reads a LinearRaw's values as it reads the array, its image plain or uncertain
+    @test px(detect_features(q.cam, L0, desc; kw...)) == px(detect_features(q.cam, L0.image, desc; kw...)) ==
+          px(detect_features(q.cam, L, desc; kw...))
+    v = detect_features(q.cam, L, desc; kw..., detection_image = :vst, sensor_model = model, noise_sigmas = 3.0)
     @test round(Int, 0.9N) <= length(v) <= round(Int, 1.1N)
     @test all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(v))
     @test px(v) != px(detect_features(q.cam, L, desc; kw...))
     # the refusals
-    @test_throws "LinearRaw" detect_features(q.cam, L.image, desc; kw..., detection_image = :vst, noise, noise_sigmas = 3.0)   # no LinearRaw
-    @test_throws "resolved sensor noise" detect_features(q.cam, L, desc; kw..., detection_image = :vst, noise_sigmas = 3.0)      # no noise
-    @test_throws "noise_sigmas" detect_features(q.cam, L, desc; kw..., detection_image = :vst, noise)                           # no threshold
-    @test_throws "read only by detection_image = :vst" detect_features(q.cam, L, desc; kw..., noise)                            # inert with :tone
-    # a noise the resolver could not give is refused naming its reason (Features' variance_stabilize: no fallback)
-    unknown = VgtkCore.SensorNoise(; body, iso = 100.0, reason = "no record and no estimate")
-    @test_throws "no record and no estimate" detect_features(q.cam, L, desc; kw..., detection_image = :vst, noise = unknown, noise_sigmas = 3.0)
+    @test_throws "LinearRaw" detect_features(q.cam, L0.image, desc; kw..., detection_image = :vst, sensor_model = model, noise_sigmas = 3.0)
+    @test_throws "needs a gain" detect_features(q.cam, L, desc; kw..., detection_image = :vst, noise_sigmas = 3.0)          # the absent model
+    rn = VgtkCore.sensor_fixture(; read_noise = ntuple(_ -> 0.82, 4)).model                                             # read noise, no gain
+    @test_throws "needs a gain" detect_features(q.cam, L0, desc; kw..., detection_image = :vst, sensor_model = rn, noise_sigmas = 3.0)
+    @test_throws "noise_sigmas" detect_features(q.cam, L, desc; kw..., detection_image = :vst, sensor_model = model)     # no threshold
+    @test_throws "read only by detection_image = :vst" detect_features(q.cam, L, desc; kw..., sensor_model = model)     # inert with :tone
     # the 0.6 keyword is refused naming its successors
-    @test_throws "noise_sigmas" detect_features(q.cam, L, desc; kw..., detection_noise = (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0))
+    @test_throws "sensor_model" detect_features(q.cam, L, desc; kw..., detection_noise = (; electrons_per_dn = 5.63, read_noise = 0.82, noise_sigmas = 3.0))
     @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., detection_image = :log)
     @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., selection = :ssc)
     # verify_pairs and register_rotations refuse before any feature is detected
     vkw = (; kw..., descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, min_inliers = 10,
            seed = 1, max_trials = 10, min_trials = 1, execution_provider = :cpu)
-    @test_throws "LinearRaw" verify_pairs([L.image, L.image], q.cam; vkw..., detection_image = :vst, noise = [noise, noise], noise_sigmas = 3.0)
-    @test_throws DimensionMismatch verify_pairs([L, L], q.cam; vkw..., detection_image = :vst, noise = [noise], noise_sigmas = 3.0)   # one per frame
-    @test_throws "noise_sigmas" verify_pairs([L, L], q.cam; vkw..., detection_noise = (; noise_sigmas = 3.0))
+    @test_throws "LinearRaw" verify_pairs([L0.image, L0.image], q.cam; vkw..., detection_image = :vst, sensor_models = [model, model], noise_sigmas = 3.0)
+    @test_throws DimensionMismatch verify_pairs([L, L], q.cam; vkw..., detection_image = :vst, sensor_models = [model], noise_sigmas = 3.0)   # one per frame
+    @test_throws "needs a gain" verify_pairs([L, L], q.cam; vkw..., detection_image = :vst, noise_sigmas = 3.0)          # no models: absent
+    @test_throws "sensor_model" verify_pairs([L, L], q.cam; vkw..., detection_noise = (; noise_sigmas = 3.0))
     @test_throws ArgumentError verify_pairs([L, L], q.cam; vkw..., selection = :ssc)
     @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
                                                    bundle_max_iter = 1,
