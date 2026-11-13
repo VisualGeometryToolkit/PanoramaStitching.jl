@@ -44,7 +44,7 @@ the near-duplicates, as `(frame, detection)` observations, after the track check
 (inconsistent tracks dropped by [`chain_tracks`](@ref)), `track_check` (one entry per solve the track check tested: the
 observations it `removed` past the cut and that solve's `rms` and `inlier_rms`, px; empty with `check_tracks = false`), `bundle` (the `refine_rotations` result; its `rms` over every kept observation and its metadata's
 `inlier_rms` over those within its loss width; its
-its `retcode`/`stop_rule` (Core's termination record) and its metadata's `n_dropped_start` say how the bundle ended and how many
+`retcode`/`stop_rule` (Core's termination record) and its metadata's `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `bundle_sigma` (the
 pooled noise scale σ̂ of the kept pairs, px, the bundle's `scale`), `features` (the frames' described features, [`detect_features`](@ref): a track's `(frame, detection)` is
 detection `detection` of `features[frame]`, in the frame's pixels) and `loma` (what ran LoMa: VisualGeometryToolkitFeatures'

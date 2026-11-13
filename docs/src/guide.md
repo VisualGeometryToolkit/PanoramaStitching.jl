@@ -72,13 +72,19 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    Estimation's own) gives every frame's rotation.
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two detections
-   of one frame) are dropped.
+   of one frame) are dropped. With `near_duplicate_deg`, a kept pair whose optical axes are within it under the averaged
+   rotations (two near-identical views) is averaged but seeds no track (`reg.near_duplicates`): such views match their
+   repeated structure as well as their scene, and a wrong match through them chains far.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
    robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
    `bundle_optimization_strategy` (a `Triggs`) at `scale = σ̂`, its width the strategy's efficiency constant × σ̂, σ̂ the
    noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`, pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
    held, and it takes no keyword that would free a camera parameter. Refining the camera too is a refine of its own,
    [`refine_camera_and_rotations`](@ref) ([Autocalibration](#Autocalibration) below).
+7. **Track check** (`check_tracks = true`): the observations whose residual exceeds 3.035 σ̂ (√χ²₂(0.99)) are removed and
+   the bundle re-solved from its rotations, until a solve removes none (at most 10 solves); `reg.track_check` holds each
+   solve's removals, rms and inlier rms (`reg.bundle.metadata.inlier_rms`, the rms over the observations within the loss
+   width).
 
 Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold everything the rest reads;
 `register_rotations(pairs::VerifiedPairs, camera; frame_map, …)` runs steps 4–6 from them, so a caller that keeps the verified pairs

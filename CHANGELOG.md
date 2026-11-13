@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-11-13)
 
 The breaking wave of the stack (VisualGeometryToolkitCore 0.10, IO 0.10, Features 0.9, Estimation 0.11): the terminology
 taxonomy — a detector's output is a **detection**, a hypothesised pairing a **correspondence**, a detection associated with a
@@ -68,6 +68,14 @@ model entity an **observation** (Core's `conventions/naming.md`).
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation", the example's cache formats
   and their version history included (owner, 2026-11-13): its verified-pairs record is format v11, so 0.6 caches are
   recomputed, not reused.
+- `register_rotations` checks the tracks by default (`check_tracks = true`): after the bundle, the observations whose
+  residual exceeds 3.035 σ̂ (√χ²₂(0.99), σ̂ the pooled scale) are removed and the bundle re-solved from its rotations, until
+  none is removed (at most 10 solves); `Registration.track_check` holds each solve's removals, rms and inlier rms. So the
+  rotations of a registration differ from 0.6's; `check_tracks = false` keeps the single bundle. New keyword
+  `near_duplicate_deg` (default `nothing`, every kept pair chained): a kept pair whose optical axes are within it is
+  averaged but seeds no track (`Registration.near_duplicates`). `RotationBundleMetadata` gains `inlier_rms` (the rms over
+  the observations within the loss width). The example's configs of record set both; its registration record is format
+  v16, so v15 records are recomputed, and `provider_agreement_check.jl` (LoMa on the CPU and on CUDA agree) joins its checks.
 
 ### Fixed
 
