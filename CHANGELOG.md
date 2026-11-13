@@ -83,6 +83,20 @@ model entity an **observation** (Core's `conventions/naming.md`).
   before the pairs past the lag are tried; the joining pair across the split is tried, and the final graph is checked.
 - Core's `with_model` replaces PanoramaStitching's private copy; `docs/Project.toml`'s Core compat aligned with the package's.
 
+## 0.6.5 (unreleased)
+
+A patch: no API change, the same results. The example writes its results of record again.
+
+- **The example's `write_results` failed on every run** (0.6.4): after the vignetting fit, `run.jl` built each frame's pose
+  as `EuclideanMap(R, zeros(3) .* m)` with `R` the registration's `SMatrix{3, 3}`. VisualGeometryToolkitCore takes a raw
+  3 × 3 matrix only with a static translation (its boundary constructor `EuclideanMap(::SMatrix{3, 3}, ::StaticVector{3})`),
+  so the call was a `MethodError` and no `panorama.json` was written. The zero translation is now a static length,
+  `zero(SVector{3, Float64}) .* m`, through Core's existing constructor (no new Core method). The guide's section 5 had
+  the same call; corrected, and the test's pose written the same way.
+- `examples/panorama_vignetting/write_results_check.jl`, run by `run_checks.jl` (the example's checks): `write_results` on a
+  tiny fixture writes `panorama.json` and the map image, and the record reads back with the frames' rotations, zero
+  translations, V and the gains. It fails on 0.6.4's code.
+
 ## 0.6.4 (unreleased)
 
 A patch: no API change, the same results. The results are saved and loaded through VisualGeometryToolkitIO.

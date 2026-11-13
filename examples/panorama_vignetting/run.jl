@@ -526,7 +526,7 @@ end
 function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf))
     v = VgtkCore.estimate(res)
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
-                             Dict(k => VgtkCore.EuclideanMap(R, zeros(3) .* VgtkCore.m) for (k, R) in enumerate(rotations));
+                             Dict(k => VgtkCore.EuclideanMap(R, zero(SVector{3, Float64}) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
     # the file's generator names PanoramaStitching beside IO (IO 0.10's envelope)
     VgtkIO.with_caller(PanoramaStitching) do

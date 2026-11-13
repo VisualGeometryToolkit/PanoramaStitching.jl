@@ -251,7 +251,9 @@ camera frame, and a zero translation (a length: the camera only rotates):
 # Illustrative: VisualGeometryToolkitIO, one more package (pkg> add VisualGeometryToolkitIO)
 import VisualGeometryToolkitIO as VgtkIO
 using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, EuclideanMap, m
-rotations = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(R, zeros(3) .* m) for (k, R) in enumerate(reg.rotations)))
+using StaticArrays: SVector
+# each R an SMatrix{3, 3}: its translation a static zero length
+rotations = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(R, zero(SVector{3, Float64}) .* m) for (k, R) in enumerate(reg.rotations)))
 VgtkIO.save_panorama("panorama.json", camera, rotations, V, g, reg.bundle)   # g = nothing: no gains; the bundle's termination record (optional)
 p = VgtkIO.load_panorama("panorama.json")         # (; camera, rotations, vignetting, gains, fit)
 Rs = [p.rotations[k].R for k in 1:length(p.rotations)]   # the rotations render_panorama and score_seams take
