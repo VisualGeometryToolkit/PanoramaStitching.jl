@@ -94,7 +94,7 @@ end
     d = normalize(SVector(0.4, -0.3, 1.0))
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[3])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(d))
     x = VgtkCore.project(TRUE_CAM, R[3]' * d) + SVector(0.3, -0.2)
-    obs = PanoramaStitching._CameraObservation{false, Nothing, Nothing}(x, SVector(1, 2, 3), nothing, nothing)
+    obs = PanoramaStitching._CameraObservation{false, Nothing, Nothing, typeof(cc)}(x, SVector(1, 2, 3), nothing, nothing)
     _, J = NLLSsolver.computeresjac(NLLSsolver.static(7), obs, ch, dv, cc)
     # the frame and direction blocks through the variables' updates (the camera at its anchor); the camera block through the
     # chart's update (π without the valid-domain test, which Core evaluates on plain numbers only)
