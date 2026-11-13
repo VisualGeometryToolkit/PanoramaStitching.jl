@@ -23,16 +23,47 @@ function true_up(pitch::Real, roll::Real)
 end
 
 """
+    up_frame(up::AbstractVector) -> SMatrix{3,3}
     up_frame(pitch, roll) -> SMatrix{3,3}
 
-`R` with `d = R·d_true`: the true-up frame (its −y the [`true_up`](@ref)
-direction, its forward the common frame's forward projected onto the horizontal),
-`pitch` and `roll` in degrees as there. The `up` keyword of [`panorama_view`](@ref).
+`R` with `d = R·d_true`: the true-up frame of the up direction `up` (in the
+common frame; normalized here) — its −y `up`, its forward (+z) the common frame's
+forward `(0, 0, 1)` projected onto the horizontal, its x the right-handed
+completion — VisualGeometryToolkitCore's `lookat_pose` frame (the `:cv`
+convention) looking along that forward. `up_frame(pitch, roll)` is
+`up_frame(true_up(pitch, roll))` ([`true_up`](@ref), degrees); `up` may also be
+a sweep's own, [`sweep_up`](@ref)`(rotations).up`. The `up` keyword of
+[`panorama_view`](@ref).
 """
-function up_frame(pitch::Real, roll::Real)
-    u = normalize(true_up(pitch, roll)); z = SVector(0.0, 0.0, 1.0)
-    zt = normalize(z - dot(z, u) * u); yt = -u
-    return hcat(cross(yt, zt), yt, zt)
+function up_frame(up::AbstractVector)
+    u = normalize(SVector{3, Float64}(up))
+    z = SVector(0.0, 0.0, 1.0)
+    forward = z - dot(z, u) * u                              # the common forward on the horizontal (Core normalizes it)
+    # Core's look-at frame: z the forward, its y along the vector given (the image's down: −up), x = y × z
+    return SMatrix{3, 3, Float64, 9}(VgtkCore.rotation(VgtkCore.lookat_pose(zero(SVector{3, Float64}), forward, -u)))
+end
+up_frame(pitch::Real, roll::Real) = up_frame(true_up(pitch, roll))
+
+"""
+    sweep_up(rotations) -> (; up, eigenvalues)
+
+The up direction of a roll-free sweep from its frames' rotations alone
+(`d = R_k·f_k`, the common frame's directions): a roll-free frame's image x axis
+(`R_k`'s first column) is horizontal, so up is orthogonal to every one — the
+eigenvector of the least eigenvalue of `Σ_k x_k x_kᵀ` — signed against the
+frames' summed image-down axes (`R_k`'s second columns). `eigenvalues` are the
+matrix's, ascending: the least is ≈ 0 when the sweep is roll free (the
+diagnostic of the estimate). It holds whatever the frames' pitch, unlike the
+axis of the frames' rotations. Its frame is [`up_frame`](@ref)`(sweep_up(R).up)`.
+"""
+function sweep_up(rotations)
+    A = zeros(3, 3)
+    for R in rotations
+        x = SMatrix{3, 3, Float64, 9}(R)[:, 1]; A .+= x * x'
+    end
+    E = LinearAlgebra.eigen(LinearAlgebra.Symmetric(A)); a = SVector{3}(E.vectors[:, 1])
+    down = sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in rotations)
+    return (; up = dot(a, down) > 0 ? -a : a, eigenvalues = E.values)
 end
 
 """
@@ -245,4 +276,24 @@ function render_cube_map(camera, frames::AbstractVector, rotations::AbstractVect
     place(faces.up.image, 1, 2); place(faces.left.image, 2, 1); place(faces.front.image, 2, 2)
     place(faces.right.image, 2, 3); place(faces.back.image, 2, 4); place(faces.down.image, 3, 2)
     return (; faces, cross)
+end
+
+"""
+    coverage_extent(camera, frames, rotations, up, frame_map; δ = 0.5) -> (lon₀, lon₁, lat₀, lat₁)
+
+The longitude and latitude box (degrees) the `frames` cover in the view of the
+up frame `up` (e.g. [`up_frame`](@ref)`(sweep_up(rotations).up)`): the seen
+pixels of a coarse equirectangular [`render_panorama`](@ref) at `δ` degrees per
+pixel over the whole sphere (latitudes within ±89°), no vignetting, the
+frames to their sensor's edge within 89° of the optical axis; the box of its
+seen pixels' edges. The `extent` of a [`panorama_view`](@ref) that frames the
+sweep.
+"""
+function coverage_extent(camera, frames::AbstractVector, rotations::AbstractVector, up::AbstractMatrix, frame_map; δ::Real = 0.5)
+    v = panorama_view(VgtkCore.Equirectangular(), (-180.0, 180.0, -89.0, 89.0), δ; up)
+    r = render_panorama(camera, frames, rotations, v; vignetting = (u, f) -> 1.0, frame_map, rim_margin_px = 0.0, fov_deg = 89.0)
+    seen = findall(>(0), Array(r.coverage))
+    isempty(seen) && throw(ArgumentError("coverage_extent: no frame covers any pixel of the view"))
+    rows = extrema(I -> I[1], seen); cols = extrema(I -> I[2], seen)
+    return (-180 + δ * (cols[1] - 1), -180 + δ * cols[2], 89 - δ * rows[2], 89 - δ * (rows[1] - 1))
 end

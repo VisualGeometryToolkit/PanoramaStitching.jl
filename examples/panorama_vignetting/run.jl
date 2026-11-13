@@ -121,7 +121,7 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 # decoder), and read back as decoded, value for value. The frames' and the planes' maps onto the camera's pixels are
 # Core's (`raw_frame_map`, `bayer_plane_map`) of the set's first frame (all the set's frames share the Bayer phase).
 
-# The decoded-RAW cache is OPT-IN (`[decode] cache = true`): a derived store (Features' FileCache, keyed by the RAW file's SHA-256,
+# The decoded-RAW cache is OPT-IN (`[decode] cache = true`): a derived store (Features' FileCache, keyed by the RAW file's SHA-256, the noise digest,
 # the mode, the gain and the decoder; regenerable from the RAW files), backed by JLD2 through Features' package extension. This
 # file loads no JLD2 itself: VisualGeometryToolkitEval (imported above) depends on it, so it is loaded with Eval and Features'
 # extension with it — a caller that includes this file needs no JLD2 of its own.
@@ -417,16 +417,6 @@ function registration(C, inp, lens; log)
             bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, b.iterations, b.rms, b.n, nothing)))
 end
 
-# The vertical of a roll-free sweep: every frame's image x axis is horizontal, so the vertical is the direction orthogonal to all
-# of them (the eigenvector of the least eigenvalue of Σ x_k x_kᵀ), signed against the frames' mean image-down axis. It holds
-# whatever the frames' pitch, unlike the axis of the frames' rotations (measured 2026-11-04: that axis was 9.3° off on the
-# rooftop's pitched sweep and bent its horizon; 3.7° on the 14 mm set). The up frame puts it at −y and the first frame's
-# forward on the horizon. Returns the up frame and the eigenvalues (the least one ≈ 0 when the sweep is roll-free).
-function level_up(rotations)
-    A = zeros(3, 3)
-    for R in rotations
-        x = SMatrix{3, 3, Float64, 9}(R)[:, 1]; A .+= x * x'
-    end
     E = eigen(Symmetric(A)); a = SVector{3}(E.vectors[:, 1])
     down = sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in rotations)
     a = dot(a, down) > 0 ? -a : a
@@ -435,10 +425,6 @@ function level_up(rotations)
 end
 
 # ----------------------------------------------------------------------------- vignetting spaces from the config
-
-# The principal point: the pixel of the optical axis (0, 0, 1) through the camera's projection.
-principal_point(lens) = (u = VgtkCore.pointwise!(VgtkCore.imaging_transform(VgtkCore.model(lens)), [SVector(0.0, 0.0)],
-                                                 [SVector(0.0, 0.0, 1.0)]); u[1])
 
 # The fit's domain (camera pixels) is the package's own `PanoramaStitching.frame_region`, which the fit, the sampling and the
 # renders read. Its extreme points: its bounding box.
@@ -466,7 +452,7 @@ function vignetting_space(kind, C, lens, W, H)
     T = VgtkCore.VIGNETTING_TAGS[kind]
     if T === VgtkCore.RadialVignetting
         rc = v["radial_center"]
-        center = rc == "principal_point" ? SVector{2, Float64}(principal_point(lens)) :
+        center = rc == "principal_point" ? SVector{2, Float64}(VgtkCore.principal_point(VgtkCore.model(lens).intrinsics)) :
                  rc == "circle_center" ? coverage_center(lens) : SVector{2, Float64}(rc...)
         radius = v["radial_radius"] == "domain" ? domain_radius(lens, center, W, H, rim) + 1.0 : Float64(v["radial_radius"])
         s = VgtkCore.RadialVignetting(v["radial_controls"], center, radius; degree = 3)
@@ -521,15 +507,6 @@ gains_text(G; d = 4) = join([join(round.(G[k, :]; digits = d), " / ") for k in a
 "No vignetting correction: V ≡ 1."
 no_vignetting(u, f) = 1.0
 
-"The covered (lon, lat) box in the up frame: a coarse equirectangular render's seen pixels."
-function coverage_extent(lens, frames, rotations, up, frame_map; δ = 0.5)
-    v = panorama_view(VgtkCore.Equirectangular(), (-180.0, 180.0, -89.0, 89.0), δ; up)
-    r = render_panorama(lens, frames, rotations, v; vignetting = no_vignetting, frame_map,
-                        rim_margin_px = 0.0, fov_deg = 89.0)
-    seen = findall(>(0), Array(r.coverage))
-    rows = extrema(I -> I[1], seen); cols = extrema(I -> I[2], seen)
-    return (-180 + δ * (cols[1] - 1), -180 + δ * cols[2], 89 - δ * rows[2], 89 - δ * (rows[1] - 1))
-end
 
 "An H × W × 3 linear image as 8-bit sRGB at a fixed exposure, each plane times its white-balance factor (NaN, no frame: black): Features' `srgb_image`."
 save_srgb(path, img, exposure, wb) = PNGFiles.save(path, VgtkFeatures.srgb_image(img; exposure, white_balance = wb))
@@ -561,20 +538,6 @@ function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_m
     return nothing
 end
 
-# V's summary on the domain: its range, where its maximum is, and its largest antipodal asymmetry about `center`, over every
-# other frame pixel's centre in the camera's pixels (the frames' map).
-function vignetting_summary(v, lens, center, frame_map, (Hf, Wf), rim, fov_mask)
-    pts = [frame_map(SVector(j - 0.5, i - 0.5)) for i in 1:2:Hf, j in 1:2:Wf]
-    pts = filter(fov_mask, vec(pts))
-    lv = [log(v(u)) for u in pts]
-    imax = argmax(lv)
-    ρ = maximum(norm(u - center) for u in pts)
-    asym = 0.0
-    for r in range(0, 0.95ρ, length = 40), φ in range(0, π, length = 73)[1:(end - 1)]
-        a = center + r * SVector(cos(φ), sin(φ)); b = center - r * SVector(cos(φ), sin(φ))
-        (fov_mask(a) && fov_mask(b)) || continue
-        asym = max(asym, abs(v(a) / v(b) - 1))
-    end
     return (; V_min = exp(minimum(lv)), V_max = exp(lv[imax]), max_at = pts[imax], max_offset_px = norm(pts[imax] - center),
             asymmetry = asym)
 end
@@ -594,8 +557,9 @@ function run_example(config_path)
     T["registration"] = reg.seconds
     uc = C.cfg["render"]["up"]
     uc in ("level", "first_frame") || error("render.up = $uc is not \"level\" or \"first_frame\"")
-    up = uc == "level" ? level_up(reg.rotations)[1] : SMatrix{3, 3, Float64, 9}(LinearAlgebra.I)
-    uc == "level" && say(log, "up frame: level (the frames' x axes span a plane to $(round(level_up(reg.rotations)[2][1]; sigdigits = 2)), least eigenvalue)")
+    sweep = sweep_up(reg.rotations)                                       # the sweep's up; its least eigenvalue the roll-free check
+    up = uc == "level" ? up_frame(sweep.up) : SMatrix{3, 3, Float64, 9}(LinearAlgebra.I)
+    uc == "level" && say(log, "up frame: level (the frames' x axes span a plane to $(round(sweep.eigenvalues[1]; sigdigits = 2)), least eigenvalue)")
 
     # the frames on the compute backend: the images (renders) and the masks (fit, seams) apart. The backend changes no result
     # (device and host agree to 1e-6 in log V, the package's tests); PANORAMA_VIGNETTING_DEVICE overrides the config's for one run
@@ -663,13 +627,13 @@ function run_example(config_path)
     rim = Float64(d["rim_margin_px"])
     domain = PanoramaStitching.frame_region(lens, W, H, rim)
     in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
-    pp = SVector{2, Float64}(principal_point(lens))
-    rows = Any[(kind, res, after, vignetting_summary(V, lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain))]
+    pp = SVector{2, Float64}(VgtkCore.principal_point(VgtkCore.model(lens).intrinsics))
+    rows = Any[(kind, res, after, vignetting_summary(V, pp, inp.frame_map, (Hf, Wf); mask = in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
         s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
         write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf))
-        push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)))
+        push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), pp, inp.frame_map, (Hf, Wf); mask = in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
     write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)

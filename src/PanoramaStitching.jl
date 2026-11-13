@@ -26,7 +26,7 @@ RANSAC samplers, seeded by VisualGeometryToolkitCore's `stable_seed`).
 """
 module PanoramaStitching
 
-using LinearAlgebra: LinearAlgebra, I, norm, normalize, dot, cross
+using LinearAlgebra: LinearAlgebra, I, norm, normalize, dot
 using Statistics: Statistics, quantile
 using StatsBase: StatsBase
 using StableRNGs: StableRNG
@@ -49,10 +49,10 @@ using PrecompileTools: @setup_workload, @compile_workload       # src/precompile
 export register_rotations, Registration, verify_pairs, VerifiedPairs
 export chain_tracks, refine_rotations, refine_camera_and_rotations, RotationBundleMetadata
 export world_direction, FrameSamples, sample_frames, fibonacci_directions
-export true_up, up_frame, PanoramaView, panorama_view, render_panorama, render_cube_map
+export true_up, up_frame, sweep_up, PanoramaView, panorama_view, render_panorama, render_cube_map, coverage_extent
 export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, IntensityNoise, IntensityAndPositionNoise
 export IntensityGains, ChannelGains
-export score_seams
+export score_seams, vignetting_summary
 public detect_features, pair_bearings, frame_region, CUBE_FACES, GAIN_CORRECTIONS, OBSERVATION_NOISES
 
 include("tracks.jl")

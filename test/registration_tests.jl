@@ -493,3 +493,58 @@ end
     @test_throws MethodError VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, 5.0; Symbol("thres" * "hold") => 5.0,
         scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior())
 end
+
+# The example's helpers, hoisted (0.7): the up frame of an up direction (Core's look-at frame), the up of a roll-free sweep, the
+# sweep's coverage box and a vignetting's summary. Against the example's own expressions of 0.6 (level_up, up_frame's body),
+# kept here verbatim as the reference.
+@testitem "up_frame(u), sweep_up, coverage_extent, vignetting_summary: the example's helpers hoisted" setup = [SyntheticSequence, BayerMaps] begin
+    using Test, LinearAlgebra, StaticArrays
+    using PanoramaStitching: up_frame, true_up, sweep_up, coverage_extent, vignetting_summary
+    import VisualGeometryToolkitCore as VgtkCore
+    # 0.6's frame of an up direction (up_frame's body and the example's level_up, identical): −y the up, z the forward projected
+    frame06(u) = (z = SVector(0.0, 0.0, 1.0); zt = normalize(z - dot(z, u) * u); yt = -u; hcat(cross(yt, zt), yt, zt))
+    for (p, r) in ((0, 0), (10, 0), (-25, 3), (40, -7))
+        u = normalize(true_up(p, r))
+        @test up_frame(p, r) == up_frame(true_up(p, r))
+        @test isapprox(up_frame(u), frame06(u); atol = 4eps())              # Core's lookat_pose frame: the same up to rounding
+        @test up_frame(u)' * up_frame(u) ≈ I && det(up_frame(u)) ≈ 1
+    end
+    @test up_frame(0, 0) ≈ I                                               # a level first frame is its own true-up frame
+    # sweep_up: 0.6's level_up verbatim (the eigen-decomposition, the sign, the eigenvalues)
+    function level_up06(rotations)
+        A = zeros(3, 3)
+        for R in rotations
+            x = SMatrix{3, 3, Float64, 9}(R)[:, 1]; A .+= x * x'
+        end
+        E = eigen(Symmetric(A)); a = SVector{3}(E.vectors[:, 1])
+        down = sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in rotations)
+        a = dot(a, down) > 0 ? -a : a
+        return frame06(a), E.values, a
+    end
+    q = sequence(; K = 4)
+    pitch = VgtkCore.exp_so3(SVector(deg2rad(12.0), 0.0, 0.0))             # a pitched roll-free sweep: up is not the yaw axis
+    Rp = [SMatrix{3, 3, Float64, 9}(pitch * VgtkCore.exp_so3(SVector(0.0, deg2rad(40.0 * k), 0.0))) for k in 0:5]
+    for Rs in (q.R, Rp)
+        s = sweep_up(Rs); F, λ, a = level_up06(Rs)
+        @test s.up == a && s.eigenvalues == λ                              # bit for bit
+        @test isapprox(up_frame(s.up), F; atol = 4eps())
+    end
+    @test sweep_up(Rp).eigenvalues[1] < 1.0e-20                            # roll free: the x axes span a plane
+    @test isapprox(sweep_up(Rp).up, -(pitch * SVector(0.0, 1.0, 0.0)); atol = 1.0e-12)   # the true up (−y of the pitched frame)
+    # coverage_extent: the box of the frames' coverage in the up frame holds every frame's optical axis
+    up = up_frame(sweep_up(q.R).up)
+    ext = coverage_extent(q.model, q.frames, q.R, up, FRAME_MAP; δ = 1.0)
+    @test -180 <= ext[1] < ext[2] <= 180 && -89 <= ext[3] < ext[4] <= 89
+    for R in q.R
+        d = up' * (SMatrix{3, 3, Float64, 9}(R) * SVector(0.0, 0.0, 1.0))
+        p = rad2deg.(VgtkCore.project(VgtkCore.Equirectangular(), d))
+        @test ext[1] <= p[1] <= ext[2] && ext[3] <= p[2] <= ext[4]
+    end
+    # vignetting_summary: a radial V about c is largest at c, symmetric about it, its range the domain's
+    c = SVector(500.0, 500.0); v(u) = exp(-sum(abs2, u - c) / 400^2)
+    keep(u) = hypot(u[1] - 500, u[2] - 500) < 400
+    s = vignetting_summary(v, c, FRAME_MAP, (500, 500); mask = keep)
+    @test s.max_offset_px <= 2 * sqrt(2) && s.V_max ≈ v(s.max_at) && s.asymmetry < 1.0e-12
+    @test s.V_min ≈ minimum(v(FRAME_MAP(SVector(j - 0.5, i - 0.5))) for i in 1:2:500, j in 1:2:500 if keep(FRAME_MAP(SVector(j - 0.5, i - 0.5))))
+    @test_throws ArgumentError vignetting_summary(v, c, FRAME_MAP, (500, 500); mask = _ -> false)
+end

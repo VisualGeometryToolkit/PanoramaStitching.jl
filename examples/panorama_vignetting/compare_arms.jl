@@ -52,7 +52,7 @@ function compare_arms(arms_path)
         device = get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])
         move = device == "cuda" ? CuArray : identity
         dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps)
-        up = level_up(reg.rotations)[1]
+        up = up_frame(sweep_up(reg.rotations).up)
         sc = C.cfg["seams"]; d = C.cfg["domain"]
         ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])
         sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
@@ -61,7 +61,7 @@ function compare_arms(arms_path)
         rim = Float64(d["rim_margin_px"])
         domain = PanoramaStitching.frame_region(lens, W, H, rim)
         in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
-        pp = SVector{2, Float64}(principal_point(lens))
+        pp = SVector{2, Float64}(VgtkCore.principal_point(VgtkCore.model(lens).intrinsics))
         # the profile about the image circle's centre, or about the principal point when the camera has none; out to the domain's edge
         cc = VgtkCore.lens_coverage(lens) isa Union{VgtkCore.Circle, VgtkCore.Ellipse} ? coverage_center(lens) : pp
         rr = domain_radius(lens, cc, W, H, rim)
@@ -80,7 +80,7 @@ function compare_arms(arms_path)
             G = fit_gains(Ca, r)
             seams = [score_seams(lens, dev.frames, reg.rotations, sview; vignetting = V, gains = G, plane = p, skw...) for p in 1:3]
             pooled = vcat([filter(!isnan, vec(Array(s.ratio))) for s in seams]...)
-            summ = vignetting_summary(V, lens, pp, inp.frame_map, (Hf, Wf), rim, in_domain)
+            summ = vignetting_summary(V, pp, inp.frame_map, (Hf, Wf); mask = in_domain)
             row = Dict{String, Any}("arm" => a["name"], "vignetting" => a["vignetting"], "gain_correction" => a["gain_correction"],
                                     "observation_noise" => a["observation_noise"], "seconds" => dt,
                                     "solves" => m.observation_noise isa IntensityAndPositionNoise ? 1 + m.observation_noise.iterations : 1,

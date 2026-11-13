@@ -39,6 +39,15 @@ model entity an **observation** (Core's `conventions/naming.md`).
   refused naming them; with `:tone` neither is given. The example resolves each frame's noise (`frame_noise`: the RAW files'
   capture settings, the body's `[registration] sensor_noise_record` — a `vgio/sensor_noise` file or `"none"` — and Core's
   `sensor_noise`), decodes the LinearRaw with it, and refuses the 0.6 keys `electrons_per_dn` and `read_noise_dn` by name.
+- New public API, hoisted from the example (RC's cvpr2027 called them from run.jl): `sweep_up(rotations) -> (; up, eigenvalues)`
+  (the up of a roll-free sweep: the least eigenvector of Σ x_k x_kᵀ over the frames' image x axes, signed against their down
+  axes; the eigenvalues its roll-free diagnostic), `up_frame(up::AbstractVector)` (the true-up frame of an up direction,
+  VisualGeometryToolkitCore's `lookat_pose` frame; `up_frame(pitch, roll) = up_frame(true_up(pitch, roll))`, the one frame
+  construction the example's `level_up` duplicated), `coverage_extent(camera, frames, rotations, up, frame_map; δ)` (the
+  sweep's longitude/latitude box) and `vignetting_summary(v, center, frame_map, frame_size; mask)` (a V's range, maximum and
+  antipodal asymmetry; it took an unused camera and rim before). The example's `level_up`, `coverage_extent`,
+  `vignetting_summary` and `principal_point(lens)` are deleted; it calls these and Core's `principal_point(intrinsics)`.
+  `up_frame` now goes through Core's look-at frame: equal to 0.6's to rounding (≤ 4 eps), not bit for bit.
 - The example's decoded-RAW cache is opt-in, `[decode] cache = true | false` (the configs of record set `true`), and the example
   loads no JLD2 itself: VisualGeometryToolkitEval brings it, and with it Features' FileCache extension. A caller that includes
   run.jl (RC's cvpr2027) needs no JLD2 of its own; the example's environment drops its direct JLD2 entry.

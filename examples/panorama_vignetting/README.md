@@ -148,7 +148,7 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 
 | file | content |
 |---|---|
-| `decoded/linear_raws.jld2` | with `[decode] cache = true`: the decoded frames, VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content and decode settings — a derived cache, regenerable from the RAW files |
+| `decoded/linear_raws.jld2` | with `[decode] cache = true`: the decoded frames, VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content, decode settings and noise (Features keys it by the noise's digest) — a derived cache, regenerable from the RAW files |
 | `verified_pairs_<key>.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
 | `registration_<key>.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting |
 | `run-<run key>/` | the run's outputs below, keyed by the whole config, with Eval's run records (`write_run_records`: the config of record, the key, the driver, the inputs read) |

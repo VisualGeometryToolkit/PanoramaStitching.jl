@@ -42,6 +42,35 @@
 # =============================================================================
 
 """
+    vignetting_summary(v, center, frame_map, frame_size; mask) -> (; V_min, V_max, max_at, max_offset_px, asymmetry)
+
+A vignetting `v` (any callable `v(u)` of a camera pixel, e.g. a fitted Core model)
+summarised over a frame's pixels: every other row and column of a frame of
+`frame_size = (H, W)`, each at its pixel centre in the camera's pixels through
+`frame_map`, those `mask(u)` keeps (the fit's domain). `V_min`, `V_max` its range
+there, `max_at` where its maximum is and `max_offset_px` that point's distance to
+`center` (camera pixels: the principal point, or the coverage's centre), and
+`asymmetry` the largest `|V(c + r·e) / V(c − r·e) − 1|` over 40 radii to 0.95 of
+the farthest kept point and 72 azimuths, both points kept.
+"""
+function vignetting_summary(v, center::AbstractVector, frame_map, frame_size::Tuple{Integer, Integer}; mask)
+    Hf, Wf = frame_size
+    c = SVector{2, Float64}(center)
+    pts = filter(mask, vec([frame_map(SVector(j - 0.5, i - 0.5)) for i in 1:2:Hf, j in 1:2:Wf]))
+    isempty(pts) && throw(ArgumentError("vignetting_summary: the mask keeps no pixel"))
+    lv = [log(v(u)) for u in pts]
+    imax = argmax(lv)
+    ρ = maximum(norm(u - c) for u in pts)
+    asym = 0.0
+    for r in range(0, 0.95ρ, length = 40), φ in range(0, π, length = 73)[1:(end - 1)]
+        a = c + r * SVector(cos(φ), sin(φ)); b = c - r * SVector(cos(φ), sin(φ))
+        (mask(a) && mask(b)) || continue
+        asym = max(asym, abs(v(a) / v(b) - 1))
+    end
+    return (; V_min = exp(minimum(lv)), V_max = exp(lv[imax]), max_at = pts[imax], max_offset_px = norm(pts[imax] - c), asymmetry = asym)
+end
+
+"""
     ConjugateGradient(; tolerance, max_iter)
 
 [`fit_vignetting`](@ref)'s solve by Jacobi-preconditioned conjugate gradients

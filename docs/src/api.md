@@ -35,10 +35,12 @@ PanoramaStitching.frame_region
 ```@docs
 true_up
 up_frame
+sweep_up
 PanoramaView
 panorama_view
 render_panorama
 render_cube_map
+coverage_extent
 PanoramaStitching.CUBE_FACES
 ```
 
@@ -57,4 +59,5 @@ ChannelGains
 PanoramaStitching.GAIN_CORRECTIONS
 PanoramaStitching.OBSERVATION_NOISES
 score_seams
+vignetting_summary
 ```
