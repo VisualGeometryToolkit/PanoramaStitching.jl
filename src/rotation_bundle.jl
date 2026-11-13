@@ -173,18 +173,18 @@ NLLSsolver.nres(::_HeldFrame) = static(2)
 NLLSsolver.varindices(r::_HeldFrame) = r.varind
 NLLSsolver.robustkernel(r::_HeldFrame) = NLLSsolver.robustkernel(r.obs)
 Base.eltype(::_HeldFrame) = Float64
-NLLSsolver.getvars(r::_HeldFrame{1, <:_Observation{E}}, vars::Vector) where {E} =
-    (r.frame, vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart})
+# NLLSsolver reads only the block's variables (the direction, and the camera); the held frame's rotation is prepended for `obs`.
+NLLSsolver.getvars(r::_HeldFrame{1, <:_Observation{E}}, vars::Vector) where {E} = (vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart},)
 NLLSsolver.getvars(r::_HeldFrame{2, <:_CameraObservation{E}}, vars::Vector) where {E} =
-    (r.frame, vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[2]])
-NLLSsolver.computeresidual(r::_HeldFrame, args...) = NLLSsolver.computeresidual(r.obs, args...)
-NLLSsolver.computeresjac(varflags, r::_HeldFrame, args...) = NLLSsolver.computeresjac(Int(varflags) << 1, r.obs, args...)
+    (vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[2]])
+NLLSsolver.computeresidual(r::_HeldFrame, args...) = NLLSsolver.computeresidual(r.obs, r.frame, args...)
+NLLSsolver.computeresjac(varflags, r::_HeldFrame, args...) = NLLSsolver.computeresjac(Int(varflags) << 1, r.obs, r.frame, args...)
+NLLSsolver.computecost(vars::AbstractVector, r::_HeldFrame) =
+    VgtkCore.finite_cost(NLLSsolver.computecost(r.obs, r.frame, NLLSsolver.getvars(r, vars)...))
 # The same observation with its variables' indices in the solve's variables (the held ones left out).
 _with_varind(o::_Observation{E, C, P, L, W}, varind) where {E, C, P, L, W} =
     _Observation{E, C, P, L, W}(o.camera, o.projection, o.x, varind, o.kernel, o.whitening)
 _with_varind(o::_CameraObservation{E, L, W}, varind) where {E, L, W} = _CameraObservation{E, L, W}(o.x, varind, o.kernel, o.whitening)
-NLLSsolver.computecost(vars::AbstractVector, r::_HeldFrame) =
-    VgtkCore.finite_cost(NLLSsolver.computecost(r.obs, NLLSsolver.getvars(r, vars)...))
 
 # Its closed-form frame and direction blocks (those of `_Observation`, through the variable's model) and its camera block,
 # ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
