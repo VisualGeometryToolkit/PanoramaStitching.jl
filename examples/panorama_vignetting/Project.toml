@@ -1,20 +1,16 @@
-# The example's environment (not a workspace member: it pulls CUDA and LibRaw_jll, which the package does not need, and
-# CUDA_Runtime_jll and CUDNN_jll, whose CUDA 12 builds ONNX Runtime's CUDA provider takes for LoMa: lazy artifacts, downloaded
-# on the first LoMa session where a CUDA device is visible).
-# Instantiate once: julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
 CUDNN_jll = "62b44479-cb7b-5706-934f-f13b2eb2e645"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
-JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"   # backs Features' FileCache: the decoded-RAW cache
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LibRaw_jll = "d66ac3f3-933a-5ab8-8aa2-9e591b3c5af3"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PNGFiles = "f57f5aa1-a3ce-4bc8-8ab9-96f992907883"
 PanoramaStitching = "5b03ddb8-fc94-4165-83c9-5c94f3367646"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"            # the autocalibration check verifies its declared inputs' sha256
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
@@ -25,8 +21,8 @@ VisualGeometryToolkitEval = "86c88899-11c8-4b8e-8d7a-f01a8ab99b28"
 VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
 VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 
-[sources]
-PanoramaStitching = {path = "../.."}
+[sources.PanoramaStitching]
+path = "../.."
 
 [compat]
 CUDA = "5"
@@ -37,6 +33,7 @@ JLD2 = "0.6.7"
 JSON = "1"
 LibRaw_jll = "0.22"
 PNGFiles = "0.4"
+PanoramaStitching = "0.6"
 StatsBase = "0.34"
 VisualGeometryToolkitCore = "0.9.4"
 VisualGeometryToolkitEstimation = "0.10"
