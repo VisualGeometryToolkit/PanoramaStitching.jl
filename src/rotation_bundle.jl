@@ -241,8 +241,9 @@ The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
 keyword — [`refine_camera_and_rotations`](@ref) is the autocalibration; its `backproject` and `backproject_with_jacobian` give the start and
 the Jacobian; a `CameraModel` or a `BoundedCamera`), projected through its
 closed-form forward map π, its model's `imaging_transform` (a grid lens's
-`SplineLens` through its forward spline, VisualGeometryToolkitEstimation's
-`fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`). A residual is NaN off
+`SplineLens` through its forward spline: give a SplineLens camera one with VisualGeometryToolkitEstimation's
+`fit_forward_spline(camera; tolerance)`, which keeps its backward, K and frame, while `fit_camera(SplineLens, …)` turns
+a gauge-K camera onto its optical axis, a new frame). A residual is NaN off
 the camera model's `valid_domain` (a grid lens's lattice), where its
 back-projection Jacobian is undefined; the lens coverage does not enter the
 bundle. The

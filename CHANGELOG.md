@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Docs: `refine_rotations`' docstring (and the forward map's comment in `sampling.jl`) name
+  VisualGeometryToolkitEstimation's `fit_forward_spline(camera; tolerance)` as the way to give a held SplineLens camera its
+  forward spline. They named `fit_camera(SplineLens, camera, imaged_region(camera); tolerance)`, which turns a gauge-K
+  camera onto its optical axis (a new frame), so rotations estimated against the camera no longer fit it.
+
 ## 0.6.1 (unreleased)
 
 A patch: no API change, the same results.
