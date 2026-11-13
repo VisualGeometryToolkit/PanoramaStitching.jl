@@ -126,10 +126,10 @@ end
 # The camera of the camera variable: the model of its chart (Core's `restrict` of the `ParameterManifold`, a
 # `SubsetManifold`). Another variable in that slot is a construction error, refused by name; the method also keeps
 # inference from reading a frame or direction variable as the camera (NLLSsolver's cost loop is generic over the blocks).
-_camera_model(c::VgtkCore.SubsetManifold) = VgtkCore.model(c)
-_camera_model(c) = throw(ArgumentError("refine_camera_and_rotations: the camera variable must be its restricted ParameterManifold, got a $(typeof(c))"))
+_camera_of_chart(c::VgtkCore.SubsetManifold) = VgtkCore.model(c)
+_camera_of_chart(c) = throw(ArgumentError("refine_camera_and_rotations: the camera variable must be its restricted ParameterManifold, got a $(typeof(c))"))
 @inline _pixel_residual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
-    _project_model(_camera_model(c), _camera_direction(ch, d)) - r.x
+    _project_model(_camera_of_chart(c), _camera_direction(ch, d)) - r.x
 NLLSsolver.computeresidual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
     _whiten(r.whitening, _pixel_residual(r, ch, d, c))
 
@@ -143,7 +143,7 @@ NLLSsolver.computecost(vars::AbstractVector, r::Union{_Observation, _CameraObser
 # ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
 # the camera; only the free variables' columns are returned, in that order.
 function NLLSsolver.computeresjac(varflags, r::_CameraObservation, ch::_FrameChart, d::VgtkCore.Eliminable, c)
-    m = _camera_model(c)
+    m = _camera_of_chart(c)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
     u = _project_model(m, f)
     _, M = VgtkCore.backproject_with_jacobian(m, u)
