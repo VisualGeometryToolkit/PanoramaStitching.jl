@@ -1,6 +1,6 @@
 name = "PanoramaStitching"
 uuid = "5b03ddb8-fc94-4165-83c9-5c94f3367646"
-version = "0.6.1"
+version = "0.6.2"
 authors = ["James Pritts <jbpritts@gmail.com>"]
 
 [deps]
@@ -40,7 +40,7 @@ StaticArrays = "1.9"
 Statistics = "1"
 StatsBase = "0.34"
 VisualGeometryToolkitCore = "0.9.4"
-VisualGeometryToolkitEstimation = "0.9"
+VisualGeometryToolkitEstimation = "0.9.2"
 VisualGeometryToolkitFeatures = "0.8"
 julia = "1.12"
 
