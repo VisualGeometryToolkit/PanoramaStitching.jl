@@ -1,4 +1,4 @@
-docs-pass: 1e0160b
+docs-pass: 51933f0
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
 # 0.7.0 docs pass (julia-docs-pass), at the release tree resolved from General alone
@@ -24,6 +24,8 @@ General (refreshed from GitHub) alone: Core 0.10.0, IO 0.10.0, Features 0.9.0, E
     (EuclideanMap(R, zero(SVector{3, Float64}) .* m)), the guide's section 5 the same (docs/src/guide.md:262), and
     write_results_check.jl runs from run_checks.jl:10.
 [x] Docs build: docs/make.jl (strict) in the release gate.
+[x] Re-recorded at 51933f0: w10-ps bc81352 merged (test/track_check_tests.jl only: the track check's test fixes the up-v13
+    gate ad2f3059 carried; the release gate c301a9e failed that item without them); no docs change.
 
 ---
 
