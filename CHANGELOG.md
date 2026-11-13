@@ -19,9 +19,11 @@ model entity an **observation** (Core's `conventions/naming.md`).
 - `verify_pairs` / `register_rotations`: `max_lag` and `overlap_deg` are read only by `pairs = :lag_overlap`, which needs
   both; they now default to `nothing` and giving either with `pairs = :all` is an `ArgumentError` (no inert setting). So is
   `verify_pairs`' `averaging_optimization_strategy` with `pairs = :all` (`register_rotations` still takes it for its averaging).
-  The example's configs of record drop the two keys (they use `pairs = "all"`), which re-keys their verified-pairs stage.
+  The example's configs of record drop the two keys (they use `pairs = "all"`), which re-keys their verified-pairs stage;
+  the example refuses the two keys with `pairs = "all"` when it reads a config. Its registration record is format v15
+  (`pairs_removed` the filters' only), so records of 0.6 are recomputed, not reused.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation" (the example's cache-format
-  strings `REGISTRATION_FORMAT`/`PAIRS_FORMAT` keep their words: they are the cached stages' keys).
+  string `PAIRS_FORMAT` and the formats' version history keep their words: the format string is the cached stage's key).
 
 ### Fixed
 

@@ -387,7 +387,7 @@ end
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
     for name in (:RENAMED_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration,
-                 :refuse_output)
+                 :refuse_output, :refuse_inert_pair_keys)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -425,9 +425,15 @@ end
         e
     end
     @test err isa ArgumentError && occursin("bundle_iterations", err.msg)
+    # `max_lag` / `overlap_deg` with pairs = "all" are refused when the config is read (no inert setting, cached or not)
+    inert(t) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}(t), "config [registration]")
+    @test_throws "read only by pairs" inert(("pairs" => "all", "max_lag" => 1))
+    @test_throws "read only by pairs" inert(("pairs" => "all", "overlap_deg" => 120.0))
+    @test inert(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))["max_lag"] == 1
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
+        @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
         # the view-graph filters' tolerances and the detector's variant are stated
         reg = TOML.parsefile(joinpath(dir, f))["registration"]

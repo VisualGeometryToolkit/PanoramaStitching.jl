@@ -122,13 +122,19 @@ Base.eltype(::_CameraObservation) = Float64
 # The domain of a parametric `CameraModel` (the only camera the autocalibration takes) is Core's whole plane or, inside a
 # fold, its pixel disc, an `Ellipse{Float64}`: the field holds either, so a fold appearing or vanishing at an LM update keeps
 # the variable's one type.
-struct _CameraVariable{S}
+# The model itself is held too (built once per value, not per residual). An update takes plain Float64 steps only (the
+# bundle's residuals have closed-form Jacobians; Core evaluates a domain on plain numbers): a dual step is a MethodError.
+struct _CameraVariable{S, M}
     chart::S
+    model::M
     domain::Union{VgtkCore.WholePlane, VgtkCore.Ellipse{Float64}}
 end
-_CameraVariable(c::VgtkCore.SubsetManifold) = _CameraVariable(c, VgtkCore.valid_domain(VgtkCore.model(c)))
+function _CameraVariable(c::VgtkCore.SubsetManifold)
+    m = VgtkCore.model(c)
+    return _CameraVariable(c, m, VgtkCore.valid_domain(m))
+end
 NLLSsolver.nvars(v::_CameraVariable) = NLLSsolver.nvars(v.chart)
-NLLSsolver.update(v::_CameraVariable, δ, start = 1) = _CameraVariable(NLLSsolver.update(v.chart, δ, start))
+NLLSsolver.update(v::_CameraVariable, δ::AbstractVector{Float64}, start = 1) = _CameraVariable(NLLSsolver.update(v.chart, δ, start))
 
 # π(f) of the camera model `m`, NaN off its valid domain `domain` (as `_project`); `_image` without the test (the camera
 # block's derivative, taken where the test holds).
@@ -140,7 +146,7 @@ end
 # The camera of the camera variable: the model of its chart. Another variable in that slot is a construction error, refused
 # by name; the method also keeps inference from reading a frame or direction variable as the camera (NLLSsolver's cost loop
 # is generic over the blocks).
-_camera_of_chart(c::_CameraVariable) = VgtkCore.model(c.chart)
+_camera_of_chart(c::_CameraVariable) = c.model
 _camera_of_chart(c) = throw(ArgumentError("refine_camera_and_rotations: the camera variable must be its _CameraVariable, got a $(typeof(c))"))
 @inline _pixel_residual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
     _project_model(_camera_of_chart(c), c.domain, _camera_direction(ch, d)) - r.x
@@ -548,6 +554,7 @@ function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unco
     Haa = zeros(na, na)
     D = Dict{Int, SMatrix{2, 2, Float64, 4}}()                               # per kept track: its direction block
     Hab = Dict{Int, Matrix{Float64}}()                                       # its coupling to the frames and the camera, na × 2
+    seen = Dict{Int, Set{Int}}()                                             # the frames that observe it
     for (j, i, o) in kept
         ob = observation(j, i, o)
         e, J = NLLSsolver.computeresjac(7, ob, NLLSsolver.getvars(ob, vars)...)
@@ -557,6 +564,7 @@ function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unco
         Ja = Matrix(J[:, [1:3; 6:size(J, 2)]]); Jv = SMatrix{2, 2, Float64, 4}(J[:, 4:5])
         Haa[ia, ia] .+= w .* (Ja' * Ja)
         get!(() -> zeros(na, 2), Hab, j)[ia, :] .+= w .* (Ja' * Jv)
+        push!(get!(Set{Int}, seen, j), k)
         D[j] = get(D, j, zero(SMatrix{2, 2, Float64, 4})) + w * (Jv' * Jv)
     end
     tracks = sort!(collect(keys(D))); nt = length(tracks)
@@ -565,8 +573,9 @@ function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unco
     Dmin > 0 || singular()
     S = Haa
     for j in tracks
-        Hj = Hab[j]
-        S .-= Hj * inv(D[j]) * Hj'                                             # the direction's Schur complement
+        rows = [(3k - 2):(3k) for k in sort!(collect(seen[j]))]; rows = [reduce(vcat, rows); cam]   # its nonzero rows only
+        Hj = Hab[j][rows, :]
+        S[rows, rows] .-= Hj * inv(D[j]) * Hj'                                 # the direction's Schur complement
     end
     Sf = LinearAlgebra.Symmetric(S[free, free])
     C = LinearAlgebra.cholesky(Sf; check = false)
@@ -574,7 +583,8 @@ function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unco
     ν = 2n - (length(free) + 2nt)
     s2 = S2 / ν
     nc = length(free) - nd                                                  # the camera's coordinates are the last nd free ones
-    Σc = s2 .* inv(C)[(nc + 1):end, (nc + 1):end]
+    E = zeros(length(free), nd); E[(nc + 1):end, :] = LinearAlgebra.I(nd)
+    Σc = s2 .* (C \ E)[(nc + 1):end, :]                                    # the camera's block of S⁻¹ alone (nd right-hand sides)
     scaled(M) = (d = 1 ./ sqrt.(LinearAlgebra.diag(M)); LinearAlgebra.Symmetric(d .* M .* d'))
     names = VgtkCore.parameter_names(VgtkCore.model(cc)); idx = [findfirst(==(q), names) for q in free_names]
     θ(z) = VgtkCore.parameter_vector(VgtkCore.model(VgtkCore.retract(cc, z)))[idx]

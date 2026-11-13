@@ -72,6 +72,13 @@ const RETIRED_REGISTRATION_KEYS = ("bundle_iterations" => "the bundle is ONE LM 
                                    "scoring_threshold" * "_px" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (no threshold)",
                                    "scoring_threshold" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (the MSAC threshold " *
                                    "is retired)")
+# The keys only `pairs = "lag_overlap"` reads (PanoramaStitching 0.7 refuses them with "all": no inert setting), refused when
+# the config is read, so a config fails the same way whether or not its stages are cached.
+function refuse_inert_pair_keys(table, where)
+    table["pairs"] == "all" && any(k -> haskey(table, k), ("max_lag", "overlap_deg")) &&
+        throw(ArgumentError("$where: max_lag and overlap_deg are read only by pairs = \"lag_overlap\"; remove them with pairs = \"all\""))
+    return table
+end
 function refuse_retired_registration(table, where)
     for (old, why) in RETIRED_REGISTRATION_KEYS
         haskey(table, old) && throw(ArgumentError("$where: the key $old is retired: $why"))
@@ -96,6 +103,7 @@ function load_config(path)
     refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
     refuse_circle(cfg["inputs"], "$path [inputs]")
     refuse_retired_registration(cfg["registration"], "$path [registration]")
+    refuse_inert_pair_keys(cfg["registration"], "$path [registration]")
     base = joinpath(VgtkEval.Experiments.results_root(), "panorama_vignetting")
     out = joinpath(base, cfg["name"])
     run = VgtkEval.Experiments.keyed_cell_dir(cfg, cfg["name"], "run"; base)    # <out>/run-<run_key(cfg)>
@@ -203,12 +211,14 @@ end
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 # v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
+# v15: `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
+# pairs_no_covariance alone; PanoramaStitching 0.7); the format's words the terminology's (detections).
 # v14: keypoint covariances off: the bundle's observations the keypoints' pixels, its scale and width in pixels.
 # v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's pooled_noise_scale; SIMFIT++ deleted).
 # v12: every bundle observation whitened by its keypoint's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for IntensityAndPositionNoise.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v14 (plain keypoints, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its keypoint's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v15 (pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
