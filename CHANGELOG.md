@@ -8,6 +8,9 @@ model entity an **observation** (Core's `conventions/naming.md`).
 
 ### Breaking
 
+- `[compat]`: VisualGeometryToolkitCore "0.10", VisualGeometryToolkitFeatures "0.9", VisualGeometryToolkitEstimation "0.11"
+  (the example: VisualGeometryToolkitEval "0.8", VisualGeometryToolkitIO "0.10"); floors raised to the gated resolution at
+  release.
 - `fit_vignetting`'s keyword `measurement_noise` → `observation_noise`, and `VignettingMetadata`'s field of the same name; the
   old keyword is refused naming the new one (`ArgumentError`), no alias.
 - `MEASUREMENT_NOISES` → `OBSERVATION_NOISES` (the `TagRegistry` family `:observation_noise`; its tags unchanged:
