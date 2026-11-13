@@ -33,8 +33,9 @@ function _check_detector_settings(what, selection, detection_image, models, nois
 end
 # `:vst` stabilises the green cells' Poisson–Gaussian noise: the model's noise must carry a gain (VisualGeometryToolkitCore's
 # `PoissonGaussian`); a read-noise-only, relative or absent noise has none, refused naming the model's reason.
-_check_vst_model(what, m::VgtkCore.SensorModel{<:Any, <:VgtkCore.PoissonGaussian}) = nothing
-_check_vst_model(what, m::VgtkCore.SensorModel) =
+_check_vst_model(what, m::VgtkCore.SensorModel) = _check_vst_noise(what, m, m.noise)
+_check_vst_noise(what, m, ::VgtkCore.PoissonGaussian) = nothing
+_check_vst_noise(what, m, _) =
     throw(ArgumentError("$what: detection_image = :vst needs a gain: a PoissonGaussian characterisation (VisualGeometryToolkitCore's " *
                         "sensor_model), got a $(nameof(typeof(m.noise))) noise (the model's reason: $(m.reason))"))
 
