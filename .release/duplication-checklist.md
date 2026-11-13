@@ -75,3 +75,8 @@ the MSAC threshold key retired) and, with `scoring = nothing`, by Estimation's d
   warping); nothing to switch
 - [x] `check_duplication(PanoramaStitching)` against vgtk 9762b9b4 (Core 0.9.4), BlobBoards bee3b43, lodr-09, rsdr-09,
   CaliBlobs cb-release: 0 findings (Slurm 10548)
+
+## 0.6.2 (on VisualGeometryToolkitEstimation 0.10)
+
+Nothing to delete: the release widens one compat entry; the stack duplication audit lists no item for PanoramaStitching at
+this release (its open items: none). `check_duplication` runs in the suite.
