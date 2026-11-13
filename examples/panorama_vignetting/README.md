@@ -153,10 +153,10 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 | `verified_pairs_<key>.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
 | `registration_<key>.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting |
 | `run-<run key>/` | the run's outputs below, keyed by the whole config, with Eval's run records (`write_run_records`: the config of record, the key, the driver, the inputs read) |
-| `panorama.json`, `panorama_map.png` | the results of record, a `vgio/panorama/v2.0` file (VisualGeometryToolkitIO's `save_panorama`; read it with `VgtkIO.load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`); V as an image (normalized to its maximum) |
-| `panorama_compare_<model>.json`, `panorama_compare_<model>_map.png` | the comparison fits (`compare_models`), the same record |
-| `seams_uncorrected.png`, `seams_corrected.png` | the seam-ratio maps |
-| `cylindrical_*.png`, `equal_area_*.png`, `rectilinear_*.png` | the renders, `_corrected` and `_uncorrected` at the same exposure |
+| `panorama.json`, `panorama_map.json` (+ `.tiff`) | the results of record, a `vgio/panorama/v2.0` file (VisualGeometryToolkitIO's `save_panorama`; read it with `VgtkIO.load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`) and the bundle's termination record (`fit`); V over the frame's pixels, a Float32 `vgio/raster` (`VgtkIO.load_raster`), a data result |
+| `panorama_compare_<model>.json`, `panorama_compare_<model>_map.json` (+ `.tiff`) | the comparison fits (`compare_models`), the same record |
+| `seams_uncorrected.png`, `seams_corrected.png` | the seam-ratio maps — display figures (8-bit PNG), not data |
+| `cylindrical_*.png`, `equal_area_*.png`, `rectilinear_*.png` | the renders, `_corrected` and `_uncorrected` at the same exposure — display figures (sRGB PNG), not data: the results of record are `panorama.json` and its V raster |
 | `summary.md`, `run.log` | the numbers: registration, the fits (retcode, residual spread, V's range, maximum and asymmetry), the seam spreads, the wall times |
 
 **Viewing a run.** `compare_makie.jl` shows a run's uncorrected and corrected outputs in GLMakie (Features'

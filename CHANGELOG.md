@@ -62,6 +62,9 @@ model entity an **observation** (Core's `conventions/naming.md`).
   `observation_noise` is required (`nothing` or a `PositionNoise`); `OBSERVATION_NOISES` tags `"none"` and `"position"`
   (`"intensity"`, `"intensity_and_position"` refused naming them). The example's `[vignetting] log_intensity_scale` is
   refused; `arms.toml` states the position arms' `relative_noise = 0.01`.
+- The example's V map is a data result (owner ruling "RAW + results only"): `<stem>_map.json` + `.tiff`, a Float32
+  `vgio/raster` of V over the frame's pixels (IO's `save_raster`; read with `load_raster`), in place of the normalised 8-bit
+  `<stem>_map.png`. The panorama renders and the seam maps stay PNG: display figures, said so in the example's README.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation", the example's cache formats
   and their version history included (owner, 2026-11-13): its verified-pairs record is format v11, so 0.6 caches are
   recomputed, not reused.

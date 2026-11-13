@@ -521,8 +521,8 @@ end
 # A run's results of record (a fit's): VisualGeometryToolkitIO's vgio/panorama/v2.0 — the camera, the frames' rotations camera → world
 # (d = R_k·f_k, the world the first frame's camera frame; zero translations: the camera only rotates; each frame's RAW file
 # its image), the fitted V, the frames' gains (none when vignetting.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
-# `VgtkIO.load_panorama`; and V as an image, normalized to its maximum (one value per frame pixel, at its centre in the
-# camera's pixels: the frames' map).
+# `VgtkIO.load_panorama`; and V over the frame's pixels (one value per frame pixel, at its centre in the camera's pixels: the
+# frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`.
 function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf))
     v = VgtkCore.estimate(res)
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
@@ -532,8 +532,12 @@ function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_m
     VgtkIO.with_caller(PanoramaStitching) do
         VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit)
     end
-    M = [v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
-    PNGFiles.save(joinpath(C.run, stem * "_map.png"), CT.Gray{FPN.N0f8}.(clamp.(M ./ maximum(M), 0, 1)))
+    # V over the frame's pixel grid (each frame pixel's centre through the frames' map): a DATA result, IO's Float32
+    # `vgio/raster` (owner ruling "RAW + results only"), `values[r, c]` the frame's pixel at row r, column c
+    M = Float32[v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
+    VgtkIO.with_caller(PanoramaStitching) do
+        VgtkIO.save_raster(joinpath(C.run, stem * "_map.json"), M; frame = VgtkCore.PixelFrame{:colmap}, nan = :none)
+    end
     return nothing
 end
 
