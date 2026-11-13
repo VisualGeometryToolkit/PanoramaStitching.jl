@@ -118,7 +118,7 @@ end
     K = length(q.frames)
     reg = register_rotations(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5,
                              detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
-                             min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
+                             min_score = 0.0, pairs = :all, min_inliers = 40, seed = 1, max_trials = 10000,
                              min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
                               bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:K]
@@ -228,6 +228,24 @@ end
     @test VgtkEstimation.components(PanoramaStitching._view_graph(4, verified)) == [[1, 2], [3, 4]]
     @test_throws ArgumentError VgtkEstimation.fit_rotation_averaging(PanoramaStitching._view_graph(4, verified);
                                                                  optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}())
+    # a lag pair verified with NO determined covariance splits the edges' graph: the joining pair across it is tried (it was a
+    # refusal "register_rotations: dropping … disconnects" before any pair past the lag was tried)
+    R3 = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:3]
+    Σ3 = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6)
+    v3 = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}(
+        (1, 2) => (rotation = R3[2]' * R3[1], inliers = 100, covariance = nothing),
+        (2, 3) => (rotation = R3[3]' * R3[2], inliers = 100, covariance = Σ3))
+    tried3 = Tuple{Int, Int}[]
+    PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried3, (i, j)); v3[(i, j)] = (rotation = R3[j]' * R3[i], inliers = 100, covariance = Σ3); nothing),
+                                             v3, 3, 1, 70.0, VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
+    @test tried3 == [(1, 3)] && VgtkEstimation.components(PanoramaStitching._view_graph(3, v3)) == [collect(1:3)]
+    # the pair settings: max_lag and overlap_deg are :lag_overlap's, which needs both; :all refuses them (no inert setting)
+    @test PanoramaStitching._check_pair_settings("f", :all, nothing, nothing) === nothing
+    @test PanoramaStitching._check_pair_settings("f", :lag_overlap, 1, 60.0) === nothing
+    @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, 1, nothing)
+    @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, nothing, 60.0)
+    @test_throws "needs max_lag" PanoramaStitching._check_pair_settings("f", :lag_overlap, nothing, 60.0)
+    @test_throws "needs overlap_deg" PanoramaStitching._check_pair_settings("f", :lag_overlap, 1, nothing)
     # the samplers: one stream per (seed, i, j), reproducible
     draw(s, i, j) = rand(PanoramaStitching._pair_rng(s, i, j), UInt64, 4)
     @test draw(1, 1, 2) == draw(1, 1, 2) && draw(1, 1, 2) != draw(1, 1, 3)
@@ -313,7 +331,7 @@ end
            xtol = 1.0e-10)
     reg(margin) = register_rotations(q.frames, bare; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = margin,
                                      asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
-                                     pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1, max_trials = 10000,
+                                     pairs = :all, min_inliers = 40, seed = 1, max_trials = 10000,
                                      min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
                                      bundle_optimization_strategy = bkw.optimization_strategy,
                                      bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)

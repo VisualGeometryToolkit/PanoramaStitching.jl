@@ -66,6 +66,12 @@
     # drops: with the filters none is
     @test reg.dropped == 0
     @test off.dropped > 0 && length(off.tracks) < length(reg.tracks)
+    # a verified pair with no determined covariance is never an edge: it is `no_covariance`, not one the filters `removed`
+    p0 = (1, 2); e0 = vp.verified[p0]
+    vn = VerifiedPairs(vp.features, merge(vp.verified, Dict(p0 => (rotation = e0.rotation, inliers = e0.inliers, covariance = nothing))),
+                                         vp.inlier_matches, vp.stats, vp.scales, vp.loma)
+    rn = register_rotations(vn, BCAM; bkw...)
+    @test rn.no_covariance == [p0] && rn.removed == [(2, 4)]
     # a tolerance must be positive (radians) or nothing
     @test_throws ArgumentError register_rotations(vp, BCAM; bkw..., cycle_tol = 0.0)
     @test_throws ArgumentError register_rotations(vp, BCAM; bkw..., orientation_tol = -1.0)
@@ -78,7 +84,7 @@ end
     cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[64.0VgtkCore.px, 64.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
                                  VgtkCore.Size2(128, 128))
     kw = (; frame_map = IDENTITY_MAP, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = :imas25,
-          max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 90.0,
+          max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all,
           min_inliers = 10, seed = 1, max_trials = 10, min_trials = 1, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
           bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 1,
           bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)

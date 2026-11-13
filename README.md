@@ -63,7 +63,7 @@ end
 # The rotations from the frames alone, then the cylindrical panorama at 0.25° per pixel.
 reg = register_rotations(frames, camera; frame_map, tone_percentile = 99.5, detector_margin_px = 20.0,
                          asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
-                         min_score = 0.0, pairs = :all, max_lag = 1, overlap_deg = 120.0, min_inliers = 40, seed = 1,
+                         min_score = 0.0, pairs = :all, min_inliers = 40, seed = 1,
                          max_trials = 10_000, min_trials = 100,
                          bundle_optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.5), bundle_max_iter = 1000,
                          bundle_ftol = 1e-10, bundle_xtol = 1e-10)

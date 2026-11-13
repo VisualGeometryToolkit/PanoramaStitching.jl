@@ -16,8 +16,26 @@ model entity an **observation** (Core's `conventions/naming.md`).
   → `observation_noise_iterations` (in `arms.toml` too); a config holding an old key is refused by name.
 - On VisualGeometryToolkitCore 0.10's names: `correspondences` (was `csponds`) and `bearing_correspondences` (was
   `bearing_csponds`) in `pair_bearings`; no API change of PanoramaStitching's own from them.
+- `verify_pairs` / `register_rotations`: `max_lag` and `overlap_deg` are read only by `pairs = :lag_overlap`, which needs
+  both; they now default to `nothing` and giving either with `pairs = :all` is an `ArgumentError` (no inert setting). So is
+  `verify_pairs`' `averaging_optimization_strategy` with `pairs = :all` (`register_rotations` still takes it for its averaging).
+  The example's configs of record drop the two keys (they use `pairs = "all"`), which re-keys their verified-pairs stage.
 - Prose, docstrings and test names: "keypoint" → "detection", "measurement" → "observation" (the example's cache-format
   strings `REGISTRATION_FORMAT`/`PAIRS_FORMAT` keep their words: they are the cached stages' keys).
+
+### Fixed
+
+- `refine_camera_and_rotations`' covariance (`metadata.calibration`) is accumulated block by block — the frames' and the
+  camera's information, per track its 2 × 2 direction block and coupling — and the directions eliminated by their Schur
+  complement, instead of dense rows of every observation over every unknown (30 frames × 3000 tracks: about 0.9 GB and a dense
+  inverse of the ~6100 unknowns, on every call). The same quantities, to rounding.
+- The autocalibration bundle computes the camera model's `valid_domain` once per value of the camera variable, not in every
+  residual and Jacobian (a lens with its own fold searches its view-angle limit for it).
+- `Registration.removed` lists only the pairs the view-graph filters removed; a pair with no determined rotation covariance
+  is in `no_covariance` only (it was in both).
+- `pairs = :lag_overlap`: a lag pair with no determined covariance that splits the frames no longer stops the registration
+  before the pairs past the lag are tried; the joining pair across the split is tried, and the final graph is checked.
+- Core's `with_model` replaces PanoramaStitching's private copy; `docs/Project.toml`'s Core compat aligned with the package's.
 
 ## 0.6.3 (unreleased)
 

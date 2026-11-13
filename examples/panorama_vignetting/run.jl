@@ -310,12 +310,14 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
         vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
                           max_detections = r["max_detections"], det..., descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
-                          min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = r["max_lag"], overlap_deg = r["overlap_deg"],
+                          min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = get(r, "max_lag", nothing), overlap_deg = get(r, "overlap_deg", nothing),
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, Float64(r["outlier_halfwidth_px"]);
                                                                      scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior()),
                           local_optimization_strategy = rotation_local_optimization(r),
-                          max_trials = r["max_trials"], min_trials = r["min_trials"], averaging_optimization_strategy = averaging_strategy(r),
+                          max_trials = r["max_trials"], min_trials = r["min_trials"],
+                          # the averaging aims :lag_overlap's pairs past the lag; :all reads none (verify_pairs refuses it)
+                          (r["pairs"] == "lag_overlap" ? (; averaging_optimization_strategy = averaging_strategy(r)) : (;))...,
                           execution_provider = provider, say = m -> say(log, m))
         merge!(pairs_record(vp), Dict{String, Any}("frames" => inp.names, "seconds" => time() - t0))
     end

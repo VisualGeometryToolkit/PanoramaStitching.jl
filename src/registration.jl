@@ -98,15 +98,17 @@ VerifiedPairs(features::Vector{F}, verified::AbstractDict, args...) where {F} =
 
 """
     verify_pairs(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                 selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
-                 scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials, averaging_optimization_strategy,
+                 selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag = nothing, overlap_deg = nothing, min_inliers, seed,
+                 scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials, averaging_optimization_strategy = <Estimation's>,
                  execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
 The verified frame pairs of the pure-rotation sequence `frames`: the features,
 the matching and the pairwise rotations of [`register_rotations`](@ref) (its
-keywords of the same names), stopping before the view graph. `averaging_optimization_strategy` is
-read only by `pairs = :lag_overlap`, whose rotation averaging of the verified
-pairs aims the pairs past the lag. A `pairs` other than `:all` or
+keywords of the same names), stopping before the view graph. `max_lag`,
+`overlap_deg` and `averaging_optimization_strategy` are read only by
+`pairs = :lag_overlap` (its rotation averaging of the verified pairs aims the
+pairs past the lag), which needs the first two; giving any of them with
+`pairs = :all` is an `ArgumentError`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a detector setting
 [`detect_features`](@ref) refuses (`detection_image = :vst` needs every frame a
 `LinearRaw`) and an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
@@ -116,11 +118,15 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
                       tone_percentile::Real, detector_margin_px::Real, asift_tilts, max_detections::Integer,
                       selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
                       saturated::Union{Nothing, AbstractVector} = nothing, descriptor::Symbol, matcher::Symbol,
-                      min_score::Real, pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
+                      min_score::Real, pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing,
+                      overlap_deg::Union{Nothing, Real} = nothing, min_inliers::Integer, seed::Integer,
                       scoring = nothing, local_optimization_strategy = nothing, max_trials::Integer, min_trials::Integer,
                       averaging_optimization_strategy = _NotGiven(), execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("verify_pairs", retired)
-    _check_pair_settings("verify_pairs", pairs, max_lag)
+    _check_pair_settings("verify_pairs", pairs, max_lag, overlap_deg)
+    pairs === :all && !(averaging_optimization_strategy isa _NotGiven) &&
+        throw(ArgumentError("verify_pairs: averaging_optimization_strategy is read only by pairs = :lag_overlap (its averaging aims " *
+                            "the pairs past the lag); leave it out with pairs = :all"))
     _check_frames("verify_pairs", frames, selection, detection_image, detection_noise)
     saturated === nothing || length(saturated) == length(frames) ||
         throw(DimensionMismatch("verify_pairs: $(length(frames)) frames and $(length(saturated)) saturation masks"))
@@ -169,18 +175,26 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         return nothing
     end
     for i in 1:K, j in (i + 1):K
-        (pairs === :all || j - i <= max_lag) && verify(i, j)
+        (pairs === :all || j - i <= max_lag::Integer) && verify(i, j)
     end
-    pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag, overlap_deg, averaging_optimization_strategy)
+    pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag::Integer, overlap_deg::Real, averaging_optimization_strategy)
     loma = (; descriptor = VgtkFeatures.loma_provenance(desc), matcher = VgtkFeatures.loma_provenance(match))
     return VerifiedPairs(feats, verified, inlier_matches, stats, scales, loma)
 end
 
 # The settings every entry checks before any feature is detected.
 # (The execution provider: VisualGeometryToolkitFeatures' `resolve_execution_provider`, which refuses an unknown one.)
-function _check_pair_settings(what, pairs, max_lag)
+# `max_lag` and `overlap_deg` are read only by `pairs = :lag_overlap`, which needs both; with `:all` giving either is refused
+# (no inert setting).
+function _check_pair_settings(what, pairs, max_lag, overlap_deg)
     pairs in (:all, :lag_overlap) || throw(ArgumentError("$what: pairs = :$pairs is not :all or :lag_overlap"))
-    pairs === :all || max_lag >= 1 || throw(ArgumentError("$what: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
+    if pairs === :all
+        (max_lag === nothing && overlap_deg === nothing) ||
+            throw(ArgumentError("$what: max_lag and overlap_deg are read only by pairs = :lag_overlap; leave them out with pairs = :all"))
+    else
+        (max_lag !== nothing && max_lag >= 1) || throw(ArgumentError("$what: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
+        overlap_deg === nothing && throw(ArgumentError("$what: pairs = :lag_overlap needs overlap_deg (degrees)"))
+    end
     return nothing
 end
 # The detector's settings and, with detection_image = :vst, every frame a LinearRaw: before any feature is detected.
@@ -214,7 +228,7 @@ end
 """
     register_rotations(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                        selection = :spread, detection_image = :tone, detection_noise = nothing, saturated = nothing,
-                       descriptor, matcher, min_score, pairs, max_lag, overlap_deg, min_inliers, seed,
+                       descriptor, matcher, min_score, pairs, max_lag = nothing, overlap_deg = nothing, min_inliers, seed,
                        scoring = nothing, local_optimization_strategy = nothing, max_trials, min_trials,
                        averaging_optimization_strategy = <Estimation's>, cycle_tol = deg2rad(2), orientation_tol = deg2rad(5),
                        bundle_optimization_strategy = Triggs{WelschShape}(…), bundle_max_iter, bundle_ftol,
@@ -248,7 +262,8 @@ RANSAC's:
   `max_lag` apart; while the verified pairs leave the frames in more than one
   part, as when a lag pair is dropped, the pair between two parts nearest in
   capture order; then those whose optical axes, aimed by the rotation
-  averaging of the verified pairs, are within `overlap_deg`); a pair is verified by `find_rotation` (its `scoring` and
+  averaging of the verified pairs, are within `overlap_deg`; `max_lag` and
+  `overlap_deg` are given with `:lag_overlap` only, refused with `:all`); a pair is verified by `find_rotation` (its `scoring` and
   `local_optimization_strategy` objects, `nothing` for VisualGeometryToolkitEstimation's
   defaults; `max_trials`, `min_trials`; the sampler seeded from `seed`) and kept
   with at least `min_inliers` inliers. Its residuals are in the camera's pixels
@@ -260,8 +275,9 @@ RANSAC's:
   pairs off the averaged rotations by more than `orientation_tol` removed
   (`filter_by_orientation`) and the averaging again (radians; `nothing` skips
   that filter). A periodic scene verifies a pair one period off as well as the
-  true one, and only the view graph tells them apart. The removed pairs are the
-  result's `removed`; their matches make no track.
+  true one, and only the view graph tells them apart. The pairs the filters removed are the
+  result's `removed` (a pair with no determined rotation covariance is never an edge: it is
+  the result's `no_covariance`, not `removed`); their matches make no track.
 - scale: per verified pair its RANSAC scorer's own scale ŝ (Core's `noise_scale` of
   its result: the consensus set's Student-t posterior scale) and the result's degrees
   of freedom, the pairs' `scales` ([`VerifiedPairs`](@ref)), px. No second scale
@@ -289,7 +305,7 @@ the first form is `register_rotations(verify_pairs(frames, camera; frame_map, �
 A task verb: it composes the estimators above and does none of its own. Each
 pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
 stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
-`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap` and an `execution_provider` other
+`:lag_overlap`, a `max_lag` below 1 or no `overlap_deg` with `:lag_overlap`, either given with `:all`, and an `execution_provider` other
 than `:auto`, `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `ArgumentError` too.
@@ -299,19 +315,21 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             selection::Symbol = :spread, detection_image::Symbol = :tone, detection_noise = nothing,
                             saturated::Union{Nothing, AbstractVector} = nothing,
                             descriptor::Symbol, matcher::Symbol, min_score::Real,
-                            pairs::Symbol, max_lag::Integer, overlap_deg::Real, min_inliers::Integer, seed::Integer,
+                            pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing, overlap_deg::Union{Nothing, Real} = nothing,
+                            min_inliers::Integer, seed::Integer,
                             scoring = nothing, local_optimization_strategy = nothing, max_trials::Integer, min_trials::Integer,
                             averaging_optimization_strategy = _NotGiven(), cycle_tol::Union{Nothing, Real} = deg2rad(2),
                             orientation_tol::Union{Nothing, Real} = deg2rad(5), bundle_optimization_strategy = _DEFAULT_BUNDLE_STRATEGY,
                             bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real,
                             execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("register_rotations", retired)
-    _check_pair_settings("register_rotations", pairs, max_lag)
+    _check_pair_settings("register_rotations", pairs, max_lag, overlap_deg)
     _check_tolerances("register_rotations", cycle_tol, orientation_tol)
     vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
                       detection_image, detection_noise, saturated, descriptor, matcher,
                       min_score, pairs, max_lag, overlap_deg, min_inliers, seed, scoring, local_optimization_strategy, max_trials, min_trials,
-                      averaging_optimization_strategy, execution_provider, say)
+                      averaging_optimization_strategy = pairs === :lag_overlap ? averaging_optimization_strategy : _NotGiven(),
+                      execution_provider, say)
     return register_rotations(vp, camera; frame_map, averaging_optimization_strategy, cycle_tol, orientation_tol, bundle_optimization_strategy,
                               bundle_max_iter, bundle_ftol, bundle_xtol, say)
 end
@@ -329,7 +347,8 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
     (; fit, graph) = VgtkEstimation.fit_filtered_rotation_averaging(_view_graph(K, vp.verified); cycle_tol, orientation_tol,
                                                                    _averaging_kw(averaging_optimization_strategy)...)
     avg = fit
-    removed = sort!([p for p in keys(vp.verified) if !haskey(graph, p...)])
+    # removed by the filters: the edges of the averaged graph it no longer holds (a pair with no covariance was never an edge)
+    removed = sort!([p for p in keys(vp.verified) if p ∉ no_covariance && !haskey(graph, p...)])
     say("  rotation averaging: $(VgtkEstimation.nedges(graph)) edges ($(length(removed)) removed by the view-graph filters" *
         "$(isempty(removed) ? "" : ": " * join(["$(i - 1)-$(j - 1)" for (i, j) in removed], ", "))), edges with their rotation covariances (scale $(VgtkCore.noise_scale(avg)), $(VgtkCore.scale_source(avg))), $(avg.retcode)")
     ts, dropped = chain_tracks(Dict(p => m for (p, m) in vp.inlier_matches if haskey(graph, p...)))
@@ -353,7 +372,9 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
 end
 
 # The averaging's strategy: the caller's (`optimization_strategy`, an Irls or nothing), else VisualGeometryToolkitEstimation's
-# own default (`[fit_rotation_averaging] optimization_strategy`), by leaving the keyword out.
+# own default (`[fit_rotation_averaging] optimization_strategy`), by leaving the keyword out: `_NotGiven()`, the keyword's
+# default, is "not given" (Estimation's default applies), never a refusal.
+struct _NotGiven end
 _averaging_kw(::_NotGiven) = (;)
 _averaging_kw(strategy) = (; optimization_strategy = strategy)
 
@@ -385,13 +406,14 @@ _no_covariance_pairs(verified) = sort!([p for (p, e) in verified if e.covariance
 # The view graph of the frames 1:K and the verified pairs: VisualGeometryToolkitEstimation's `ViewGraph`, each edge the pair's
 # rotation `R_ij` (`f_j = R_ij·f_i`) with its absolute covariance, weighted by its inlier count:
 # `Attributed(Uncertain(R_ij, CovMat(Σ_R)), (; weight))`. A pair with no determined covariance is no edge; a drop that splits
-# the frames is refused naming the dropped pairs (the averaging of a partial graph would hide them).
-function _view_graph(K::Integer, verified::AbstractDict)
+# the frames is refused naming the dropped pairs (the averaging of a partial graph would hide them); `check = false` skips that
+# refusal (`:lag_overlap`'s joining loop, which may yet bridge the split with a pair past the lag).
+function _view_graph(K::Integer, verified::AbstractDict; check::Bool = true)
     edges = Dict(p => VgtkCore.Attributed(VgtkCore.Uncertain(e.rotation, VgtkCore.CovMat(e.covariance)), (; weight = Float64(e.inliers)))
                  for (p, e) in verified if e.covariance !== nothing)
     vg = VgtkEstimation.ViewGraph(collect(1:K), edges)
     dropped = _no_covariance_pairs(verified)
-    if !isempty(dropped)
+    if check && !isempty(dropped)
         all_pairs = VgtkEstimation.ViewGraph(collect(1:K), Dict(p => VgtkCore.Attributed(e.rotation, (; weight = 1.0)) for (p, e) in verified))
         length(VgtkEstimation.components(vg)) > length(VgtkEstimation.components(all_pairs)) && throw(ArgumentError(
             "register_rotations: dropping the pair(s) with no determined rotation covariance " *
@@ -413,7 +435,7 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_
     tried = Set{Tuple{Int, Int}}()                               # pairs past the lag: no lag pair comes up again
     attempt(p) = (push!(tried, p); verify(p...))
     while true
-        parts = VgtkEstimation.components(_view_graph(K, verified))
+        parts = VgtkEstimation.components(_view_graph(K, verified; check = false))
         length(parts) == 1 && break
         part = zeros(Int, K)
         for (c, fs) in enumerate(parts)
@@ -424,7 +446,7 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_
         attempt(argmin(p -> (p[2] - p[1], p[1]), joins))
     end
     K > 1 || return nothing
-    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(_view_graph(K, verified); _averaging_kw(averaging_strategy)...))
+    A = VgtkCore.estimate(VgtkEstimation.fit_rotation_averaging(_view_graph(K, verified; check = false); _averaging_kw(averaging_strategy)...))
     axis = [SMatrix{3, 3}(A[k]) * SVector(0.0, 0.0, 1.0) for k in 1:K]
     for i in 1:K, j in (i + max_lag + 1):K
         ((i, j) ∉ tried && rad2deg(VgtkCore.angle_between(axis[i], axis[j])) < overlap_deg) && attempt((i, j))
