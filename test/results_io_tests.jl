@@ -10,9 +10,9 @@
         WorldFrame, EuclideanMap, control_points, m
     using Rotations: RotMatrix
     c = SVector(430.0, 390.0)
-    radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
+    falloff(u) = -sum(abs2, u - c) / 400^2                                # log V: a quadratic fall-off about c
     G = [1.0 1.0 1.0; 1.10 1.12 1.15; 0.93 0.90 0.86; 1.25 1.20 1.12; 0.97 0.95 0.99; 1.02 1.07 1.11]
-    q = vignetting_sequence(radial; gains = G)
+    q = vignetting_sequence(falloff; gains = G)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     r = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(),
                        saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
@@ -35,7 +35,7 @@
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
         rk = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0)
         a = render_panorama(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(r), gains = r.metadata.gains, rk...)
-        Rq = [b.rotations[k].R for k in 1:length(b.rotations)]                          # the loaded QuatRotations, as the guide passes them
+        Rq = [b.rotations[k].R for k in 1:length(b.rotations)]                          # the loaded QuatRotations, as the guide hands them over
         l = render_panorama(b.camera, q.frames, Rq, view; vignetting = b.vignetting, gains = b.gains, rk...)
         @test a.owner == l.owner && isapprox(a.image, l.image; nans = true, rtol = 1.0e-12)
         sk = (; saturated = q.saturated, chunk = 20_000, plane = 2, rk...)
