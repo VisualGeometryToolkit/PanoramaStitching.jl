@@ -11,7 +11,8 @@
     import VisualGeometryToolkitCore as VgtkCore
     # K sweep frames 0.5 rad apart and frame K + 1 a near-duplicate of frame `dup` (1° off); tracks of world directions (σ px), and
     # `nwrong` wrong matches planted on the pair `wrong_pair`: detection of track a in frame i ↔ detection of track b in frame j,
-    # a and b true tracks each seen in only one of the two frames — each chains a and b into one wrong track.
+    # a and b true tracks each seen in only one of the two frames and in no frame together — each chains a and b into one wrong
+    # track of two clusters.
     function planted_sweep(rng; K = 5, dup = 3, wrong_pair = (1, 2), nwrong = 40, σ = 0.4)
         R = Dict(k => (k == 1 ? SMatrix{3, 3}(1.0I) :
                        SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec(0.05randn(rng), 0.5 * (k - 1), 0.05randn(rng))))) for k in 1:K)
@@ -35,10 +36,16 @@
         end
         # the planted wrong matches on `wrong_pair` and, the repeated structure of a near-duplicate view, on (dup, K + 1)
         planted = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
+        frames(t) = Set(k for k in 1:N if haskey(index[k], t))
         for (i, j) in (wrong_pair, (dup, N))
             as = shuffle(rng, [t for t in keys(index[i]) if !haskey(index[j], t)])
             bs = shuffle(rng, [t for t in keys(index[j]) if !haskey(index[i], t)])
-            planted[(i, j)] = [(a, b) for (a, b) in zip(first(as, nwrong), first(bs, nwrong))]
+            used = Set{Int}(); planted[(i, j)] = Tuple{Int, Int}[]
+            for a in as, b in bs                                              # a and b in no common frame: the chain survives
+                length(planted[(i, j)]) < nwrong || break
+                (a in used || b in used || !isempty(intersect(frames(a), frames(b)))) && continue
+                push!(planted[(i, j)], (a, b)); push!(used, a, b)
+            end
             append!(matches[(i, j)], [(index[i][a], index[j][b]) for (a, b) in planted[(i, j)]])
         end
         scales = Dict(p => (sigma = σ, dof = 2 * verified[p].inliers - 3) for p in keys(verified))
@@ -77,7 +84,9 @@
         h = on.track_check
         @test length(h) >= 2 && h[1].removed > 0 && h[end].removed == 0           # removed, re-solved, until none is removed
         @test h[1].rms == off.bundle.rms && h[1].inlier_rms == off.bundle.metadata.inlier_rms   # the first solve is the plain bundle
-        @test on.bundle.rms < off.bundle.rms / 2                                  # the wrong chains' residuals gone
+        @test off.bundle.rms > 5 * off.bundle.metadata.inlier_rms                 # the wrong chains' far cluster in the plain rms
+        @test on.bundle.rms < off.bundle.rms / 5                                  # removed: the rms drops to the inliers'
+        @test on.bundle.metadata.inlier_rms < 1.05 * off.bundle.metadata.inlier_rms   # the inliers barely move (the cut sits by the loss width)
         @test on.bundle.rms ≈ h[end].rms && on.bundle.metadata.inlier_rms ≈ h[end].inlier_rms
         # every residual of the final solve within the cut; the inlier rms is over those within the loss width
         cut = 3.035 * on.bundle_sigma
@@ -87,8 +96,7 @@
         # the planted wrong matches: no track keeps both of a planted pair's observations
         p = (1, 2)
         @test count(((a, b),) -> any(t -> (1, s.index[1][a]) in t && (2, s.index[2][b]) in t, on.tracks), s.planted[p]) == 0
-        # the rotations: as good as the plain bundle's or better (the true ones, in the first frame's frame)
-        err(reg) = maximum(k -> maximum(abs, SMatrix{3, 3}(reg.rotations[k]) - SMatrix{3, 3}(s.R[k])), 1:s.N)
-        @test err(on) <= err(off) + 1.0e-6
+        # the rotations: the true ones (frame 1 = I: the common frame), to the noise
+        @test all(maximum(abs, SMatrix{3, 3}(on.rotations[k]) - SMatrix{3, 3}(s.R[k])) < 1.0e-3 for k in 1:s.N)
     end
 end
