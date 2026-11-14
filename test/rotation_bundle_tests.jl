@@ -113,8 +113,10 @@ end
     a = refine_rotations(CAM, start, tin; kw...); b = refine_rotations(CAM, start2, tin; kw...)
     @test VgtkCore.converged(a) && VgtkCore.converged(b)
     free = collect(2:K)
-    sa = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(a), a.metadata.directions, tin, free), 1.5)
-    sb = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(b), b.metadata.directions, tin, free), 1.5)
+    ma = bundle_model(CAM, VgtkCore.estimate(a), a.metadata.directions, tin, free)
+    sa = stationarity_radius(ma, 1.5)
+    # b's Newton step in a's metric (the two at one minimum: one quadratic model), so the triangle inequality holds in one metric
+    sb = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(b), b.metadata.directions, tin, free), 1.5; H = sa.H)
     Δ = coordinates_between(VgtkCore.estimate(a), a.metadata.directions, VgtkCore.estimate(b), b.metadata.directions, free)
     @info "two starts: $(a.iterations) and $(b.iterations) LM iterations; their distance $(sqrt(dot(Δ, sa.H * Δ))), radii $(sa.radius) + $(sb.radius)"
     @test sqrt(dot(Δ, sa.H * Δ)) <= sa.radius + sb.radius
@@ -123,6 +125,11 @@ end
     if !VgtkCore.nlls_features().schur
         @test_throws r"eliminate = true.*MultiVariateLSschur" refine_rotations(CAM, start, obs0; kw..., eliminate = true)
         @test_throws r"eliminate = true.*MultiVariateLSschur" PanoramaStitching.refine_camera_and_rotations(CAM, start, obs0; kw..., eliminate = true)
+    else   # with the Schur system the eliminated and the joint solve are two paths to one minimum: within their radii
+        j = refine_rotations(CAM, start, tin; kw..., eliminate = false)
+        sj = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(j), j.metadata.directions, tin, free), 1.5; H = sa.H)
+        Δj = coordinates_between(VgtkCore.estimate(a), a.metadata.directions, VgtkCore.estimate(j), j.metadata.directions, free)
+        @test sqrt(dot(Δj, sa.H * Δj)) <= sa.radius + sj.radius
     end
     # the closed-form Jacobian blocks against ForwardDiff through the variables' updates
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(dirs[1]))

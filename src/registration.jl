@@ -120,7 +120,7 @@ tries every pair past the lag that shares any view). A `pairs` other than `:all`
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a detector setting
 [`detect_features`](@ref) refuses (`detection_image = :vst` needs every frame a
 `LinearRaw`), an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
-and, with `:lag_overlap`, a camera whose footprint VisualGeometryToolkitCore's
+and, with `:lag_overlap` and a pair past the lag, a camera whose footprint VisualGeometryToolkitCore's
 `view_overlap` refuses (a model that is not a `CameraModel`, a region the lens
 cannot back-project, as a bare sensor's corners past a fisheye's fold, a field
 of view within 3° of the backward axis: give the camera its lens coverage)
@@ -137,7 +137,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
                       averaging_optimization_strategy = _NotGiven(), execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("verify_pairs", retired)
     _check_pair_settings("verify_pairs", pairs, max_lag)
-    _check_view_overlap("verify_pairs", camera, pairs, 0.0)
+    _check_view_overlap("verify_pairs", camera, pairs, 0.0; nframes = length(frames), max_lag)
     pairs === :all && !(averaging_optimization_strategy isa _NotGiven) &&
         throw(ArgumentError("verify_pairs: averaging_optimization_strategy is read only by pairs = :lag_overlap (its averaging aims " *
                             "the pairs past the lag); leave it out with pairs = :all"))
@@ -436,7 +436,7 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     _check_pair_settings("register_rotations", pairs, max_lag)
     _check_tolerances("register_rotations", cycle_tol, orientation_tol)
     _check_near_duplicate("register_rotations", near_duplicate_overlap)
-    _check_view_overlap("register_rotations", camera, pairs, near_duplicate_overlap)
+    _check_view_overlap("register_rotations", camera, pairs, near_duplicate_overlap; nframes = length(frames), max_lag)
     vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
                       detection_image, sensor_models, noise_sigmas, saturated, descriptor, matcher,
                       min_score, pairs, max_lag, min_inliers, seed, scoring, local_optimization_strategy, max_trials, min_trials,
@@ -533,11 +533,12 @@ const _NEAR_DUPLICATE_OVERLAP = 0.90
 # The camera's footprint, checked before any feature is detected: the registration reads VisualGeometryToolkitCore's
 # view_overlap through `camera` (the near-duplicates, unless `near_duplicate_overlap` is 0; `:lag_overlap`'s pairs past the
 # lag), so its refusals of the footprint (a model that is not a CameraModel, a region the lens cannot back-project, a field
-# of view within 3° of the backward axis) come at the entry, not after every pair was matched. Where nothing reads it,
-# nothing is refused.
-function _check_view_overlap(what, camera, pairs, near_duplicate_overlap)
+# of view within 3° of the backward axis) come at the entry, not after every pair was matched. Where nothing can read it
+# (the near-duplicate check off; no pair past the lag: `nframes ≤ max_lag + 1`), nothing is refused; a near-duplicate check
+# that is on may read it (whether a kept pair is left to test is known only after the matching), so it is checked.
+function _check_view_overlap(what, camera, pairs, near_duplicate_overlap; nframes = typemax(Int), max_lag = 0)
     readers = String[]
-    pairs === :lag_overlap && push!(readers, "pairs = :lag_overlap (its pairs past the lag)")
+    pairs === :lag_overlap && nframes > something(max_lag, 0) + 1 && push!(readers, "pairs = :lag_overlap (its pairs past the lag)")
     near_duplicate_overlap > 0 && push!(readers, "near_duplicate_overlap = $near_duplicate_overlap (the near-duplicate pairs)")
     isempty(readers) && return nothing
     # one frame's footprint (Core's view_overlap builds it, and refuses it, before any pair): a stopgap until Core exposes the

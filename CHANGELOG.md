@@ -2,15 +2,34 @@
 
 ## 0.8.1 (unreleased)
 
-A test-only patch: no source file under src/ changed, no API change.
+### Changes
 
-- The bundle tests no longer pin a count of LM iterations or the last digits of a minimum recorded on one machine (GitHub's
-  runner failed 0.7.0's `test/autocalibration_tests.jl:173`, `(res.iterations, res.n) == (19, 1489)`: the iterations and
-  the last digits follow how each machine's compiled code rounds). Each bundle asserts it converged by a tolerance within
-  its iteration cap, with its fixture's observation count; the exact-data autocalibration keeps its derived rms bound
-  (`2eps(1200.0)`) and its checks against the true camera and rotations; the camera-held bundles are compared with the same
-  bundle solved jointly (`eliminate = false`, another rounding path to the same minimum) at the stop tolerances' own bound
-  (the rms to `rtol = ftol`, the rotations and directions to `rtol = 2xtol`).
+- `refine_rotations` / `refine_camera_and_rotations`: `eliminate = true` is refused by name (an `ArgumentError` naming
+  NLLSsolver's missing `MultiVariateLSschur`) where the loaded NLLSsolver has no Schur system, which no installable
+  NLLSsolver has; there it was silently the joint solve. `eliminate` defaults to whether the Schur system is there (`false`
+  today, the only path). Migrate: drop `eliminate = true`. The keyword is to be removed in wave 11
+  (`.release/wave11-removals.md`).
+- `register_rotations` / `verify_pairs`: a camera whose footprint VisualGeometryToolkitCore's `view_overlap` refuses (a
+  region the lens cannot back-project, as a bare sensor's corners past a fisheye's fold; a model that is not a `CameraModel`;
+  a field of view within 3° of the backward axis) is refused at the entry, before any feature is detected, wherever the
+  registration may read `view_overlap` (the near-duplicate check, unless `near_duplicate_overlap = 0`; `:lag_overlap` with a
+  pair past the lag). 0.8.0 refused it only after every pair was matched. Migrate: give the camera its lens coverage.
+
+### Tests
+
+- No count of LM iterations, and no last digits of a minimum recorded on one machine, is pinned (GitHub's runner failed
+  0.7.0's `test/autocalibration_tests.jl:173`, `(res.iterations, res.n) == (19, 1489)`). Each bundle asserts it converged
+  by a tolerance within its cap, with its fixture's observation count; the exact-data autocalibration keeps its rms bound
+  (`2eps(1200.0)`) and its checks against the true camera and rotations.
+- The references are derived and independent of the solver (the eliminated-versus-joint comparison of the previous 0.8.1
+  candidate compared a solve with itself: without the Schur system both run the same path):
+  - the held noisy sweep: its rotations against the truth, within the Cauchy M-estimator's asymptotic covariance
+    `κσ²(JᵢₙᵀJᵢₙ)⁻¹` (J the bundle's Jacobian at the truth by ForwardDiff, κ the Cauchy efficiency at the loss width under
+    Gaussian noise) less the outliers' first-order bias, at `χ²₁₂(0.999)`;
+  - the sweep's inlier observations: two starts reach one minimum, within the sum of their stationarity radii
+    `√(gᵀH⁻¹g)` (the robust cost's gradient and Hessian at each estimate, one metric, the gradient's rounding added);
+  - the KB scene held at the wrong camera: no minimum is asserted (its robust cost has many shallow minima: starts 0.3°–1°
+    off stop at rms 13.49–13.63 px), the camera held and the fit not exact.
 - The example's `write_results_check.jl` compares the bundle record it reads back with the fixture's own record instead of
   restating its numbers.
 - The suite fits a 16 GB CI runner: each finished test item's globals (its scenes, frames and LoMa's ONNX Runtime sessions)

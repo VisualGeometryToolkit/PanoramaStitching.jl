@@ -173,12 +173,16 @@ end
     m = bundle_model(CAM, R, dirs, ts, free)
     nobs = length(m.cols)
     inl = [hypot(m.r[2i - 1], m.r[2i]) <= 6σ for i in 1:nobs]
-    Jin = m.J[reduce(vcat, [[2i - 1, 2i] for i in 1:nobs if inl[i]]), :]
+    # a track with no inlier has no information on its direction, which then absorbs its outliers whole: its columns and its
+    # observations are left out (the rotations are the first 3·|free| columns, always kept)
+    keep = sort!(unique(reduce(vcat, [m.cols[i] for i in 1:nobs if inl[i]])))
+    Jin = m.J[reduce(vcat, [[2i - 1, 2i] for i in 1:nobs if inl[i]]), keep]
+    pulled = [i for i in 1:nobs if !inl[i] && m.cols[i][end] in keep]               # the outliers of tracks with an inlier
     (; κ, curvature) = cauchy_efficiency(c, σ)
     F = cholesky(Symmetric(Jin' * Jin))
-    bias = -(F \ cauchy_gradient(m, c, findall(!, inl))) ./ curvature
+    bias = -(F \ cauchy_gradient(m, c, pulled)[keep]) ./ curvature
     nR = 3 * length(free)
-    CR = Symmetric(κ * σ^2 * (F \ Matrix(1.0I, size(Jin, 2), nR))[1:nR, :])          # the rotations' block of κσ²(JᵢₙᵀJᵢₙ)⁻¹
+    CR = Symmetric(κ * σ^2 * (F \ Matrix(1.0I, length(keep), nR))[1:nR, :])          # the rotations' block of κσ²(JᵢₙᵀJᵢₙ)⁻¹
     e = coordinates_between(R, dirs, VgtkCore.estimate(res), res.metadata.directions, free)[1:nR] - bias[1:nR]
     q = chisq_even_quantile(0.999, nR)
     @info "held bundle: the rotations' error in its covariance's metric $(round(dot(e, CR \ e); digits = 2)) (χ²₁₂(0.999) = $(round(q; digits = 2))), $(count(inl)) inliers"

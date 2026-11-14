@@ -96,15 +96,17 @@ function chisq_even_quantile(p, ν)
 end
 
 """
-    stationarity_radius(model, c) -> (; radius, H)
+    stationarity_radius(model, c; H = nothing) -> (; radius, H)
 
 How far an estimate can be from the bundle's minimum, from its own stationarity: the robust cost's gradient
 `g = Σ 2wᵢ Jᵢᵀ rᵢ` and Hessian `H = Σ Jᵢᵀ (2wᵢ I + 4wᵢ′ rᵢrᵢᵀ)₊ Jᵢ` (each 2 × 2 block's negative curvature clipped, as
 Triggs' correction does: its eigenvalues `2w + 4w′s` along rᵢ and `2w` across) at the estimate. The Newton step to the
 minimum of the local quadratic, in H's metric, is `√(gᵀH⁻¹g)`; the rounding of `g`'s sum (each component within
-`m·eps·Σ|terms|`, m the observations) bounds the rest, `√λmax(H⁻¹)·‖g_round‖`.
+`m·eps·Σ|terms|`, m the observations) bounds the rest, `√λmax(H⁻¹)·‖g_round‖`. With `H` given (another estimate's, at
+the same minimum), the step is measured in that metric. It is the local quadratic model's distance, not a global bound.
 """
-function stationarity_radius(model, c)
+function stationarity_radius(model, c; H = nothing)
+    Hgiven = H
     n = size(model.J, 2); m = length(model.cols)
     gabs = zeros(n); H = zeros(n, n)
     for i in 1:m
@@ -118,7 +120,7 @@ function stationarity_radius(model, c)
         gabs[ci] .+= abs.(Ji') * abs.(2w .* ri)
     end
     g = cauchy_gradient(model, c, 1:m)
-    Hs = Symmetric(H)
+    Hs = Hgiven === nothing ? Symmetric(H) : Hgiven
     newton = sqrt(max(dot(g, cholesky(Hs) \ g), 0.0))
     rounding = sqrt(1 / first(eigvals(Hs, 1:1))) * norm(m * eps() .* gabs)
     return (; radius = newton + rounding, H = Hs)

@@ -467,7 +467,7 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     eliminate && !_SCHUR && throw(ArgumentError(
         "$what: eliminate = true needs NLLSsolver's Schur system (MultiVariateLSschur), which the loaded NLLSsolver does not " *
         "have; leave `eliminate` out (every unknown solved together)"))
-    E = eliminate                                                 # the directions' Eliminable{E}
+    E = eliminate && _SCHUR                                        # = eliminate after the refusal; a constant false without Schur
     cv = chc === nothing ? nothing : _CameraVariable(chc)
     V = chc === nothing ? Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}} :
         Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}, typeof(cv)}
