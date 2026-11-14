@@ -7,11 +7,15 @@
 @testsetup module SweepScene
 using Random, LinearAlgebra, StaticArrays
 import Rotations
-using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, project, Disc, Point2
+using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, project, Disc, Point2, BoundedCamera, Size2, Circle
 import VisualGeometryToolkitFeatures as VgtkFeatures
 import NLLSsolver
-export CAM, sweep_rotations, sweep_tracks, described, updated_residual
+export CAM, BCAM, sweep_rotations, sweep_tracks, described, updated_residual
 const CAM = CameraModel(300.0px, SA[600.0px, 600.0px]; lens = KannalaBrandt(-0.02))
+# The sweep's bounded camera for a registration: the 1200 × 1200 sensor and its valid region, an image circle of 500 px
+# (101.5° off axis, about the 100° the tracks reach). The bare sensor's corners lie past this lens's fold, which the
+# registration's view_overlap refuses to back-project (PanoramaStitching 0.8): a registration needs the camera's valid region.
+const BCAM = BoundedCamera(CAM, Size2(1200, 1200); lens_coverage = Circle(Point2(600.0, 600.0), 500.0))
 sweep_rotations(rng, K) = Dict(k => (k == 1 ? SMatrix{3, 3}(1.0I) :
     SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec(0.1randn(rng), 0.5 * (k - 1) + 0.05randn(rng), 0.1randn(rng))))) for k in 1:K)
 # tracks of world directions seen within 100° of the axes of ≥ 2 frames: (frame => pixel) observations, σ px noise; a

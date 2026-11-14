@@ -11,7 +11,7 @@
     using PanoramaStitching: PanoramaStitching, register_rotations, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
     # K sweep frames 0.5 rad apart and frame K + 1 a near-duplicate of frame `dup` (1° off); tracks of world directions (σ px),
-    # within 70° of a frame's axis: the bounded camera's lens coverage (BCAM, a circle 70.6° off axis), so a frame's footprint
+    # within 70° of a frame's axis: the bounded camera's lens coverage (BCAM70, a circle 70.6° off axis), so a frame's footprint
     # shares about 0.77 of itself with the next frame's (0.5 rad on) and about 0.99 with its near-duplicate's.
     # Planted: `nwrong` wrong chains — a true track a joined, by one wrong match on a verified pair, to a ghost track (a second
     # world direction's detections in two or more frames that do not see a: their own consistent cluster) — and, the repeated
@@ -66,11 +66,11 @@
         return (; vp, R, index, chains, planted, N, dup)
     end
 
-    BCAM = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(600.0, 600.0), 360.0))
+    BCAM70 = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(600.0, 600.0), 360.0))
 
     @testset "near-duplicates" begin
         s = planted_sweep(MersenneTwister(11); nwrong = 40)
-        bcam = BCAM
+        bcam = BCAM70
         kw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
               bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false)
         # an observation is (frame, detection); a planted match joins detection a of frame i and b of frame j
@@ -95,7 +95,7 @@
 
     @testset "the track check" begin
         s = planted_sweep(MersenneTwister(12); nwrong = 60)
-        bcam = BCAM
+        bcam = BCAM70
         kw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
               bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
         off = register_rotations(s.vp, bcam; kw..., check_tracks = false)

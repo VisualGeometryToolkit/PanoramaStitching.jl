@@ -42,7 +42,7 @@ end
     rng = MersenneTwister(3)
     R = sweep_rotations(rng, 4)
     ts, _, _ = sweep_tracks(rng, R, 400; σ = 0.4)
-    K = 4; bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
+    K = 4; bcam = BCAM                                  # SweepScene's camera and its valid region, an image circle
     pixels = [SVector{2, Float64}[] for _ in 1:K]; index = [Dict{Int, Int}() for _ in 1:K]
     for (t, obs) in enumerate(ts), (k, u) in obs
         push!(pixels[k], u); index[k][t] = length(pixels[k])
@@ -64,11 +64,9 @@ end
     pooled = (ν = [scales[p].dof for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
               sqrt(sum(ν .* σ .^ 2) / sum(ν)))
     bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
-           bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false,   # one bundle: its width checked
-           # every kept pair chained (the near-duplicate check off: this item is the bundle's width; and the bare sensor's
-           # corners lie past this KB lens's fold, which view_overlap refuses to back-project)
-           near_duplicate_overlap = 0.0)
+           bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false)   # one bundle: its width checked
     reg = register_rotations(vp, bcam; bkw...)
+    @test isempty(reg.near_duplicates)          # the near-duplicate check ran: these frames share at most 0.88 of a footprint
     @test reg.bundle_sigma ≈ pooled
     @test reg.bundle.metadata.loss_width ≈ 2.5 * pooled
     # the scale record of the robust-estimation contract: Estimation's pooled_noise_scale of the pairs, upstream

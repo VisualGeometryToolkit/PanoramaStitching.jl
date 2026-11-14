@@ -10,7 +10,7 @@
     using VisualGeometryToolkitCore: BoundedCamera, Size2, exp_so3
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
-    BCAM = BoundedCamera(CAM, Size2(1200, 1200))
+    # BCAM: SweepScene's camera, its valid region an image circle (the always-on near-duplicate check reads it)
 
     # The verified pairs of a 6-frame sweep (frame k at yaw 0.5(k − 1) rad): every pair sharing ≥ 25 tracks verified with its true
     # rotation R_ij = R_jᵀR_i and its true matches, but `alias` (i, j) verified 12° off about the vertical (one bay of a periodic
@@ -46,13 +46,11 @@
     vp, R = aliased_pairs()
     @test haskey(vp.verified, (2, 4)) && length(vp.verified) > 8
     bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), 
-           bundle_max_iter = 1000, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10,
-           # every kept pair chained (the near-duplicate check off: this item is the view-graph filters; and the bare sensor's
-           # corners lie past this KB lens's fold, which view_overlap refuses to back-project)
-           near_duplicate_overlap = 0.0)
+           bundle_max_iter = 1000, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     err(reg) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * R[k]))), 1:6)
     # the defaults: cycle_tol 2°, orientation_tol 5°
     reg = register_rotations(vp, BCAM; bkw...)
+    @test isempty(reg.near_duplicates)          # the near-duplicate check ran: these frames share at most 0.88 of a footprint
     @test reg.removed == [(2, 4)]
     @test !haskey(reg.graph, 2, 4) && VgtkEstimation.nedges(reg.graph) == length(vp.verified) - 1
     @test length(reg.pairs) == length(vp.verified)                    # every verified pair's numbers, the removed one's too
