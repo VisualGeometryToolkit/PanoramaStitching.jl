@@ -1,7 +1,7 @@
-docs-pass: 6279499
+docs-pass: 58d8157
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.0 docs pass (julia-docs-pass), at aa88790 and 6279499: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
+# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499 and 58d8157: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
 
 The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = GitHub main), resolved from General alone
 (Core 0.10.1, Features 0.9.1, Estimation 0.11.1, IO 0.10.0, Eval 0.8.0; the example's environment too).
@@ -25,6 +25,8 @@ The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = 
     registrations change.
 [x] Docs build: docs/make.jl (strict) in the release gate.
 [x] Re-recorded at 6279499: the CHANGELOG's one banned word (check_naming R7, the gate at c816935) reworded; no other change.
+[x] Re-recorded at 58d8157: two test items (bundle width, view-graph filters) state near_duplicate_overlap = 0 (the gate at
+    c816935: view_overlap refuses their bare sensor past the KB lens's fold); no docs change.
 
 ---
 
