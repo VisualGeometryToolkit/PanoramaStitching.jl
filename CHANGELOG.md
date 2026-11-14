@@ -13,6 +13,11 @@ A test-only patch: no source file under src/ changed, no API change.
   (the rms to `rtol = ftol`, the rotations and directions to `rtol = 2xtol`).
 - The example's `write_results_check.jl` compares the bundle record it reads back with the fixture's own record instead of
   restating its numbers.
+- The suite fits a 16 GB CI runner: each finished test item's globals (its scenes, frames and LoMa's ONNX Runtime sessions)
+  are released and the memory handed back to the OS before the next item (`test/runtests.jl`'s `test_end_expr`).
+  ReTestItems keeps every item's module bound, so the one worker of GitHub's 4-core runner grew to its 16 GB and the
+  runner died. Under a 16 GiB limit on dgx01, with GitHub CI's command, the worker went from 15.2 GiB after item 22 (killed
+  in item 24) to at most 3.95 GiB after any item, 7.6 GiB peak. Registration itself holds nothing after it returns.
 - 0.8.0's CHANGELOG entry dated.
 
 ## 0.8.0 (2026-11-14)
