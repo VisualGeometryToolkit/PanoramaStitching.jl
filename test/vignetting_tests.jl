@@ -403,8 +403,7 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
-    for name in (:RENAMED_KEYS, :RETIRED_VIGNETTING_KEYS, :refuse_renamed_keys, :refuse_circle, :RETIRED_REGISTRATION_KEYS, :refuse_retired_registration,
-                 :refuse_output, :refuse_inert_pair_keys)
+    for name in (:RENAMED_KEYS, :RETIRED_VIGNETTING_KEYS, :refuse_renamed_keys, :refuse_circle, :refuse_output, :refuse_inert_pair_keys)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -439,29 +438,29 @@ end
     end
     # `[registration] bundle_iterations` is retired: refused by name
     err = try
-        Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}("bundle_iterations" => 3), "config [registration]"); nothing
+        PanoramaStitching.refuse_retired_registration(Dict{String, Any}("bundle_iterations" => 3), "config [registration]"); nothing
     catch e
         e
     end
     @test err isa ArgumentError && occursin("bundle_iterations", err.msg)
     # the 0.6 noise constants are refused by name: the frames' noise is Core's resolver's
     for k in ("electrons_per_dn", "read_noise_dn")
-        @test_throws "sensor_characterisation" Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}(k => 1.0), "config [registration]")
+        @test_throws "sensor_characterisation" PanoramaStitching.refuse_retired_registration(Dict{String, Any}(k => 1.0), "config [registration]")
     end
     # `max_lag` with pairs = "all" is refused when the config is read (no inert setting, cached or not)
     inert(t) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}(t), "config [registration]")
     @test_throws "read only by pairs" inert(("pairs" => "all", "max_lag" => 1))
     @test inert(("pairs" => "lag_overlap", "max_lag" => 1))["max_lag"] == 1
     # PanoramaStitching 0.7's optical-axis angles are retired (0.8): refused by name, naming the view_overlap rules
-    retired(t) = Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}(t), "config [registration]")
-    @test_throws r"overlap_deg is retired: .*any view.*min_inliers" retired(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))
-    @test_throws r"near_duplicate_deg is retired: .*near_duplicate_overlap" retired(("near_duplicate_deg" => 4.0,))
+    retired(t) = PanoramaStitching.refuse_retired_registration(Dict{String, Any}(t), "config [registration]")
+    @test_throws r"`overlap_deg` is retired: .*any view.*min_inliers" retired(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))
+    @test_throws r"`near_duplicate_deg` is retired: .*near_duplicate_overlap" retired(("near_duplicate_deg" => 4.0,))
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test TOML.parsefile(joinpath(dir, f))["decode"]["cache"] isa Bool                      # the decode cache, opt-in, stated
         @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
-        @test Base.invokelatest(m.refuse_retired_registration, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
+        @test PanoramaStitching.refuse_retired_registration(TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test TOML.parsefile(joinpath(dir, f))["registration"]["near_duplicate_overlap"] == 0.90   # the owner's value, stated
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
         # the view-graph filters' tolerances and the detector's variant are stated

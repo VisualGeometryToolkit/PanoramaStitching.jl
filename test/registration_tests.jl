@@ -251,7 +251,7 @@ end
     @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, 1)
     @test_throws "needs max_lag" PanoramaStitching._check_pair_settings("f", :lag_overlap, nothing)
     # overlap_deg (the optical-axis angle of PanoramaStitching 0.7) is retired, refused by name naming its replacement
-    @test_throws r"`overlap_deg` is retired: .*view_overlap.*remove the keyword" PanoramaStitching._refuse_retired_registration_keywords("f", (; overlap_deg = 60.0))
+    @test_throws r"`overlap_deg` is retired: .*view_overlap.*remove it" PanoramaStitching._refuse_retired_registration_keywords("f", (; overlap_deg = 60.0))
     # the samplers: one stream per (seed, i, j), reproducible
     draw(s, i, j) = rand(PanoramaStitching._pair_rng(s, i, j), UInt64, 4)
     @test draw(1, 1, 2) == draw(1, 1, 2) && draw(1, 1, 2) != draw(1, 1, 3)
@@ -553,4 +553,53 @@ end
     @test s.max_offset_px <= 2 * sqrt(2) && s.V_max ≈ v(s.max_at) && s.asymmetry < 1.0e-12
     @test s.V_min ≈ minimum(v(FRAME_MAP(SVector(j - 0.5, i - 0.5))) for i in 1:2:500, j in 1:2:500 if keep(FRAME_MAP(SVector(j - 0.5, i - 0.5))))
     @test_throws ArgumentError vignetting_summary(v, c, FRAME_MAP, (500, 500); mask = _ -> false)
+end
+
+@testitem "refuse_retired_registration: one list of the retired registration keys, a config table's and register_rotations' keywords" begin
+    # The retired [registration] keys and register_rotations / verify_pairs keywords are ONE list (the union), refused by ONE
+    # public function: a TOML table (String keys) or keywords (Symbol keys), each key named with its successor.
+    using Test, TOML
+    using PanoramaStitching: PanoramaStitching, refuse_retired_registration
+    @test Base.ispublic(PanoramaStitching, :refuse_retired_registration)
+    # every retired key and a word of its successor (the retired names in fragments: check_naming lists them)
+    successors = Dict("electrons_per_dn" => "sensor_characterisation", "read_noise_dn" => "sensor_characterisation",
+                      "detection_noise" => "noise_sigmas", "bundle_iterations" => "bundle_optimization_strategy",
+                      "bundle_scale_multiple" => "bundle_optimization_strategy", "bundle_efficiency_constant" => "bundle_optimization_strategy",
+                      "bundle_loss" => "bundle_optimization_strategy", "averaging_loss" => "averaging_optimization_strategy",
+                      "local_optimization" => "local_optimization_strategy", "bundle_camera_free" => "refine_camera_and_rotations",
+                      "bundle_" * "whitening" => "the detections' pixels", "scoring_threshold" * "_px" => "outlier_halfwidth_px",
+                      "scoring_threshold" => "outlier_halfwidth_px", "overlap_deg" => "min_inliers",
+                      "near_duplicate_deg" => "near_duplicate_overlap")
+    @test sort!(string.(collect(keys(PanoramaStitching._RETIRED_REGISTRATION_KEYS)))) == sort!(collect(keys(successors)))   # the union, once
+    refused(t, where) = try
+        refuse_retired_registration(t, where); nothing
+    catch e
+        e
+    end
+    for (k, successor) in successors
+        for t in (Dict{String, Any}(k => 1), (; Symbol(k) => 1))             # a config table's key, a keyword
+            err = refused(t, "config [registration]")
+            @test err isa ArgumentError && occursin("config [registration]: `$k` is retired: ", err.msg) && occursin(successor, err.msg)
+        end
+        # register_rotations' and verify_pairs' keywords go through it
+        err = try
+            PanoramaStitching._refuse_retired_registration_keywords("register_rotations", (; Symbol(k) => 1)); nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("register_rotations: `$k` is retired: ", err.msg) && occursin(successor, err.msg)
+    end
+    # a current table passes through, returned as given; an unknown keyword (not a retired one) is refused as unknown
+    t = Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "near_duplicate_overlap" => 0.9)
+    @test refuse_retired_registration(t, "config [registration]") === t
+    @test refuse_retired_registration((; pairs = :all), "register_rotations") == (; pairs = :all)
+    @test_throws "unknown keyword `foo`" PanoramaStitching._refuse_retired_registration_keywords("register_rotations", (; foo = 1))
+    dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
+    for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")                       # the configs of record are current
+        r = TOML.parsefile(joinpath(dir, f))["registration"]
+        @test refuse_retired_registration(r, f) === r
+    end
+    # the example holds no list of its own: run.jl calls this one
+    run = read(joinpath(dir, "run.jl"), String)
+    @test !occursin("RETIRED_REGISTRATION_KEYS", run) && occursin("PanoramaStitching.refuse_retired_registration(", run)
 end
