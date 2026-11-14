@@ -46,7 +46,10 @@
     vp, R = aliased_pairs()
     @test haskey(vp.verified, (2, 4)) && length(vp.verified) > 8
     bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), 
-           bundle_max_iter = 1000, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+           bundle_max_iter = 1000, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10,
+           # every kept pair chained (the near-duplicate check off: this item is the view-graph filters; and the bare sensor's
+           # corners lie past this KB lens's fold, which view_overlap refuses to back-project)
+           near_duplicate_overlap = 0.0)
     err(reg) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * R[k]))), 1:6)
     # the defaults: cycle_tol 2°, orientation_tol 5°
     reg = register_rotations(vp, BCAM; bkw...)
