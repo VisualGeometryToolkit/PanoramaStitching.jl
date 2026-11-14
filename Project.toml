@@ -1,6 +1,6 @@
 name = "PanoramaStitching"
 uuid = "5b03ddb8-fc94-4165-83c9-5c94f3367646"
-version = "0.8.1"
+version = "0.8.2"
 authors = ["James Pritts <jbpritts@gmail.com>"]
 
 [deps]

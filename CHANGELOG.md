@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.1 (unreleased)
+## 0.8.2 (unreleased)
 
 ### Changes
 
@@ -13,16 +13,12 @@
   region the lens cannot back-project, as a bare sensor's corners past a fisheye's fold; a model that is not a `CameraModel`;
   a field of view within 3° of the backward axis) is refused at the entry, before any feature is detected, wherever the
   registration may read `view_overlap` (the near-duplicate check, unless `near_duplicate_overlap = 0`; `:lag_overlap` with a
-  pair past the lag). 0.8.0 refused it only after every pair was matched. Migrate: give the camera its lens coverage.
+  pair past the lag). 0.8.0 and 0.8.1 refused it only after every pair was matched. Migrate: give the camera its lens coverage.
 
 ### Tests
 
-- No count of LM iterations, and no last digits of a minimum recorded on one machine, is pinned (GitHub's runner failed
-  0.7.0's `test/autocalibration_tests.jl:173`, `(res.iterations, res.n) == (19, 1489)`). Each bundle asserts it converged
-  by a tolerance within its cap, with its fixture's observation count; the exact-data autocalibration keeps its rms bound
-  (`2eps(1200.0)`) and its checks against the true camera and rotations.
-- The references are derived and independent of the solver (the eliminated-versus-joint comparison of the previous 0.8.1
-  candidate compared a solve with itself: without the Schur system both run the same path):
+- The references are derived and independent of the solver (0.8.1's eliminated-versus-joint comparison compared a solve with
+  itself: without the Schur system both run the same path):
   - the held noisy sweep: its rotations against the truth, within the Cauchy M-estimator's asymptotic covariance
     `κσ²(JᵢₙᵀJᵢₙ)⁻¹` (J the bundle's Jacobian at the truth by ForwardDiff, κ the Cauchy efficiency at the loss width under
     Gaussian noise) less the outliers' first-order bias, at `χ²₁₂(0.999)`;
@@ -30,6 +26,20 @@
     `√(gᵀH⁻¹g)` (the robust cost's gradient and Hessian at each estimate, one metric, the gradient's rounding added);
   - the KB scene held at the wrong camera: no minimum is asserted (its robust cost has many shallow minima: starts 0.3°–1°
     off stop at rms 13.49–13.63 px), the camera held and the fit not exact.
+- A camera refused by the footprint preflight is tested with a `say` callback that hears no detection.
+
+## 0.8.1 (2026-11-14)
+
+A test-only patch: no source file under src/ changed, no API change.
+
+- The bundle tests no longer pin a count of LM iterations or the last digits of a minimum recorded on one machine (GitHub's
+  runner failed 0.7.0's `test/autocalibration_tests.jl:173`, `(res.iterations, res.n) == (19, 1489)`: the iterations and
+  the last digits follow how each machine's compiled code rounds). Each bundle asserts it converged by a tolerance within
+  its iteration cap, with its fixture's observation count; the exact-data autocalibration keeps its derived rms bound
+  (`2eps(1200.0)`) and its checks against the true camera and rotations; the camera-held bundles are compared with the same
+  bundle solved jointly (`eliminate = false`) at the stop tolerances' own bound (the rms to `rtol = ftol`, the rotations and
+  directions to `rtol = 2xtol`). Corrected in 0.8.2: that is not another rounding path; without NLLSsolver's Schur system
+  (no installable NLLSsolver has it) `eliminate = false` and `true` run the same solve, so the comparison was vacuous.
 - The example's `write_results_check.jl` compares the bundle record it reads back with the fixture's own record instead of
   restating its numbers.
 - The suite fits a 16 GB CI runner: each finished test item's globals (its scenes, frames and LoMa's ONNX Runtime sessions)
