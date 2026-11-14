@@ -21,6 +21,10 @@
     vkw = Base.structdiff(kw, NamedTuple{(:bundle_optimization_strategy, :bundle_max_iter, :bundle_ftol, :bundle_xtol, :averaging_optimization_strategy)})
     @test_throws "is not :auto, :cpu or :cuda" PanoramaStitching.verify_pairs(frames, cam; vkw..., execution_provider = :tensorrt)
     @test_throws "is not :all or :lag_overlap" PanoramaStitching.verify_pairs(frames, cam; vkw..., pairs = :every)
+    # PanoramaStitching 0.7's optical-axis angles, retired (0.8): refused by name, naming the view_overlap rules that replace them
+    @test_throws r"`overlap_deg` is retired: .*any view.*min_inliers" PanoramaStitching.verify_pairs(frames, cam; vkw..., pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0)
+    @test_throws r"`overlap_deg` is retired" register_rotations(frames, cam; kw..., pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0)
+    @test_throws r"`near_duplicate_deg` is retired: .*near_duplicate_overlap" register_rotations(frames, cam; kw..., near_duplicate_deg = 4.0)
     # the averaging's strategy aims :lag_overlap's pairs only: with :all it is refused, not ignored (no inert setting)
     @test_throws "read only by pairs = :lag_overlap" PanoramaStitching.verify_pairs(frames, cam; vkw...,
                                                                                     averaging_optimization_strategy = kw.averaging_optimization_strategy)

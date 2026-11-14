@@ -173,7 +173,7 @@ end
     q = sequence(; K = 3, yaw_deg = [0.0, 180.0, 90.0])
     reg = register_rotations(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5,
                              detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
-                             min_score = 0.0, pairs = :lag_overlap, max_lag = 1, overlap_deg = 60.0, min_inliers = 40, seed = 1,
+                             min_score = 0.0, pairs = :lag_overlap, max_lag = 1, min_inliers = 40, seed = 1,
                              max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
                               bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
     @test sort(collect(keys(reg.pairs))) == [(1, 3), (2, 3)]
@@ -183,7 +183,7 @@ end
     # the verified pairs kept apart: verify_pairs, then the rest from them, is the registration exactly
     vp = verify_pairs(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)],
                       max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :lag_overlap, max_lag = 1,
-                      overlap_deg = 60.0, min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
+                      min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
     @test vp isa VerifiedPairs && vp.stats == reg.pairs && length(vp.features) == 3
     @test all(p -> vp.inlier_matches[p] isa Vector{Tuple{Int, Int}} && length(vp.inlier_matches[p]) == vp.verified[p].inliers, keys(vp.verified))
     bkw = (; frame_map = FRAME_MAP, bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 100,
@@ -198,24 +198,30 @@ end
 end
 
 @testitem "register_rotations: the overlap pairs of :lag_overlap, and the pairs' samplers" begin
-    # frames 30° apart in yaw (overlap_deg 70°: the pairs two apart overlap), a pair verified with its true rotation (f_j = R_ij·f_i,
-    # R_ij = R_jᵀR_i) unless it is in `dropped`; the order in which the pairs past the lag are tried, after the lag pairs
+    # frames 30° apart in yaw, a pair verified with its true rotation (f_j = R_ij·f_i, R_ij = R_jᵀR_i) unless it is in `dropped`;
+    # the order in which the pairs past the lag are tried, after the lag pairs. A pair past the lag is tried when its frames share
+    # any view (VisualGeometryToolkitCore's view_overlap under the averaged rotations): through a pinhole 80° wide (±40° in yaw)
+    # the pairs two apart (60°) share a view and those three apart (90°) none; through one 50° wide (±25°) no pair past the lag does.
     using Test, StaticArrays
     using PanoramaStitching: PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
-    function tried_pairs(K, dropped)
+    pinhole(half_deg) = VgtkCore.BoundedCamera(VgtkCore.CameraModel((500.0 / tand(half_deg))VgtkCore.px, SA[500.0VgtkCore.px, 200.0VgtkCore.px];
+                                                                    lens = VgtkCore.Pinhole()), VgtkCore.Size2(1000, 400))
+    WIDE, NARROW = pinhole(40.0), pinhole(25.0)
+    function tried_pairs(K, dropped; camera = WIDE)
         R = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:K]
         verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
         tried = Tuple{Int, Int}[]
         verify(i, j) = ((i, j) in dropped || (verified[(i, j)] = (rotation = R[j]' * R[i], inliers = 100,
                                                                          covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))); nothing)
         foreach(k -> verify(k, k + 1), 1:(K - 1))
-        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, 70.0,
+        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, camera,
                                                  VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
         return tried, verified
     end
     @test first(tried_pairs(6, [])) == [(1, 3), (2, 4), (3, 5), (4, 6)]                # connected: the aimed pairs only
+    @test isempty(first(tried_pairs(6, []; camera = NARROW)))                          # 50° wide: no pair past the lag shares a view
     # the lag pair 3-4 dropped: the nearest pair between {1, 2, 3} and {4, 5, 6} joins them, then the aimed pairs
     tried, verified = tried_pairs(6, [(3, 4)])
     @test tried == [(2, 4), (1, 3), (3, 5), (4, 6)]
@@ -237,15 +243,15 @@ end
         (2, 3) => (rotation = R3[3]' * R3[2], inliers = 100, covariance = Σ3))
     tried3 = Tuple{Int, Int}[]
     PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried3, (i, j)); v3[(i, j)] = (rotation = R3[j]' * R3[i], inliers = 100, covariance = Σ3); nothing),
-                                             v3, 3, 1, 70.0, VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
+                                             v3, 3, 1, WIDE, VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
     @test tried3 == [(1, 3)] && VgtkEstimation.components(PanoramaStitching._view_graph(3, v3)) == [collect(1:3)]
-    # the pair settings: max_lag and overlap_deg are :lag_overlap's, which needs both; :all refuses them (no inert setting)
-    @test PanoramaStitching._check_pair_settings("f", :all, nothing, nothing) === nothing
-    @test PanoramaStitching._check_pair_settings("f", :lag_overlap, 1, 60.0) === nothing
-    @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, 1, nothing)
-    @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, nothing, 60.0)
-    @test_throws "needs max_lag" PanoramaStitching._check_pair_settings("f", :lag_overlap, nothing, 60.0)
-    @test_throws "needs overlap_deg" PanoramaStitching._check_pair_settings("f", :lag_overlap, 1, nothing)
+    # the pair settings: max_lag is :lag_overlap's, which needs it; :all refuses it (no inert setting)
+    @test PanoramaStitching._check_pair_settings("f", :all, nothing) === nothing
+    @test PanoramaStitching._check_pair_settings("f", :lag_overlap, 1) === nothing
+    @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, 1)
+    @test_throws "needs max_lag" PanoramaStitching._check_pair_settings("f", :lag_overlap, nothing)
+    # overlap_deg (the optical-axis angle of PanoramaStitching 0.7) is retired, refused by name naming its replacement
+    @test_throws r"`overlap_deg` is retired: .*view_overlap.*remove the keyword" PanoramaStitching._refuse_retired_registration_keywords("f", (; overlap_deg = 60.0))
     # the samplers: one stream per (seed, i, j), reproducible
     draw(s, i, j) = rand(PanoramaStitching._pair_rng(s, i, j), UInt64, 4)
     @test draw(1, 1, 2) == draw(1, 1, 2) && draw(1, 1, 2) != draw(1, 1, 3)

@@ -51,10 +51,12 @@ bundle_optimization_strategy = { type = "triggs", loss = "welsch", efficiency_co
 bundle_max_iter = 1000                             # never the reason it stops here: rotations.json records the iterations it took
 bundle_ftol = 1.0e-10                              # the relative cost decrease that stops it
 bundle_xtol = 1.0e-6                               # the largest step that stops it: radians of a rotation or a direction
-# A near-duplicate pair: optical axes within near_duplicate_deg (the averaged rotations; the overlap estimate of overlap_deg).
-# Verified and averaged, its matches seed no track. 9° = 5 % of this fisheye's ~180° image circle: two frames that overlap by
-# 95 % or more add no geometry to a track, and their repeated structure chains wrongly (the 14 mm config's rule).
-near_duplicate_deg = 9.0
+# A near-duplicate pair: its frames share at least near_duplicate_overlap of the smaller footprint (VisualGeometryToolkitCore's
+# view_overlap under the averaged rotations: the solid angle both image, over a frame's own). Verified and averaged, its matches
+# seed no track: two frames that share nearly all their view add no geometry to a track, and their repeated structure chains
+# wrongly (RC's 14 mm sweep: frames 0 and 20, 1.38° apart, 1126 inliers). 0.90 is the owner's value (owner ruling 2026-11-14);
+# 0 turns the check off.
+near_duplicate_overlap = 0.90
 check_tracks = true                                # after the bundle: observations past 3.035 σ̂ removed and re-solved, until none (cap 10)
 execution_provider = "cuda"                        # LoMa's ONNX Runtime provider: "auto" (CUDA where it runs, else the CPU), "cpu" or "cuda"
 

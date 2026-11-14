@@ -1,15 +1,18 @@
 # =============================================================================
-# The registration's near-duplicate pairs and track check: a near-duplicate pair (optical axes within near_duplicate_deg under
-# the averaged rotations, the overlap estimate of :lag_overlap) verifies and is averaged but seeds no track; after the bundle,
+# The registration's near-duplicate pairs and track check: a near-duplicate pair (its frames' shared view, VisualGeometryToolkitCore's
+# view_overlap under the averaged rotations, at least near_duplicate_overlap of the smaller footprint) verifies and is averaged
+# but seeds no track; after the bundle,
 # the observations past 3.035 σ̂ are removed and the bundle re-solved until none is (COLMAP's filter_max_reproj_error loop).
 # =============================================================================
 
 @testitem "register_rotations: a near-duplicate pair chains no track; the track check removes a planted wrong chain past 3.035 σ̂, the rms drops" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
-    using PanoramaStitching: register_rotations, VerifiedPairs
+    using PanoramaStitching: PanoramaStitching, register_rotations, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
-    # K sweep frames 0.5 rad apart and frame K + 1 a near-duplicate of frame `dup` (1° off); tracks of world directions (σ px).
+    # K sweep frames 0.5 rad apart and frame K + 1 a near-duplicate of frame `dup` (1° off); tracks of world directions (σ px),
+    # within 70° of a frame's axis: the bounded camera's lens coverage (BCAM, a circle 70.6° off axis), so a frame's footprint
+    # shares about 0.77 of itself with the next frame's (0.5 rad on) and about 0.99 with its near-duplicate's.
     # Planted: `nwrong` wrong chains — a true track a joined, by one wrong match on a verified pair, to a ghost track (a second
     # world direction's detections in two or more frames that do not see a: their own consistent cluster) — and, the repeated
     # structure of a near-duplicate view, wrong matches on (dup, K + 1) between true tracks seen in no frame together.
@@ -17,7 +20,7 @@
         R = Dict(k => (k == 1 ? SMatrix{3, 3}(1.0I) :
                        SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec(0.05randn(rng), 0.5 * (k - 1), 0.05randn(rng))))) for k in 1:K)
         R[K + 1] = R[dup] * SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec(0.0, deg2rad(1.0), 0.0)))
-        ts, _, _ = sweep_tracks(rng, R, 600; σ)
+        ts, _, _ = sweep_tracks(rng, R, 600; σ, θmax = deg2rad(70))
         N = K + 1
         pixels = [SVector{2, Float64}[] for _ in 1:N]; index = [Dict{Int, Int}() for _ in 1:N]
         for (t, obs) in enumerate(ts), (k, u) in obs
@@ -40,7 +43,7 @@
         while length(chains) < nwrong
             a = rand(rng, eachindex(ts)); a in chained && continue; Fa = frames(a)
             d = normalize(randn(rng, SVector{3, Float64}))
-            G = [k for k in 1:N if k ∉ Fa && acos(clamp((R[k]' * d)[3], -1, 1)) < deg2rad(100)]
+            G = [k for k in 1:N if k ∉ Fa && acos(clamp((R[k]' * d)[3], -1, 1)) < deg2rad(70)]
             links = [(i, j) for i in Fa for j in G if haskey(verified, minmax(i, j))]
             (length(G) >= 2 && !isempty(links)) || continue
             ghost = Dict(k => (push!(pixels[k], VgtkCore.project(CAM, R[k]' * d) + σ * randn(rng, SVector{2, Float64})); length(pixels[k])) for k in G)
@@ -63,31 +66,38 @@
         return (; vp, R, index, chains, planted, N, dup)
     end
 
+    BCAM = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(600.0, 600.0), 360.0))
+
     @testset "near-duplicates" begin
         s = planted_sweep(MersenneTwister(11); nwrong = 40)
-        bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
+        bcam = BCAM
         kw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
               bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false)
         # an observation is (frame, detection); a planted match joins detection a of frame i and b of frame j
         together(ts, (i, a), (j, b)) = any(t -> (i, a) in t && (j, b) in t, ts)
         joined(reg) = count(((a, b),) -> together(reg.tracks, (s.dup, s.index[s.dup][a]), (s.N, s.index[s.N][b])), s.planted)
         dp = (s.dup, s.N)
-        plain = register_rotations(s.vp, bcam; kw...)
+        plain = register_rotations(s.vp, bcam; kw..., near_duplicate_overlap = 0.0)   # 0: the check off, every kept pair chained
         @test isempty(plain.near_duplicates) && joined(plain) > 0             # chained, the near-duplicate's wrong matches join tracks
-        near = register_rotations(s.vp, bcam; kw..., near_duplicate_deg = 4.0)
+        near = register_rotations(s.vp, bcam; kw...)                          # always on: near_duplicate_overlap = 0.90 by default
         @test near.near_duplicates == [dp]                                       # 1° apart: the one near-duplicate pair
+        @test PanoramaStitching._NEAR_DUPLICATE_OVERLAP == 0.90                  # the owner's value (owner ruling 2026-11-14)
+        @test register_rotations(s.vp, bcam; kw..., near_duplicate_overlap = 0.90).near_duplicates == [dp]
         @test joined(near) == 0                                              # its matches seed no track
         @test haskey(near.graph, dp...)                                          # still an edge of the averaging
         @test all(maximum(abs, SMatrix{3, 3}(near.rotations[k]) - SMatrix{3, 3}(s.R[k])) < 1.0e-3 for k in 1:s.N)   # frame 1 = I: the common frame
-        @test_throws ArgumentError register_rotations(s.vp, bcam; kw..., near_duplicate_deg = 0.0)
-        @test_throws ArgumentError register_rotations(s.vp, bcam; kw..., near_duplicate_deg = NaN)
+        # a fraction of the smaller footprint: 0 (off) to 1; another is refused, and so is the retired angle, naming its successor
+        for bad in (-0.1, 1.5, NaN)
+            @test_throws "near_duplicate_overlap" register_rotations(s.vp, bcam; kw..., near_duplicate_overlap = bad)
+        end
+        @test_throws r"`near_duplicate_deg` is retired: .*near_duplicate_overlap" register_rotations(s.vp, bcam; kw..., near_duplicate_deg = 4.0)
     end
 
     @testset "the track check" begin
         s = planted_sweep(MersenneTwister(12); nwrong = 60)
-        bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
+        bcam = BCAM
         kw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
-              bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, near_duplicate_deg = 4.0)
+              bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
         off = register_rotations(s.vp, bcam; kw..., check_tracks = false)
         on = register_rotations(s.vp, bcam; kw..., check_tracks = true)
         @test isempty(off.track_check)
@@ -109,4 +119,23 @@
         # the rotations: the true ones (frame 1 = I: the common frame), to the noise
         @test all(maximum(abs, SMatrix{3, 3}(on.rotations[k]) - SMatrix{3, 3}(s.R[k])) < 1.0e-3 for k in 1:s.N)
     end
+end
+
+@testitem "register_rotations: the near-duplicate rule is view_overlap's fraction of the smaller footprint" begin
+    # frames of a pinhole 80° × 37° wide (±40° in yaw) at yaw 0°, 2°, 40° and 41.5° (frame 4 a near-duplicate of frame 3):
+    # the pairs 1-2 and 3-4 share ≥ 0.90 of a footprint (VisualGeometryToolkitCore's view_overlap), 1-3 and 2-4 about half; the
+    # threshold inclusive of the shared fraction, 0 the check off
+    using Test, StaticArrays
+    using PanoramaStitching: PanoramaStitching
+    import VisualGeometryToolkitCore as VgtkCore
+    cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel((500.0 / tand(40.0))VgtkCore.px, SA[500.0VgtkCore.px, 200.0VgtkCore.px];
+                                                      lens = VgtkCore.Pinhole()), VgtkCore.Size2(1000, 400))
+    A = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(y), 0.0))) for y in (0.0, 2.0, 40.0, 41.5)]
+    pairs = [(1, 2), (1, 3), (2, 4), (3, 4)]
+    @test PanoramaStitching._near_duplicate_pairs(cam, A, pairs, 0.90) == [(1, 2), (3, 4)]
+    @test PanoramaStitching._near_duplicate_pairs(cam, A, pairs, 0.0) == Tuple{Int, Int}[]    # 0: no pair is a near-duplicate
+    @test PanoramaStitching._near_duplicate_pairs(cam, A, pairs, 0.30) == pairs               # every pair shares ≥ 0.30
+    rows = VgtkCore.view_overlap([PanoramaStitching._oriented_frame(cam, A[k]) for k in 1:4])
+    @test all(r -> r.fraction_i ≈ r.fraction_j, rows)                                     # one camera: one footprint size
+    @test only(r.fraction_i for r in rows if (r.i, r.j) == (1, 2)) > 0.90 > only(r.fraction_i for r in rows if (r.i, r.j) == (1, 3))
 end

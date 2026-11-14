@@ -448,16 +448,21 @@ end
     for k in ("electrons_per_dn", "read_noise_dn")
         @test_throws "sensor_characterisation" Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}(k => 1.0), "config [registration]")
     end
-    # `max_lag` / `overlap_deg` with pairs = "all" are refused when the config is read (no inert setting, cached or not)
+    # `max_lag` with pairs = "all" is refused when the config is read (no inert setting, cached or not)
     inert(t) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}(t), "config [registration]")
     @test_throws "read only by pairs" inert(("pairs" => "all", "max_lag" => 1))
-    @test_throws "read only by pairs" inert(("pairs" => "all", "overlap_deg" => 120.0))
-    @test inert(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))["max_lag"] == 1
+    @test inert(("pairs" => "lag_overlap", "max_lag" => 1))["max_lag"] == 1
+    # PanoramaStitching 0.7's optical-axis angles are retired (0.8): refused by name, naming the view_overlap rules
+    retired(t) = Base.invokelatest(m.refuse_retired_registration, Dict{String, Any}(t), "config [registration]")
+    @test_throws r"overlap_deg is retired: .*any view.*min_inliers" retired(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))
+    @test_throws r"near_duplicate_deg is retired: .*near_duplicate_overlap" retired(("near_duplicate_deg" => 4.0,))
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test TOML.parsefile(joinpath(dir, f))["decode"]["cache"] isa Bool                      # the decode cache, opt-in, stated
         @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
+        @test Base.invokelatest(m.refuse_retired_registration, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
+        @test TOML.parsefile(joinpath(dir, f))["registration"]["near_duplicate_overlap"] == 0.90   # the owner's value, stated
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
         # the view-graph filters' tolerances and the detector's variant are stated
         reg = TOML.parsefile(joinpath(dir, f))["registration"]
