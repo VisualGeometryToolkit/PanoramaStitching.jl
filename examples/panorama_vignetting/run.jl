@@ -65,39 +65,11 @@ function refuse_circle(inputs, where)
     return inputs
 end
 
-# The [registration] keys retired (PanoramaStitching 0.6, 0.7 and 0.8): refused by name, never read.
-const RETIRED_REGISTRATION_KEYS = ("electrons_per_dn" => "the frames' noise is their VisualGeometryToolkitCore sensor model, resolved from the body's characterisation (sensor_characterisation)",
-                                   "read_noise_dn" => "the frames' noise is their VisualGeometryToolkitCore sensor model, resolved from the body's characterisation (sensor_characterisation)",
-                                   "bundle_iterations" => "the bundle is ONE LM run of its bundle_optimization_strategy at the verified pairs' " *
-                                   "pooled RANSAC noise scale (register_rotations); remove the key",
-                                   "bundle_scale_multiple" => "the bundle's strategy is the table bundle_optimization_strategy",
-                                   "bundle_efficiency_constant" => "the bundle's strategy is the table bundle_optimization_strategy (its efficiency_constant)",
-                                   "bundle_loss" => "the bundle's strategy is the table bundle_optimization_strategy (its loss)",
-                                   "averaging_loss" => "the averaging's strategy is the table averaging_optimization_strategy",
-                                   "local_optimization" => "the pairs' RANSAC strategy table is local_optimization_strategy",
-                                   "bundle_camera_free" => "the bundle holds the camera's calibration",
-                                   "bundle_" * "whitening" => "the bundle's observations are the detections' pixels (no detection covariance in this release)",
-                                   "scoring_threshold" * "_px" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (no threshold)",
-                                   "scoring_threshold" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (the MSAC threshold " *
-                                   "is retired)",
-                                   # PanoramaStitching 0.8: the overlap is VisualGeometryToolkitCore's view_overlap, not an optical-axis angle
-                                   "overlap_deg" => "pairs = \"lag_overlap\" tries every pair past the lag whose frames share any view " *
-                                   "(VisualGeometryToolkitCore's view_overlap), min_inliers deciding; no key replaces it: remove the key " *
-                                   "(PanoramaStitching 0.8)",
-                                   "near_duplicate_deg" => "a near-duplicate pair shares at least near_duplicate_overlap of the smaller " *
-                                   "footprint (VisualGeometryToolkitCore's view_overlap; 0.90 the owner's value, 0 the check off): " *
-                                   "replace it with near_duplicate_overlap (PanoramaStitching 0.8)")
 # The key only `pairs = "lag_overlap"` reads (PanoramaStitching refuses it with "all": no inert setting), refused when the
 # config is read, so a config fails the same way whether or not its stages are cached.
 function refuse_inert_pair_keys(table, where)
     table["pairs"] == "all" && haskey(table, "max_lag") &&
         throw(ArgumentError("$where: max_lag is read only by pairs = \"lag_overlap\"; remove it with pairs = \"all\""))
-    return table
-end
-function refuse_retired_registration(table, where)
-    for (old, why) in RETIRED_REGISTRATION_KEYS
-        haskey(table, old) && throw(ArgumentError("$where: the key $old is retired: $why"))
-    end
     return table
 end
 
@@ -117,7 +89,8 @@ function load_config(path)
     refuse_output(cfg, path)
     refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
     refuse_circle(cfg["inputs"], "$path [inputs]")
-    refuse_retired_registration(cfg["registration"], "$path [registration]")
+    # the retired [registration] keys: PanoramaStitching's one list, the keywords' (refused by name, never read)
+    PanoramaStitching.refuse_retired_registration(cfg["registration"], "$path [registration]")
     refuse_inert_pair_keys(cfg["registration"], "$path [registration]")
     base = joinpath(VgtkEval.Experiments.results_root(), "panorama_vignetting")
     out = joinpath(base, cfg["name"])
@@ -322,7 +295,7 @@ asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 # "vst" only, the threshold `noise_sigmas` and `sensor_characterisation`, the body's sensor characterisation (a
 # vgio/sensor_characterisation file under the data root, or "none"; stated either way, never defaulted). The frames' models are
 # VisualGeometryToolkitCore's resolver's (`frame_models`). A noise key with "tone" is refused, never read; the 0.6 constants
-# `electrons_per_dn` and `read_noise_dn` are refused by name (RETIRED_REGISTRATION_KEYS).
+# `electrons_per_dn` and `read_noise_dn` are refused by name (PanoramaStitching.refuse_retired_registration).
 const DETECTION_NOISE_KEYS = ("noise_sigmas", "sensor_characterisation")
 function detector_settings(r)
     if r["detection_image"] == "vst"

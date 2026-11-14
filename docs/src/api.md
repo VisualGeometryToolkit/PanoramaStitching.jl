@@ -11,6 +11,7 @@ chain_tracks
 refine_rotations
 refine_camera_and_rotations
 RotationBundleMetadata
+PanoramaStitching.refuse_retired_registration
 ```
 
 ## Features

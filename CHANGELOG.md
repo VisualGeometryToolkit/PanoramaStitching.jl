@@ -35,6 +35,17 @@ estimate beside Core's).
 - The example: `[registration] near_duplicate_deg` and `overlap_deg` are refused by name when a config is read; the configs
   of record state `near_duplicate_overlap = 0.90` (were `near_duplicate_deg = 4.0`, 14 mm, and `9.0`, 8 mm). Its registration
   record is format v17 and its verified pairs v12, so 0.7's records are recomputed, not reused.
+- A retired keyword's refusal reads "`<key>` is retired: …" (was "the keyword `<key>` is retired: …"; the example's
+  "the key <key> is retired: …"), one message for a keyword and a config key alike.
+
+## Added
+
+- `PanoramaStitching.refuse_retired_registration(table, where)` (public, not exported, as `detect_features` and
+  `pair_bearings` are): the ONE list of the retired registration settings, refused by name with each one's successor, for
+  a config's `[registration]` table (`String` keys) and keywords (`Symbol` keys) alike. `register_rotations` and
+  `verify_pairs` refuse their retired keywords through it, and the example's config loader calls it (its own list,
+  `RETIRED_REGISTRATION_KEYS`, and function are deleted); a downstream loader (RC's cvpr2027 configs) calls it on the table
+  it reads.
 
 ## 0.7.0 (2026-11-13)
 

@@ -213,29 +213,94 @@ function _check_frames(what, frames, selection, detection_image, sensor_models, 
     return nothing
 end
 
-# The registration's retired keywords, refused naming their successor; any other unknown keyword is refused as unknown.
-const _RETIRED_REGISTRATION_KEYWORDS = (;
+# The registration's retired keys, each with its successor or migration: ONE list for `register_rotations`' and
+# `verify_pairs`' keywords and a config's `[registration]` table (the example's, RC's), refused by `refuse_retired_registration`.
+const _SENSOR_NOISE_SUCCESSOR = "the frames' noise is their VisualGeometryToolkitCore sensor model (`sensor_models`), resolved from " *
+                                "the body's characterisation (sensor_characterisation)"
+const _BUNDLE_WIDTH_SUCCESSOR = "the bundle's strategy is `bundle_optimization_strategy` (a config's table of that name): its " *
+                                "efficiency constant × the pooled scale"
+const _PAIR_SCORER_SUCCESSOR = "the pairs' scorer is Student-t + uniform (`scoring`; the example's outlier_halfwidth_px), no " *
+                               "threshold (the MSAC threshold is retired)"
+const _RETIRED_REGISTRATION_KEYS = (;
+    # 0.6: the frames' noise constants, the bundle's iteration count
+    electrons_per_dn = _SENSOR_NOISE_SUCCESSOR,
+    read_noise_dn = _SENSOR_NOISE_SUCCESSOR,
+    detection_noise = _RETIRED_DETECTION_NOISE,
+    bundle_iterations = "the bundle is ONE LM run of its `bundle_optimization_strategy` at the verified pairs' pooled RANSAC " *
+                        "noise scale; remove it",
     bundle_camera_free = "the bundle holds the camera's calibration (refine_rotations); the autocalibration of a rotating camera is " *
                          "refine_camera_and_rotations",
-    bundle_scale_multiple = "the bundle's strategy is `bundle_optimization_strategy` (its efficiency constant × the pooled scale)",
-    bundle_efficiency_constant = "the bundle's strategy is `bundle_optimization_strategy` (its efficiency constant × the pooled scale)",
-    bundle_loss = "the bundle's robust strategy is `bundle_optimization_strategy = Triggs{Shape}(…)`",
-    averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)`",
-    local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy`",
-    detection_noise = _RETIRED_DETECTION_NOISE,
-    # PanoramaStitching 0.7's optical-axis angles (0.8: the overlap is VisualGeometryToolkitCore's view_overlap, the one estimate)
+    bundle_scale_multiple = _BUNDLE_WIDTH_SUCCESSOR,
+    bundle_efficiency_constant = _BUNDLE_WIDTH_SUCCESSOR,
+    bundle_loss = "the bundle's robust strategy is `bundle_optimization_strategy = Triggs{Shape}(…)` (a config's table of that " *
+                  "name, its loss)",
+    averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)` (a config's table of " *
+                     "that name)",
+    local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy` (a config's table of that name)",
+    # the retired names in fragments (check_naming lists them)
+    Symbol("bundle_" * "whitening") => "the bundle's observations are the detections' pixels (no detection covariance in this " *
+                                       "release)",
+    Symbol("scoring_threshold" * "_px") => _PAIR_SCORER_SUCCESSOR,
+    scoring_threshold = _PAIR_SCORER_SUCCESSOR,
+    # 0.8: the optical-axis angles (the overlap is VisualGeometryToolkitCore's view_overlap, the one estimate)
     overlap_deg = "pairs = :lag_overlap tries every pair past the lag whose frames share any view (VisualGeometryToolkitCore's " *
                   "view_overlap under the averaged rotations), min_inliers deciding; no threshold replaces the optical-axis " *
-                  "angle: remove the keyword (PanoramaStitching 0.8)",
+                  "angle: remove it (PanoramaStitching 0.8)",
     near_duplicate_deg = "a near-duplicate pair shares at least `near_duplicate_overlap` of the smaller footprint " *
                          "(VisualGeometryToolkitCore's view_overlap under the averaged rotations; default 0.90, 0 turns the check " *
-                         "off), not an optical-axis angle: replace it with near_duplicate_overlap (PanoramaStitching 0.8)",
-    # the retired whitening switch, spelled in fragments (check_naming lists the retired name)
-    Symbol("bundle_" * "whitening") => "the bundle's observations are the detections' pixels (no detection covariance in this " *
-                                       "release)")
+                         "off), not an optical-axis angle: replace it with near_duplicate_overlap (PanoramaStitching 0.8)")
+
+"""
+    refuse_retired_registration(table, where::AbstractString) -> table
+
+Refuse the registration's retired keys in `table`: a config's `[registration]` table (an
+`AbstractDict` with `String` keys, as `TOML.parsefile` gives it) or keywords (a `NamedTuple`
+or `pairs(kwargs)`, `Symbol` keys). The first retired key found is an `ArgumentError`,
+`"<where>: `<key>` is retired: <its successor, or how to migrate>"`; otherwise `table` is
+returned as given (any other key is not this function's: `register_rotations` and
+`verify_pairs` refuse an unknown keyword themselves, after this check).
+
+The ONE list of PanoramaStitching's retired registration settings, the keywords of
+[`register_rotations`](@ref) and [`verify_pairs`](@ref) and a config's keys alike:
+`electrons_per_dn`, `read_noise_dn` and `detection_noise` (the frames' sensor model),
+`bundle_iterations`, `bundle_camera_free`, `bundle_scale_multiple`,
+`bundle_efficiency_constant` and `bundle_loss` (`bundle_optimization_strategy`;
+[`refine_camera_and_rotations`](@ref)), `averaging_loss`
+(`averaging_optimization_strategy`), `local_optimization` (`local_optimization_strategy`),
+the whitening switch, the pairs' MSAC thresholds (the Student-t + uniform `scoring`), and
+0.8's `overlap_deg` (`:lag_overlap` tries every pair that shares any view) and
+`near_duplicate_deg` (`near_duplicate_overlap`). A config loader calls it on the table it
+reads, before any stage, so a config fails the same way cached or not.
+
+```jldoctest
+julia> using PanoramaStitching
+
+julia> r = Dict{String, Any}("pairs" => "all", "near_duplicate_overlap" => 0.9);
+
+julia> PanoramaStitching.refuse_retired_registration(r, "config.toml [registration]") === r
+true
+
+julia> try
+           PanoramaStitching.refuse_retired_registration(Dict("near_duplicate_deg" => 4.0), "config.toml [registration]")
+       catch e
+           println(first(e.msg, 59))
+       end
+config.toml [registration]: `near_duplicate_deg` is retired
+```
+"""
+function refuse_retired_registration(table, where::AbstractString)
+    for k in keys(table)
+        s = Symbol(k)
+        haskey(_RETIRED_REGISTRATION_KEYS, s) && throw(ArgumentError("$where: `$k` is retired: $(_RETIRED_REGISTRATION_KEYS[s])"))
+    end
+    return table
+end
+
+# `register_rotations`' and `verify_pairs`' keywords past their own: a retired one refused naming its successor
+# (`refuse_retired_registration`), any other as unknown.
 function _refuse_retired_registration_keywords(what, kwargs)
+    refuse_retired_registration(kwargs, what)
     for (k, _) in pairs(kwargs)
-        haskey(_RETIRED_REGISTRATION_KEYWORDS, k) && throw(ArgumentError("$what: the keyword `$k` is retired: $(_RETIRED_REGISTRATION_KEYWORDS[k])"))
         throw(ArgumentError("$what: unknown keyword `$k`"))
     end
     return nothing
