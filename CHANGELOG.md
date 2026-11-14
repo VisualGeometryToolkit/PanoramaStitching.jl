@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.8.0 (unreleased)
+## 0.8.1 (unreleased)
+
+A test-only patch: no source file under src/ changed, no API change.
+
+- The bundle tests no longer pin a count of LM iterations or the last digits of a minimum recorded on one machine (GitHub's
+  runner failed 0.7.0's `test/autocalibration_tests.jl:173`, `(res.iterations, res.n) == (19, 1489)`: the iterations and
+  the last digits follow how each machine's compiled code rounds). Each bundle asserts it converged by a tolerance within
+  its iteration cap, with its fixture's observation count; the exact-data autocalibration keeps its derived rms bound
+  (`2eps(1200.0)`) and its checks against the true camera and rotations; the camera-held bundles are compared with the same
+  bundle solved jointly (`eliminate = false`, another rounding path to the same minimum) at the stop tolerances' own bound
+  (the rms to `rtol = ftol`, the rotations and directions to `rtol = 2xtol`).
+- The example's `write_results_check.jl` compares the bundle record it reads back with the fixture's own record instead of
+  restating its numbers.
+- 0.8.0's CHANGELOG entry dated.
+
+## 0.8.0 (2026-11-14)
 
 One notion of view overlap across the stack (owner ruling 2026-11-14): PanoramaStitching decides near-duplicates and pair
 selection by VisualGeometryToolkitCore's `view_overlap` — the solid angle two frames of a rotating camera both image, as a
