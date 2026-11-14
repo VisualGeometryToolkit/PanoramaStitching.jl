@@ -1,3 +1,32 @@
+docs-pass: aa88790
+landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.8.0 docs pass (julia-docs-pass): one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
+
+The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = GitHub main), resolved from General alone
+(Core 0.10.1, Features 0.9.1, Estimation 0.11.1, IO 0.10.0, Eval 0.8.0; the example's environment too).
+[x] API diff since 0.7.0: no exported or public name added, removed or renamed (src/PanoramaStitching.jl unchanged).
+    Keywords: `verify_pairs` loses `overlap_deg`; `register_rotations` loses `overlap_deg` and `near_duplicate_deg` and gains
+    `near_duplicate_overlap = 0.90`. The two retired keywords are refused by name (ArgumentError naming the migration), as
+    0.7 refuses its other retired keywords. `Registration.near_duplicates` keeps its name and type; its meaning is the
+    view_overlap rule.
+[x] Docstrings: `Registration` (near_duplicates), `verify_pairs` (signature and the retired keyword), `register_rotations`
+    (both signature lines gain near_duplicate_overlap and check_tracks; the pairs and near-duplicates items; the
+    refusals). The suite's docs item (undocumented public, signature drift, detached docstrings) runs in the release gate.
+[x] Guide: registration steps 2 (`:lag_overlap`'s pairs past the lag: any shared view, min_inliers deciding) and 5 (the
+    near-duplicate rule, 0.90 by default, 0 off).
+[x] README and landing page: their example uses `pairs = :all` and neither retired keyword; unchanged (the readme item runs
+    them verbatim, near-duplicates now on by default, in the release gate).
+[x] The example: README step 2 names the near-duplicate rule and the refused keys; both configs of record state
+    `near_duplicate_overlap = 0.90` with the owner's ruling in the comment (were `near_duplicate_deg = 4.0` / `9.0`); no
+    `overlap_deg` or `near_duplicate_deg` in src/, docs/src, the README or the example but the refusals (grep; the tests
+    and the CHANGELOG name them to refuse them).
+[x] CHANGELOG 0.8.0 with "## Breaking changes": the retired keywords and how to migrate, the new criterion, what
+    registrations change.
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
+
 docs-pass: 51933f0
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 

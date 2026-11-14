@@ -1,3 +1,19 @@
+# PanoramaStitching 0.8.0: one view-overlap estimate, VisualGeometryToolkitCore's view_overlap (owner ruling 2026-11-14)
+
+- [x] concept search of PanoramaStitching for every overlap notion between two frames built on the angle between optical axes
+  (`_axis_angle`, `overlap_deg`, `near_duplicate`, `acos`, `angle_between`, "optical axis"): two, both through
+  `_axis_angle_deg` (src/registration.jl): `:lag_overlap`'s pairs past the lag (`overlap_deg`) and the near-duplicate pairs
+  (`near_duplicate_deg`). Both now Core 0.10.1's `view_overlap` as it is (`_shared_views`: the frames posed by the averaged
+  rotations as Core's oriented cameras, the fraction of the smaller footprint); `_axis_angle_deg` deleted (c2291a0)
+- [x] the other optical-axis angles are no pair overlap, kept: `fibonacci_directions`' and the masks' `fov_deg` (a direction
+  within the field of view of one frame), `coverage_extent` and the vignetting fit's `AzimuthalChart` extent (the frames'
+  union, `acos` of the smallest cosine to the chart's centre); the tests' `acos` builds synthetic scenes
+- [x] no PanoramaStitching-local overlap: `_oriented_frame` is Core's documented idiom (`BoundedCamera(PosedCamera(model(bc),
+  pose), extent; lens_coverage = lens_coverage(bc))`), and Core 0.10.1's `view_overlap` needed no change
+- [x] check_duplication with VGTK_STACK_PATHS = the clean monorepo snapshot at the resolved versions: the release gate
+
+---
+
 # PanoramaStitching 0.6.5: the example's poses (a plain-Vector translation beside an SMatrix rotation)
 
 - [x] concept search of Core 0.9.6 for a pure rotation or an identity-translation pose: `RotationMap` exists, but IO 0.9's
