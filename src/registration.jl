@@ -119,7 +119,11 @@ retired `overlap_deg` is refused by name (an `ArgumentError`: `:lag_overlap`
 tries every pair past the lag that shares any view). A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a detector setting
 [`detect_features`](@ref) refuses (`detection_image = :vst` needs every frame a
-`LinearRaw`) and an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
+`LinearRaw`), an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
+and, with `:lag_overlap`, a camera whose footprint VisualGeometryToolkitCore's
+`view_overlap` refuses (a model that is not a `CameraModel`, a region the lens
+cannot back-project, as a bare sensor's corners past a fisheye's fold, a field
+of view within 3° of the backward axis: give the camera its lens coverage)
 are an `ArgumentError` before any feature is detected.
 """
 function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; frame_map,
@@ -133,6 +137,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
                       averaging_optimization_strategy = _NotGiven(), execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("verify_pairs", retired)
     _check_pair_settings("verify_pairs", pairs, max_lag)
+    _check_view_overlap("verify_pairs", camera, pairs, 0.0)
     pairs === :all && !(averaging_optimization_strategy isa _NotGiven) &&
         throw(ArgumentError("verify_pairs: averaging_optimization_strategy is read only by pairs = :lag_overlap (its averaging aims " *
                             "the pairs past the lag); leave it out with pairs = :all"))
@@ -407,7 +412,9 @@ stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
 `:lag_overlap`, a `max_lag` below 1 or none with `:lag_overlap` or one given with `:all`, a `near_duplicate_overlap` outside
 `[0, 1]`, the retired `overlap_deg` and `near_duplicate_deg` (PanoramaStitching 0.7's optical-axis angles, refused by name
 naming their successors), and an `execution_provider` other
-than `:auto`, `:cpu` or `:cuda` are an `ArgumentError` before any feature is detected. With either `pairs`, a view graph that is not connected once the
+than `:auto`, `:cpu` or `:cuda`, and a camera whose footprint `view_overlap` refuses wherever the registration reads it
+(the near-duplicates, unless `near_duplicate_overlap = 0`; `:lag_overlap`'s pairs past the lag) are an `ArgumentError`
+before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `ArgumentError` too.
 """
@@ -429,6 +436,7 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
     _check_pair_settings("register_rotations", pairs, max_lag)
     _check_tolerances("register_rotations", cycle_tol, orientation_tol)
     _check_near_duplicate("register_rotations", near_duplicate_overlap)
+    _check_view_overlap("register_rotations", camera, pairs, near_duplicate_overlap)
     vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
                       detection_image, sensor_models, noise_sigmas, saturated, descriptor, matcher,
                       min_score, pairs, max_lag, min_inliers, seed, scoring, local_optimization_strategy, max_trials, min_trials,
@@ -446,6 +454,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
                             say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("register_rotations", retired)
     _check_near_duplicate("register_rotations", near_duplicate_overlap)
+    _check_view_overlap("register_rotations", camera, :all, near_duplicate_overlap)
     feats = vp.features; K = length(feats)
     no_covariance = _no_covariance_pairs(vp.verified)
     isempty(no_covariance) || say("  rotation averaging: $(length(no_covariance)) verified pair(s) with no determined rotation covariance, " *
@@ -520,6 +529,26 @@ end
 # (VisualGeometryToolkitCore's view_overlap) seeds no track. The owner's value (owner ruling 2026-11-14); the default of
 # `near_duplicate_overlap`, whose 0 turns the check off.
 const _NEAR_DUPLICATE_OVERLAP = 0.90
+
+# The camera's footprint, checked before any feature is detected: the registration reads VisualGeometryToolkitCore's
+# view_overlap through `camera` (the near-duplicates, unless `near_duplicate_overlap` is 0; `:lag_overlap`'s pairs past the
+# lag), so its refusals of the footprint (a model that is not a CameraModel, a region the lens cannot back-project, a field
+# of view within 3° of the backward axis) come at the entry, not after every pair was matched. Where nothing reads it,
+# nothing is refused.
+function _check_view_overlap(what, camera, pairs, near_duplicate_overlap)
+    readers = String[]
+    pairs === :lag_overlap && push!(readers, "pairs = :lag_overlap (its pairs past the lag)")
+    near_duplicate_overlap > 0 && push!(readers, "near_duplicate_overlap = $near_duplicate_overlap (the near-duplicate pairs)")
+    isempty(readers) && return nothing
+    try
+        VgtkCore.view_overlap([_oriented_frame(camera, one(SMatrix{3, 3, Float64, 9}))])
+    catch e
+        e isa ArgumentError || rethrow()
+        throw(ArgumentError("$what: " * join(readers, " and ") * " read VisualGeometryToolkitCore's view_overlap through the " *
+                            "camera, which refuses its footprint: " * e.msg))
+    end
+    return nothing
+end
 
 # `near_duplicate_overlap`: a fraction in [0, 1] (0: every kept pair chained). Checked before any feature is detected.
 _check_near_duplicate(what, f) = (isfinite(f) && 0 <= f <= 1) ||

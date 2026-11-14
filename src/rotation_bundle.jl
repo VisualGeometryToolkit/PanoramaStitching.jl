@@ -31,8 +31,9 @@
 const _FrameChart = VgtkCore.SO3Manifold{Float64}
 const _SphereChart = typeof(VgtkCore.SphereManifold(SVector(0.0, 0.0, 1.0)))
 
-# A track's direction is a 2-dof sphere chart held as Core's `Eliminable{E}`: `E` says whether NLLSsolver may eliminate it
-# (only where the installed NLLSsolver has the Schur system).
+# A track's direction is a 2-dof sphere chart held as Core's `Eliminable{E}`: `E` says whether NLLSsolver eliminates it, which
+# needs the installed NLLSsolver's Schur system (`MultiVariateLSschur`, Core's `nlls_features().schur`); `eliminate`
+# defaults to it, and `eliminate = true` without it is refused (no inert setting).
 const _SCHUR = VgtkCore.nlls_features().schur
 
 # The camera the bundle reads (`_BundleCamera`): its model (the back-projection and its Jacobian) and where that model's
@@ -291,7 +292,7 @@ end
 
 """
     refine_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width, max_iter,
-                     ftol, xtol, eliminate = true) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+                     ftol, xtol, eliminate = <NLLSsolver's Schur system>) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
 (fixed: the calibration is held, a rotation-only bundle with no parameter
@@ -340,9 +341,11 @@ result's `n` is the number of observations kept; its metadata's
   (the largest step in chart units: radians for a rotation or a direction)
   are its stops (Core's `LmStops`, its one LM adapter `lmsolve_chart!` on an `LmProblem`); the result's `iterations` the LM iterations
   it took.
-- `eliminate` — whether NLLSsolver may eliminate the directions (the Schur
-  complement, where the loaded NLLSsolver has it); `false` solves every unknown
-  together. Both reach the same optimum.
+- `eliminate` — whether NLLSsolver eliminates the directions (their Schur
+  complement), which needs the loaded NLLSsolver's Schur system
+  (`MultiVariateLSschur`; Core's `nlls_features().schur`): the default where it
+  has one; `false` solves every unknown together, the default otherwise.
+  `eliminate = true` without the Schur system is an `ArgumentError` naming it.
 
 A refine ends in the local minimum its start leads to; the result's termination
 record (Core's `retcode` and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `converged(result)` its success) says how
@@ -357,7 +360,7 @@ are an `ArgumentError`, and so are the retired `loss`/`loss_width` (the strategy
 """
 function refine_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
                           optimization_strategy = _DEFAULT_BUNDLE_STRATEGY, scale = nothing, width = nothing,
-                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true, retired...)
+                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = _SCHUR, retired...)
     for k in keys(retired)
         k === :camera_free && throw(ArgumentError(
             "refine_rotations: the rotation bundle holds the camera's calibration (no parameter keyword); to refine the camera " *
@@ -386,7 +389,7 @@ const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("refine_camera_and_poses",
 
 """
     refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
-                                fixed = (), max_iter, ftol, xtol, eliminate = true)
+                                fixed = (), max_iter, ftol, xtol, eliminate = <NLLSsolver's Schur system>)
         -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
 
 The AUTOCALIBRATION of a rotating camera: no target, a pure-rotation sequence (Hartley 1994; Agapito, Hayman and Reid 2001).
@@ -415,7 +418,7 @@ A contract refine:
 function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
                                      optimization_strategy = _DEFAULT_BUNDLE_STRATEGY,
                                      scale = nothing, width = nothing, fixed::Tuple{Vararg{Symbol}} = (),
-                                     max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = true,
+                                     max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = _SCHUR,
                                      retired...)
     for k in keys(retired)                                       # camera_free and the other spellings of a held-parameter list
         k in _RETIRED_HOLD_KEYWORDS && throw(ArgumentError(
@@ -461,7 +464,10 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
-    E = eliminate && _SCHUR
+    eliminate && !_SCHUR && throw(ArgumentError(
+        "$what: eliminate = true needs NLLSsolver's Schur system (MultiVariateLSschur), which the loaded NLLSsolver does not " *
+        "have; leave `eliminate` out (every unknown solved together)"))
+    E = eliminate
     cv = chc === nothing ? nothing : _CameraVariable(chc)
     V = chc === nothing ? Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}} :
         Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}, typeof(cv)}
