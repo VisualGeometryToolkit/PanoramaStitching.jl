@@ -1,7 +1,7 @@
-docs-pass: 58d8157
+docs-pass: be09d88
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499 and 58d8157: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
+# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499, 58d8157 and be09d88: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
 
 The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = GitHub main), resolved from General alone
 (Core 0.10.1, Features 0.9.1, Estimation 0.11.1, IO 0.10.0, Eval 0.8.0; the example's environment too).
@@ -27,6 +27,11 @@ The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = 
 [x] Re-recorded at 6279499: the CHANGELOG's one banned word (check_naming R7, the gate at c816935) reworded; no other change.
 [x] Re-recorded at 58d8157: two test items (bundle width, view-graph filters) state near_duplicate_overlap = 0 (the gate at
     c816935: view_overlap refuses their bare sensor past the KB lens's fold); no docs change.
+[x] Re-recorded at be09d88 (the desktop's ruling on the owner's BoundedCamera rule): 58d8157 reverted (8083f3b), the items'
+    camera given its valid region instead (SweepScene's BCAM, an image circle of 500 px; the near-duplicate check runs and
+    finds none, asserted); the CHANGELOG names the refusal of a camera footprint the lens cannot back-project, and what to
+    set (the lens coverage). The 8 mm config of record keeps near_duplicate_overlap = 0.90 (the owner's value) pending the
+    owner's answer on its 24 of 45 near-duplicate pairs.
 
 ---
 
