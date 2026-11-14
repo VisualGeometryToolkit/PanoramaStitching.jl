@@ -17,7 +17,7 @@ estimate beside Core's).
 - **Near-duplicates are always on.** 0.7's default (`near_duplicate_deg = nothing`) chained every kept pair; 0.8's default
   leaves out of the chaining every kept pair that shares ≥ 0.90 of the smaller footprint (it is still verified and
   averaged; `Registration.near_duplicates`). A registration that set no `near_duplicate_deg` changes wherever two frames
-  share that much view: fewer tracks, and the bundle's rotations differ. Pass `near_duplicate_overlap = 0` for 0.7's default.
+  share that much view: fewer tracks, and the bundle's rotations differ. `near_duplicate_overlap = 0` restores 0.7's default.
 - **`overlap_deg` is retired**, refused by name (an `ArgumentError` saying what replaced it), with no successor keyword.
   `pairs = :lag_overlap` now tries, past the lag, every pair whose frames share ANY view under the rotation averaging of the
   verified pairs (`view_overlap`'s solid angle above zero), and `min_inliers` decides which are kept. Migrate: remove
