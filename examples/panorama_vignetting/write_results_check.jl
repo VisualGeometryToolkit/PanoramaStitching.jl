@@ -30,7 +30,8 @@ function write_results_check()
         @test b.rotations.images == Dict(enumerate(names))
         @test VgtkCore.control_points(b.vignetting) == VgtkCore.control_points(v)
         @test b.gains == G
-        @test b.fit.iterations == 7 && b.fit.n == 120 && b.fit.retcode == VgtkCore.ReturnCode.Success
+        @test (VgtkCore.retcode(b.fit), VgtkCore.stop_rule(b.fit), b.fit.iterations, b.fit.rms, b.fit.n) ==   # the fixture's record, read back
+              (VgtkCore.retcode(bundle_fit), VgtkCore.stop_rule(bundle_fit), bundle_fit.iterations, bundle_fit.rms, bundle_fit.n)
         r = VgtkIO.load_raster(joinpath(C.run, "panorama_map.json"))
         @test size(r.values) == (400, 400) && eltype(r.values) == Float32
         @test r.values[17, 33] == Float32(v(frame_map(SVector(33 - 0.5, 17 - 0.5))))
