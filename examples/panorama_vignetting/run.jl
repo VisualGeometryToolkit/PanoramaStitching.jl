@@ -65,7 +65,7 @@ function refuse_circle(inputs, where)
     return inputs
 end
 
-# The [registration] keys retired (PanoramaStitching 0.6): refused by name, never read.
+# The [registration] keys retired (PanoramaStitching 0.6, 0.7 and 0.8): refused by name, never read.
 const RETIRED_REGISTRATION_KEYS = ("electrons_per_dn" => "the frames' noise is their VisualGeometryToolkitCore sensor model, resolved from the body's characterisation (sensor_characterisation)",
                                    "read_noise_dn" => "the frames' noise is their VisualGeometryToolkitCore sensor model, resolved from the body's characterisation (sensor_characterisation)",
                                    "bundle_iterations" => "the bundle is ONE LM run of its bundle_optimization_strategy at the verified pairs' " *
@@ -79,12 +79,19 @@ const RETIRED_REGISTRATION_KEYS = ("electrons_per_dn" => "the frames' noise is t
                                    "bundle_" * "whitening" => "the bundle's observations are the detections' pixels (no detection covariance in this release)",
                                    "scoring_threshold" * "_px" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (no threshold)",
                                    "scoring_threshold" => "the pairs' scorer is Student-t + uniform at outlier_halfwidth_px (the MSAC threshold " *
-                                   "is retired)")
-# The keys only `pairs = "lag_overlap"` reads (PanoramaStitching 0.7 refuses them with "all": no inert setting), refused when
-# the config is read, so a config fails the same way whether or not its stages are cached.
+                                   "is retired)",
+                                   # PanoramaStitching 0.8: the overlap is VisualGeometryToolkitCore's view_overlap, not an optical-axis angle
+                                   "overlap_deg" => "pairs = \"lag_overlap\" tries every pair past the lag whose frames share any view " *
+                                   "(VisualGeometryToolkitCore's view_overlap), min_inliers deciding; no key replaces it: remove the key " *
+                                   "(PanoramaStitching 0.8)",
+                                   "near_duplicate_deg" => "a near-duplicate pair shares at least near_duplicate_overlap of the smaller " *
+                                   "footprint (VisualGeometryToolkitCore's view_overlap; 0.90 the owner's value, 0 the check off): " *
+                                   "replace it with near_duplicate_overlap (PanoramaStitching 0.8)")
+# The key only `pairs = "lag_overlap"` reads (PanoramaStitching refuses it with "all": no inert setting), refused when the
+# config is read, so a config fails the same way whether or not its stages are cached.
 function refuse_inert_pair_keys(table, where)
-    table["pairs"] == "all" && any(k -> haskey(table, k), ("max_lag", "overlap_deg")) &&
-        throw(ArgumentError("$where: max_lag and overlap_deg are read only by pairs = \"lag_overlap\"; remove them with pairs = \"all\""))
+    table["pairs"] == "all" && haskey(table, "max_lag") &&
+        throw(ArgumentError("$where: max_lag is read only by pairs = \"lag_overlap\"; remove it with pairs = \"all\""))
     return table
 end
 function refuse_retired_registration(table, where)
@@ -225,6 +232,8 @@ end
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 # v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
+# v17: the near-duplicate pairs by VisualGeometryToolkitCore's view_overlap (`near_duplicate_overlap`, of the smaller footprint;
+# PanoramaStitching 0.8), not an optical-axis angle.
 # v16: the near-duplicate pairs left out of the chaining (`near_duplicate_deg`), the track check (`check_tracks`: per tested
 # solve its removals past 3.035 σ̂, rms and inlier rms), the bundle's inlier rms (residuals within its loss width).
 # v15: `bundle_fit`, the bundle's termination record as Core's values (the results file's `fit`); `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
@@ -234,7 +243,7 @@ end
 # v12: every bundle observation whitened by its detection's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for the position noise.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v16 (the kept pairs; the near-duplicate pairs not chained; the track check, per solve its removals and rms; the bundle's inlier rms; pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v17 (the near-duplicate pairs by view_overlap's shared fraction of the smaller footprint; the kept pairs; the near-duplicate pairs not chained; the track check, per solve its removals and rms; the bundle's inlier rms; pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
@@ -248,6 +257,8 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # v5: no detection within three scales of a saturated pixel (Features' detection mask: the frames' clip masks), the detections in
 # Features' canonical order, the frames' map Features' raw_frame_map.
 # v10: detection covariances off (the detector's default): the pairs' residuals and scales in pixels.
+# v12: :lag_overlap's pairs past the lag those whose frames share any view (VisualGeometryToolkitCore's view_overlap;
+# PanoramaStitching 0.8; overlap_deg retired).
 # v11: the format's words the terminology's (detections, correspondences: PanoramaStitching 0.7); the configs of record
 # state no max_lag / overlap_deg with pairs = "all" (refused: no inert setting).
 # v9: the pairs scored by Student-t + uniform at outlier_halfwidth_px (the MSAC scoring_threshold retired), each pair's ŝ that
@@ -256,9 +267,9 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # v7: the features are Features' described features as detected (their covariances the detector's, no normalisation), the pairs'
 # residuals whitened by them (scoring_threshold in sigmas of the unit noise; the px threshold retired), per pair its rms and σ̂
 # in those sigmas.
-const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v11 (the terminology's words; plain detections, pixel residuals of the correspondences; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the detections' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
+const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v12 (:lag_overlap's pairs past the lag by view_overlap; the terminology's words; plain detections, pixel residuals of the correspondences; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the detections' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
 const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
-                               "bundle_ftol", "bundle_xtol", "near_duplicate_deg", "check_tracks")
+                               "bundle_ftol", "bundle_xtol", "near_duplicate_overlap", "check_tracks")
 function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
@@ -356,7 +367,7 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
         vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
                           max_detections = r["max_detections"], det.selection, det.detection_image, sensor_models = models, det.noise_sigmas, descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
-                          min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = get(r, "max_lag", nothing), overlap_deg = get(r, "overlap_deg", nothing),
+                          min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = get(r, "max_lag", nothing),
                           min_inliers = r["min_inliers"], seed = r["seed"],
                           scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, Float64(r["outlier_halfwidth_px"]);
                                                                      scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior()),
@@ -381,7 +392,7 @@ function registration(C, inp, lens; log)
                                  cycle_tol = deg2rad(r["cycle_tol_deg"]), orientation_tol = deg2rad(r["orientation_tol_deg"]),
                                  bundle_optimization_strategy = bundle_strategy(r),
                                  bundle_max_iter = r["bundle_max_iter"], bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"],
-                                 near_duplicate_deg = r["near_duplicate_deg"], check_tracks = r["check_tracks"], say = m -> say(log, m))
+                                 near_duplicate_overlap = r["near_duplicate_overlap"], check_tracks = r["check_tracks"], say = m -> say(log, m))
         Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
         Dict{String, Any}("convention" => "d = R_k·f_k, the first frame's camera frame the common frame; R row by row",
                           "frames" => inp.names, "rotations" => [[collect(R[i, :]) for i in 1:3] for R in Rs],

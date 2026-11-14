@@ -62,7 +62,9 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    VisualGeometryToolkitFeatures' DeDoDe/LoMa descriptor (`descriptor = :b`), at most `max_detections` per frame.
    `tone_percentile` sets the exposure the detector sees; `asift_tilts = [(1.0, 0.0)]` is the untilted view only.
 2. **Pairs**: `pairs = :all` matches every frame pair; `pairs = :lag_overlap` only those at most `max_lag` apart in capture
-   order, plus those whose averaged optical axes are within `overlap_deg`. Matches come from the LoMa matcher
+   order, plus every pair past the lag whose frames share any view under the rotation averaging of the verified pairs
+   (VisualGeometryToolkitCore's `view_overlap` of the frames posed by those rotations: the solid angle both image), with
+   `min_inliers` deciding which are kept; no threshold. Matches come from the LoMa matcher
    (`matcher = :b128`) and become bearing correspondences through the camera
    ([`PanoramaStitching.pair_bearings`](@ref)), plain detections, so a pair's residuals are in the camera's pixels.
 3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `find_rotation` (RANSAC on bearings, its sampler seeded from
@@ -72,9 +74,10 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    Estimation's own) gives every frame's rotation.
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two detections
-   of one frame) are dropped. With `near_duplicate_deg`, a kept pair whose optical axes are within it under the averaged
-   rotations (two near-identical views) is averaged but seeds no track (`reg.near_duplicates`): such views match their
-   repeated structure as well as their scene, and a wrong match through them chains far.
+   of one frame) are dropped. A kept pair whose frames share at least `near_duplicate_overlap` of the smaller footprint
+   (VisualGeometryToolkitCore's `view_overlap` under the averaged rotations; 0.90 by default, the owner's value; `0` turns
+   the check off) is a near-duplicate: averaged but seeding no track (`reg.near_duplicates`), since two near-identical views
+   match their repeated structure as well as their scene, and a wrong match through them chains far.
 6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
    robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
    `bundle_optimization_strategy` (a `Triggs`) at `scale = σ̂`, its width the strategy's efficiency constant × σ̂, σ̂ the
