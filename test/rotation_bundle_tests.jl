@@ -101,9 +101,12 @@ end
     @test count(good) > 300
     derr = [rad2deg(acos(clamp(dot(res.metadata.directions[j], dirs[j]), -1, 1))) for j in findall(good)]
     @test median(derr) < 0.1 && maximum(derr) < 0.5                  # a track of 2–5 observations at 0.5 px
-    # the joint solve (no elimination) reaches the same optimum
-    res2 = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., eliminate = false)
-    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - SMatrix{3, 3}(VgtkCore.estimate(res2)[k])), 1:K) < 1.0e-8
+    # `eliminate = true` needs NLLSsolver's Schur system (MultiVariateLSschur): without it, it is refused by name (no inert
+    # setting); left out, the default solves every unknown together
+    if !VgtkCore.nlls_features().schur
+        @test_throws r"eliminate = true.*MultiVariateLSschur" refine_rotations(CAM, start, obs0; kw..., eliminate = true)
+        @test_throws r"eliminate = true.*MultiVariateLSschur" PanoramaStitching.refine_camera_and_rotations(CAM, start, obs0; kw..., eliminate = true)
+    end
     # the closed-form Jacobian blocks against ForwardDiff through the variables' updates
     ch = VgtkCore.SO3Manifold(SMatrix{3, 3, Float64, 9}(R[2])); dv = VgtkCore.Eliminable{false}(VgtkCore.SphereManifold(dirs[1]))
     x = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * dirs[1]) + SVector(0.3, -0.2)

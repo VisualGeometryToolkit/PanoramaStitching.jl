@@ -603,3 +603,30 @@ end
     run = read(joinpath(dir, "run.jl"), String)
     @test !occursin("RETIRED_REGISTRATION_KEYS", run) && occursin("PanoramaStitching.refuse_retired_registration(", run)
 end
+
+@testitem "register_rotations, verify_pairs: a camera view_overlap refuses is refused before any feature is detected" setup = [BayerMaps] begin
+    # a bare 1200 × 1200 sensor through a KB(-0.02) fisheye of f = 300 px: its corners lie past the lens's fold, a footprint
+    # view_overlap cannot back-project. Registering through it is refused at the entry, beside the other settings' checks, and
+    # not after every pair was matched (`say` hears no frame's detections); with no view_overlap to run (`pairs = :all`, the
+    # near-duplicate check off) there is nothing to refuse
+    using Test, StaticArrays
+    using PanoramaStitching: PanoramaStitching, register_rotations, verify_pairs
+    import VisualGeometryToolkitCore as VgtkCore
+    bare = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[600.0VgtkCore.px, 600.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
+                                  VgtkCore.Size2(1200, 1200))
+    @test_throws r"back-project" VgtkCore.view_overlap([PanoramaStitching._oriented_frame(bare, one(SMatrix{3, 3, Float64, 9}))])
+    frames = [rand(1200, 1200, 3) for _ in 1:2]
+    kw = (; frame_map = IDENTITY_MAP, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = [(1.0, 0.0)],
+          max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, min_inliers = 10, seed = 1, max_trials = 10,
+          min_trials = 1)
+    bkw = (; bundle_max_iter = 1, bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
+    heard = String[]
+    @test_throws r"register_rotations: .*near_duplicate_overlap.*back-project" register_rotations(frames, bare; kw..., bkw..., pairs = :all,
+                                                                                                   say = m -> push!(heard, m))
+    @test_throws r"register_rotations: .*:lag_overlap.*back-project" register_rotations(frames, bare; kw..., bkw..., pairs = :lag_overlap, max_lag = 1,
+                                                                                         near_duplicate_overlap = 0.0, say = m -> push!(heard, m))
+    @test_throws r"verify_pairs: .*:lag_overlap.*back-project" verify_pairs(frames, bare; kw..., pairs = :lag_overlap, max_lag = 1,
+                                                                           say = m -> push!(heard, m))
+    @test isempty(heard)                                                        # no frame's detections: refused before them
+    @test PanoramaStitching._check_view_overlap("f", bare, :all, 0.0) === nothing   # nothing runs view_overlap: nothing refused
+end
