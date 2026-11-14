@@ -1,7 +1,7 @@
 # =============================================================================
 # The registration structure (src/tracks.jl, src/rotation_bundle.jl): the tracks
 # chain matches and drop the inconsistent ones, and the rotation bundle recovers the rotations and the directions of a synthetic
-# fisheye sweep past 90° with outliers; its Jacobian blocks against ForwardDiff; the eliminated and the joint solve agree.
+# fisheye sweep past 90° with outliers; its Jacobian blocks against ForwardDiff; two starts reach one minimum, within their stationarity.
 # =============================================================================
 
 @testsetup module SweepScene
@@ -63,7 +63,7 @@ end
     @test dropped == 0
 end
 
-@testitem "refine_rotations: a fisheye sweep past 90°, outliers; Jacobian; eliminated = joint" setup = [SweepScene] begin
+@testitem "refine_rotations: a fisheye sweep past 90°, outliers; Jacobian; two starts, one minimum" setup = [SweepScene, BundleReference] begin
     using Test, Random, LinearAlgebra, StaticArrays, Statistics
     import Rotations, ForwardDiff, NLLSsolver
     using PanoramaStitching: refine_rotations
@@ -101,6 +101,23 @@ end
     @test count(good) > 300
     derr = [rad2deg(acos(clamp(dot(res.metadata.directions[j], dirs[j]), -1, 1))) for j in findall(good)]
     @test median(derr) < 0.1 && maximum(derr) < 0.5                  # a track of 2–5 observations at 0.5 px
+    # Two starts, one minimum, within their stationarity: each estimate's distance from the minimum is at most its Newton step
+    # there, √(gᵀH⁻¹g) in the robust cost's Hessian metric (BundleReference's stationarity_radius, from the cost's gradient g
+    # and Hessian H at the estimate, the rounding of g's sum added), so the two estimates are within the sum of their radii.
+    # On the inlier observations (within 6σ = 3 px of the truth; tracks left in two frames or more): a track with an
+    # outlier has more than one minimum of its own (its direction), and two starts may well settle it in different ones.
+    tin = [[k => x for (k, x) in t if norm(VgtkCore.project(CAM, SMatrix{3, 3}(R[k])' * d) - x) <= 3.0] for (t, d) in zip(ts, dirs)]
+    tin = filter(t -> length(unique(first.(t))) >= 2, tin)
+    start2 = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.02 .* randn(Xoshiro(99 + k), 3))...))) * R[k] for k in 1:K)
+    start2[1] = R[1]
+    a = refine_rotations(CAM, start, tin; kw...); b = refine_rotations(CAM, start2, tin; kw...)
+    @test VgtkCore.converged(a) && VgtkCore.converged(b)
+    free = collect(2:K)
+    sa = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(a), a.metadata.directions, tin, free), 1.5)
+    sb = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(b), b.metadata.directions, tin, free), 1.5)
+    Δ = coordinates_between(VgtkCore.estimate(a), a.metadata.directions, VgtkCore.estimate(b), b.metadata.directions, free)
+    @info "two starts: $(a.iterations) and $(b.iterations) LM iterations; their distance $(sqrt(dot(Δ, sa.H * Δ))), radii $(sa.radius) + $(sb.radius)"
+    @test sqrt(dot(Δ, sa.H * Δ)) <= sa.radius + sb.radius
     # `eliminate = true` needs NLLSsolver's Schur system (MultiVariateLSschur): without it, it is refused by name (no inert
     # setting); left out, the default solves every unknown together
     if !VgtkCore.nlls_features().schur

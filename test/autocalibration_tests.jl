@@ -145,7 +145,7 @@ end
 
 # The camera held (`refine_rotations`, the rotation-only bundle): the numbers of the bundle before the camera could be freed — the fisheye
 # sweep of rotation_bundle_tests.jl with outliers, its rms and its rotations as PanoramaStitching 69471ff computed them.
-@testitem "refine_rotations holds the calibration: no calibration, the given width, the rotations recovered" setup = [SweepScene, RotatingKB] begin
+@testitem "refine_rotations holds the calibration: no calibration, the given width, the rotations recovered" setup = [SweepScene, RotatingKB, BundleReference] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
     using PanoramaStitching: refine_rotations
@@ -154,7 +154,7 @@ end
     # run at a given width since the pooled RANSAC scale, so the held camera is checked on the result instead)
     rng = Xoshiro(31)
     R = sweep_rotations(rng, 5)
-    ts, _, _ = sweep_tracks(rng, R, 400; outl = 0.05)
+    ts, dirs, _ = sweep_tracks(rng, R, 400; outl = 0.05)                         # dirs: the tracks' true directions
     start = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.02 .* randn(rng, 3))...))) * R[k] for k in 1:5)
     start[1] = R[1]
     kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
@@ -163,21 +163,27 @@ end
     @test res.metadata.loss_width == 1.5 && VgtkCore.converged(res) && 0 < res.iterations < kw.max_iter
     @test VgtkCore.stop_rule(res) != VgtkCore.IterationCap && res.n == 1489          # by a tolerance; the fixture's observations
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:5) < 0.05
-    # The minimum against a reference the test computes, not numbers recorded on one machine: StaticArrays' small-matrix
-    # products are `muladd` chains, which LLVM contracts into FMAs as each compiled copy, each LLVM and each CPU target decides
-    # (Julia 1.12's LLVM 18 and 1.13's LLVM 20 round some 3 × 3 products one ulp apart, measured on dgx01, 2026-11-12; GitHub's
-    # runner ran another count of LM iterations than dgx01 on PanoramaStitching 0.7.0), so the iterations and the last digits
-    # follow the machine. The reference: the same bundle solved jointly (`eliminate = false`, no Schur complement: another
-    # rounding path to the same minimum), on the same machine. Each solve stops where its relative cost decrease is below
-    # ftol and its relative step below xtol, converging superlinearly there, so each is within those of the minimum: the rms
-    # (the cost's square root) agree to rtol = ftol and the estimates (the rotations, the directions) to rtol = 2xtol.
-    agree(a, b, kw) = isapprox(a.rms, b.rms; rtol = kw.ftol) &&
-        all(k -> isapprox(SMatrix{3, 3}(VgtkCore.estimate(a)[k]), SMatrix{3, 3}(VgtkCore.estimate(b)[k]); rtol = 2kw.xtol), keys(VgtkCore.estimate(a))) &&
-        isapprox(reduce(vcat, a.metadata.directions), reduce(vcat, b.metadata.directions); rtol = 2kw.xtol)
-    joint = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., eliminate = false)
-    @test VgtkCore.converged(joint) && joint.n == res.n
-    @info "held bundle: $(res.iterations) and $(joint.iterations) LM iterations (eliminated, joint); rms $(res.rms), $(joint.rms) px"
-    @test agree(res, joint, kw)
+    # The estimate against the truth, within the error the noise allows — no number recorded on one machine (the iterations
+    # and last digits follow how each machine's compiled code rounds; GitHub's runner ran another count than dgx01 on 0.7.0).
+    # The observations within 6σ of the truth are the inliers (σ = 0.5 px: a Gaussian residual passes 6σ with probability
+    # e⁻¹⁸); the Cauchy M-estimator's asymptotic covariance at loss width 1.5 px is κσ²(JᵢₙᵀJᵢₙ)⁻¹ (J the bundle's Jacobian
+    # at the truth, BundleReference); the outliers pull it by their first-order bias −H⁻¹g_out. The rotations' error, less
+    # that bias, is within χ²₁₂(0.999) in the covariance's metric (12: four free frames).
+    σ, c, free = 0.5, 1.5, collect(2:5)
+    m = bundle_model(CAM, R, dirs, ts, free)
+    nobs = length(m.r) ÷ 2
+    inl = [norm(m.r[(2i - 1):(2i)]) <= 6σ for i in 1:nobs]
+    rin = reduce(vcat, [[2i - 1, 2i] for i in 1:nobs if inl[i]])
+    (; κ, curvature) = cauchy_efficiency(c, σ)
+    F = cholesky(Symmetric(m.J[rin, :]' * m.J[rin, :]))
+    gout = sum(m.J[(2i - 1):(2i), :]' * (2c^2 / (c^2 + sum(abs2, m.r[(2i - 1):(2i)])) .* m.r[(2i - 1):(2i)]) for i in 1:nobs if !inl[i])
+    bias = -(F \ gout) ./ curvature
+    nR = 3 * length(free)
+    CR = Symmetric((κ * σ^2 * inv(F))[1:nR, 1:nR])
+    e = coordinates_between(R, dirs, VgtkCore.estimate(res), res.metadata.directions, free)[1:nR] - bias[1:nR]
+    q = chisq_even_quantile(0.999, nR)
+    @info "held bundle: the rotations' error in its covariance's metric $(round(dot(e, CR \ e); digits = 2)) (χ²₁₂(0.999) = $(round(q; digits = 2))), $(count(inl)) inliers"
+    @test dot(e, CR \ e) <= q
     # and on the KB scene, the camera held at the wrong start camera
     rng = Xoshiro(7)
     Rk = rows_rotations()
@@ -189,8 +195,8 @@ end
     rk = refine_rotations(cam0, startk, tracks; kwk...)
     @test rk.metadata.camera === cam0
     @test VgtkCore.converged(rk) && VgtkCore.stop_rule(rk) != VgtkCore.IterationCap && 0 < rk.iterations < kwk.max_iter && rk.n == 3624
-    rkj = refine_rotations(cam0, startk, tracks; kwk..., eliminate = false)            # the reference, as above
-    @test VgtkCore.converged(rkj) && rkj.n == rk.n
-    @info "held at the wrong camera: $(rk.iterations) and $(rkj.iterations) LM iterations (eliminated, joint); rms $(rk.rms), $(rkj.rms) px"
-    @test agree(rk, rkj, kwk)
+    # The wrong camera cannot fit the exact tracks (the freed camera fits them to 2eps(1200.0), the first item). No minimum is
+    # asserted: this robust cost, its residuals far past the loss width, has many shallow minima (three starts 0.3°–1° off
+    # stop at rms 13.49–13.63 px; measured on dgx01, 2026-11-14), so no start-independent reference holds.
+    @test rk.rms > 2eps(1200.0)
 end
