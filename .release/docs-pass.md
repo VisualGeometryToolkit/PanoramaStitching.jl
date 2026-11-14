@@ -1,7 +1,7 @@
-docs-pass: 848150c
+docs-pass: 5623193
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499, 58d8157, be09d88 and 848150c: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
+# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499, 58d8157, be09d88, 848150c and 5623193: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
 
 The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = GitHub main), resolved from General alone
 (Core 0.10.1, Features 0.9.1, Estimation 0.11.1, IO 0.10.0, Eval 0.8.0; the example's environment too).
@@ -38,6 +38,8 @@ The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = 
     example's RETIRED_REGISTRATION_KEYS and refuse_retired_registration deleted (load_config calls the package's); the
     CHANGELOG's Added line and the retired message's new form. The API diff since 0.7.0 is now this one added public name
     and the keywords above.
+[x] Re-recorded at 5623193: the new test item's one banned word (check_naming R7, the gate at eb09883) reworded; no docs
+    change.
 
 ---
 
