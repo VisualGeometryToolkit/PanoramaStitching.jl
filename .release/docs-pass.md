@@ -1,7 +1,7 @@
-docs-pass: 86a6296
+docs-pass: a7f4ed6
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.1 docs pass (julia-docs-pass): a test-only patch
+# 0.8.1 docs pass (julia-docs-pass), at 86a6296 and a7f4ed6: a test-only patch
 
 PanoramaStitching 0.8.1 changes no source file under src/ and no public name, signature or docstring.
 [x] API diff since 0.8.0: none (src/ unchanged: `git diff e041d29 -- src` is empty).
@@ -11,6 +11,8 @@ PanoramaStitching 0.8.1 changes no source file under src/ and no public name, si
 [x] CHANGELOG 0.8.1 (the test-only change and why: GitHub's runner ran another count of LM iterations than dgx01); 0.8.0
     dated 2026-11-14.
 [x] Docs build: docs/make.jl (strict) in the release gate.
+[x] Re-recorded at a7f4ed6: test/runtests.jl releases each finished item's memory (GitHub's 16 GB runner died on af70ea0);
+    the CHANGELOG 0.8.1 entry names it; src/, docstrings, guide and README unchanged.
 
 ---
 
