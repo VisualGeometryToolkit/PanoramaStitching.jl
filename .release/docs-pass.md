@@ -1,10 +1,25 @@
-docs-pass: 2daca05
+docs-pass: 3d4629d
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.1 docs pass (julia-docs-pass), at 86a6296, a7f4ed6 and 2daca05
+# 0.8.2 docs pass (julia-docs-pass), at 3d4629d
 
-PanoramaStitching 0.8.1 (first recorded as test-only; see the re-record at 2daca05).
-[x] API diff since 0.8.0 at 86a6296: none (src/ unchanged then).
+On 0.8.1 (df36d37, released): `eliminate = true` refused without NLLSsolver's Schur system, the footprint preflight, the
+derived bundle references.
+[x] API diff since 0.8.1: no name added or removed. `refine_rotations` / `refine_camera_and_rotations`: `eliminate` defaults
+    to NLLSsolver's Schur system (false today) and `eliminate = true` without it is refused by name; both docstrings and
+    signature lines say so. `register_rotations` / `verify_pairs`: a camera view_overlap refuses is refused before any
+    feature is detected, where view_overlap may be read; their docstrings' refusal lists say so.
+[x] Guide, README and landing page: they name neither; unchanged.
+[x] CHANGELOG 0.8.2 (Changes, Tests); 0.8.1's entry as released, dated, its vacuous-reference sentence corrected; the
+    keyword's removal in .release/wave11-removals.md (the monorepo's format).
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
+
+# 0.8.1 docs pass (julia-docs-pass), at 86a6296 and a7f4ed6: a test-only patch (released from df36d37)
+
+PanoramaStitching 0.8.1 changes no source file under src/ and no public name, signature or docstring.
+[x] API diff since 0.8.0: none (src/ unchanged: `git diff e041d29 -- src` is empty).
 [x] Docstrings, guide, README and landing page: unchanged; no claim they make depends on the removed test literals.
 [x] The example: write_results_check.jl compares the record read back with the fixture's own (no restated numbers); its
     README unchanged.
@@ -13,12 +28,6 @@ PanoramaStitching 0.8.1 (first recorded as test-only; see the re-record at 2daca
 [x] Docs build: docs/make.jl (strict) in the release gate.
 [x] Re-recorded at a7f4ed6: test/runtests.jl releases each finished item's memory (GitHub's 16 GB runner died on af70ea0);
     the CHANGELOG 0.8.1 entry names it; src/, docstrings, guide and README unchanged.
-[x] Re-recorded at 2daca05 (the catch-up review): 0.8.1 is no longer test-only. API diff since 0.8.0: no name added or
-    removed; `refine_rotations` / `refine_camera_and_rotations`' `eliminate` defaults to NLLSsolver's Schur system (false
-    today) and `eliminate = true` without it is refused by name (both docstrings and signatures say so); `register_rotations`
-    / `verify_pairs` refuse a camera view_overlap refuses before any feature is detected (their docstrings' refusal lists).
-    The guide, README and landing page name neither. CHANGELOG 0.8.1 rewritten (Changes, Tests); the keyword's removal in
-    .release/wave11-removals.md, the monorepo's format.
 
 ---
 
