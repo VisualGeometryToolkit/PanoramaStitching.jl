@@ -540,8 +540,10 @@ function _check_view_overlap(what, camera, pairs, near_duplicate_overlap)
     pairs === :lag_overlap && push!(readers, "pairs = :lag_overlap (its pairs past the lag)")
     near_duplicate_overlap > 0 && push!(readers, "near_duplicate_overlap = $near_duplicate_overlap (the near-duplicate pairs)")
     isempty(readers) && return nothing
+    # one frame's footprint (Core's view_overlap builds it, and refuses it, before any pair): a stopgap until Core exposes the
+    # footprint check itself
     try
-        VgtkCore.view_overlap([_oriented_frame(camera, one(SMatrix{3, 3, Float64, 9}))])
+        _shared_views(camera, [one(SMatrix{3, 3, Float64, 9})])
     catch e
         e isa ArgumentError || rethrow()
         throw(ArgumentError("$what: " * join(readers, " and ") * " read VisualGeometryToolkitCore's view_overlap through the " *

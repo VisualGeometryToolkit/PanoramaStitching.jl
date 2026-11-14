@@ -171,15 +171,14 @@ end
     # that bias, is within χ²₁₂(0.999) in the covariance's metric (12: four free frames).
     σ, c, free = 0.5, 1.5, collect(2:5)
     m = bundle_model(CAM, R, dirs, ts, free)
-    nobs = length(m.r) ÷ 2
-    inl = [norm(m.r[(2i - 1):(2i)]) <= 6σ for i in 1:nobs]
-    rin = reduce(vcat, [[2i - 1, 2i] for i in 1:nobs if inl[i]])
+    nobs = length(m.cols)
+    inl = [hypot(m.r[2i - 1], m.r[2i]) <= 6σ for i in 1:nobs]
+    Jin = m.J[reduce(vcat, [[2i - 1, 2i] for i in 1:nobs if inl[i]]), :]
     (; κ, curvature) = cauchy_efficiency(c, σ)
-    F = cholesky(Symmetric(m.J[rin, :]' * m.J[rin, :]))
-    gout = sum(m.J[(2i - 1):(2i), :]' * (2c^2 / (c^2 + sum(abs2, m.r[(2i - 1):(2i)])) .* m.r[(2i - 1):(2i)]) for i in 1:nobs if !inl[i])
-    bias = -(F \ gout) ./ curvature
+    F = cholesky(Symmetric(Jin' * Jin))
+    bias = -(F \ cauchy_gradient(m, c, findall(!, inl))) ./ curvature
     nR = 3 * length(free)
-    CR = Symmetric((κ * σ^2 * inv(F))[1:nR, 1:nR])
+    CR = Symmetric(κ * σ^2 * (F \ Matrix(1.0I, size(Jin, 2), nR))[1:nR, :])          # the rotations' block of κσ²(JᵢₙᵀJᵢₙ)⁻¹
     e = coordinates_between(R, dirs, VgtkCore.estimate(res), res.metadata.directions, free)[1:nR] - bias[1:nR]
     q = chisq_even_quantile(0.999, nR)
     @info "held bundle: the rotations' error in its covariance's metric $(round(dot(e, CR \ e); digits = 2)) (χ²₁₂(0.999) = $(round(q; digits = 2))), $(count(inl)) inliers"
