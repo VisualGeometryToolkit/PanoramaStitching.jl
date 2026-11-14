@@ -27,6 +27,11 @@ estimate beside Core's).
 - Every registration now evaluates `view_overlap` on the registration's camera (for the near-duplicates; and, with
   `:lag_overlap`, for the pairs past the lag), so its refusals apply: the camera's model a `CameraModel` (a `SplineLens`
   lens imaging ẑ), its footprint its `imaged_region` (its lens coverage), no field of view within 3° of the backward axis.
+  **A registration whose camera's footprint the lens cannot back-project is refused** (`view_overlap`'s `ArgumentError`:
+  "the lens does not back-project the region's boundary pixel …"), as when a bare sensor's corners lie past a fisheye's
+  fold. Set the camera's valid region: its lens coverage, the image circle where light reaches the sensor
+  (`BoundedCamera(model, extent; lens_coverage = Circle(centre, radius))`, or `with_lens_coverage`), inside where the lens
+  back-projects. 0.7 accepted such a camera.
 - The example: `[registration] near_duplicate_deg` and `overlap_deg` are refused by name when a config is read; the configs
   of record state `near_duplicate_overlap = 0.90` (were `near_duplicate_deg = 4.0`, 14 mm, and `9.0`, 8 mm). Its registration
   record is format v17 and its verified pairs v12, so 0.7's records are recomputed, not reused.
