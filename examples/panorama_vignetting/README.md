@@ -77,8 +77,11 @@ Under `$VGTK_DATA_ROOT`:
    `verified_pairs_<key>.jld2` before anything else runs on them, keyed by the matching and verification settings (every
    `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files' hashes: changing only the
    averaging or the bundle reuses the pairs, and a failure past them loses none of the hour they take. Then
-   `register_rotations` on the pairs: robust rotation averaging over VisualGeometryToolkitEstimation's view graph, tracks,
-   and the bundle of the rotations and track directions. A grid lens is read
+   `register_rotations` on the pairs: robust rotation averaging over VisualGeometryToolkitEstimation's view graph, tracks
+   (a near-duplicate pair, one whose frames share at least `near_duplicate_overlap = 0.90` of the smaller footprint by
+   VisualGeometryToolkitCore's `view_overlap`, is averaged but seeds no track; `0` turns that check off), and the bundle of
+   the rotations and track directions. `near_duplicate_deg` and `overlap_deg` (PanoramaStitching 0.7's optical-axis angles)
+   are refused by name when a config is read. A grid lens is read
    as a `SplineLens` camera and projects through its forward spline, fitted over its imaged region. The rotations are
    cached in the registration record (`registration_<key>.jld2`), keyed by the registration settings, the inputs and the RAW files' hashes, with the bundle's
    outcome (`converged`, `not_run` or another retcode) and its count of observations dropped at its start (a start prediction

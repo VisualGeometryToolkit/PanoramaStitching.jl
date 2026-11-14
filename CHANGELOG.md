@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.0 (unreleased)
+
+One notion of view overlap across the stack (owner ruling 2026-11-14): PanoramaStitching decides near-duplicates and pair
+selection by VisualGeometryToolkitCore's `view_overlap` — the solid angle two frames of a rotating camera both image, as a
+fraction of each footprint — and no longer by the angle between optical axes (0.7's `_axis_angle_deg`, a second overlap
+estimate beside Core's).
+
+## Breaking changes
+
+- **`near_duplicate_deg` is retired**, refused by name (an `ArgumentError` naming `near_duplicate_overlap`), with no alias.
+  A near-duplicate pair is now a kept pair whose frames share at least `near_duplicate_overlap` of the SMALLER footprint
+  (`view_overlap` under the averaged rotations, `max(fraction_i, fraction_j)`). Migrate: drop `near_duplicate_deg` (and
+  `near_duplicate_deg = nothing`); the default `near_duplicate_overlap = 0.90` is the owner's value, and
+  `near_duplicate_overlap = 0` turns the check off. A value outside `[0, 1]` is an `ArgumentError`.
+- **Near-duplicates are always on.** 0.7's default (`near_duplicate_deg = nothing`) chained every kept pair; 0.8's default
+  leaves out of the chaining every kept pair that shares ≥ 0.90 of the smaller footprint (it is still verified and
+  averaged; `Registration.near_duplicates`). A registration that set no `near_duplicate_deg` changes wherever two frames
+  share that much view: fewer tracks, and the bundle's rotations differ. Pass `near_duplicate_overlap = 0` for 0.7's default.
+- **`overlap_deg` is retired**, refused by name (an `ArgumentError` saying what replaced it), with no successor keyword.
+  `pairs = :lag_overlap` now tries, past the lag, every pair whose frames share ANY view under the rotation averaging of the
+  verified pairs (`view_overlap`'s solid angle above zero), and `min_inliers` decides which are kept. Migrate: remove
+  `overlap_deg`. A `:lag_overlap` registration tries a different set of pairs past the lag (every overlapping pair, where 0.7
+  tried those within the axis angle), so its verified pairs, tracks and rotations differ. `pairs = :all` is unchanged.
+- `max_lag` alone is `:lag_overlap`'s setting (needed there, refused with `:all`).
+- Every registration now evaluates `view_overlap` on the registration's camera (for the near-duplicates; and, with
+  `:lag_overlap`, for the pairs past the lag), so its refusals apply: the camera's model a `CameraModel` (a `SplineLens`
+  lens imaging ẑ), its footprint its `imaged_region` (its lens coverage), no field of view within 3° of the backward axis.
+- The example: `[registration] near_duplicate_deg` and `overlap_deg` are refused by name when a config is read; the configs
+  of record state `near_duplicate_overlap = 0.90` (were `near_duplicate_deg = 4.0`, 14 mm, and `9.0`, 8 mm). Its registration
+  record is format v17 and its verified pairs v12, so 0.7's records are recomputed, not reused.
+
 ## 0.7.0 (2026-11-13)
 
 The breaking wave of the stack (VisualGeometryToolkitCore 0.10, IO 0.10, Features 0.9, Estimation 0.11): the terminology
