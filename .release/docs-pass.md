@@ -1,3 +1,19 @@
+docs-pass: 86a6296
+landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.8.1 docs pass (julia-docs-pass): a test-only patch
+
+PanoramaStitching 0.8.1 changes no source file under src/ and no public name, signature or docstring.
+[x] API diff since 0.8.0: none (src/ unchanged: `git diff e041d29 -- src` is empty).
+[x] Docstrings, guide, README and landing page: unchanged; no claim they make depends on the removed test literals.
+[x] The example: write_results_check.jl compares the record read back with the fixture's own (no restated numbers); its
+    README unchanged.
+[x] CHANGELOG 0.8.1 (the test-only change and why: GitHub's runner ran another count of LM iterations than dgx01); 0.8.0
+    dated 2026-11-14.
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
+
 docs-pass: 5623193
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
