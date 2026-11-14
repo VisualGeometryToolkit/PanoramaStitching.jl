@@ -589,7 +589,7 @@ end
         end
         @test err isa ArgumentError && occursin("register_rotations: `$k` is retired: ", err.msg) && occursin(successor, err.msg)
     end
-    # a current table passes through, returned as given; an unknown keyword (not a retired one) is refused as unknown
+    # a current table is returned as given; an unknown keyword (not a retired one) is refused as unknown
     t = Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "near_duplicate_overlap" => 0.9)
     @test refuse_retired_registration(t, "config [registration]") === t
     @test refuse_retired_registration((; pairs = :all), "register_rotations") == (; pairs = :all)
