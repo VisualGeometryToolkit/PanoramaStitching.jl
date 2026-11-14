@@ -165,7 +165,7 @@ end
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:5) < 0.05
     # The estimate against the truth, within the error the noise allows — no number recorded on one machine (the iterations
     # and last digits follow how each machine's compiled code rounds; GitHub's runner ran another count than dgx01 on 0.7.0).
-    # The observations within 6σ of the truth are the inliers (σ = 0.5 px: a Gaussian residual passes 6σ with probability
+    # The observations within 6σ of the truth are the inliers (σ = 0.5 px: a Gaussian residual exceeds 6σ with probability
     # e⁻¹⁸); the Cauchy M-estimator's asymptotic covariance at loss width 1.5 px is κσ²(JᵢₙᵀJᵢₙ)⁻¹ (J the bundle's Jacobian
     # at the truth, BundleReference); the outliers pull it by their first-order bias −H⁻¹g_out. The rotations' error, less
     # that bias, is within χ²₁₂(0.999) in the covariance's metric (12: four free frames).
