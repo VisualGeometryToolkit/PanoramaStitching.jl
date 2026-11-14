@@ -1,7 +1,7 @@
-docs-pass: be09d88
+docs-pass: 848150c
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499, 58d8157 and be09d88: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
+# 0.8.0 docs pass (julia-docs-pass), at aa88790, 6279499, 58d8157, be09d88 and 848150c: one overlap estimate, Core's view_overlap (owner ruling 2026-11-14)
 
 The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = GitHub main), resolved from General alone
 (Core 0.10.1, Features 0.9.1, Estimation 0.11.1, IO 0.10.0, Eval 0.8.0; the example's environment too).
@@ -32,6 +32,12 @@ The release tree: rel-ps080 from faabf45 (the registered 0.7.0, tree 826ecf66 = 
     finds none, asserted); the CHANGELOG names the refusal of a camera footprint the lens cannot back-project, and what to
     set (the lens coverage). The 8 mm config of record keeps near_duplicate_overlap = 0.90 (the owner's value) pending the
     owner's answer on its 24 of 45 near-duplicate pairs.
+[x] Re-recorded at 848150c (the desktop: one list of the retired registration settings): the public name
+    `PanoramaStitching.refuse_retired_registration(table, where)` added (public, not exported, as detect_features and
+    pair_bearings), its docstring with a jldoctest, in docs/src/api.md's Registration section (checkdocs = :public); the
+    example's RETIRED_REGISTRATION_KEYS and refuse_retired_registration deleted (load_config calls the package's); the
+    CHANGELOG's Added line and the retired message's new form. The API diff since 0.7.0 is now this one added public name
+    and the keywords above.
 
 ---
 
