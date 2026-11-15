@@ -1,7 +1,7 @@
-docs-pass: 552a00e
+docs-pass: 1d35556
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.4 docs review (the docs skill), at 9a82644, re-recorded at 552a00e
+# 0.8.4 docs review (the docs skill), at 9a82644, re-recorded at 552a00e and 1d35556
 
 On 0.8.3 (efe6ffc, released): Core 0.10.10's valid domain of a lens that is not radially symmetric is a `PolygonRegion`.
 [x] API diff since 0.8.3: no exported or public name added, removed or re-signatured (src/PanoramaStitching.jl unchanged).
@@ -20,6 +20,11 @@ On 0.8.3 (efe6ffc, released): Core 0.10.10's valid domain of a lens that is not 
     `_NoDomain`, internal), the decentred-lens test items (01049d3), the duplication checklist's `_in_frame` note (d46eb41),
     the CHANGELOG's Fixed and Tests lines (cf660a3), the LM step's wording (552a00e: check_naming R7 reserves "trial" for a
     random hypothesis draw). No public name, signature or docstring changed; the guide, README and landing page unchanged.
+[x] Re-recorded at 1d35556 (Core a7cdde09, 0.10.10: a PolygonRegion{V} with Adapt rules): the frame masks' `_Sees` adapted
+    with its region (f98f057, internal; red on Core a7cdde09 without it, job 20111; green, job 20113), the device test item
+    (test/decentred_lens_gpu_tests.jl), the camera variable's polygon field concrete (064ad7c), the CHANGELOG's Fixed and
+    Tests lines. No public name, signature or docstring changed: the docstrings of sample_frames, render_panorama and
+    fit_vignetting already state that the arrays live on the frames' backend; the guide, README and landing page unchanged.
 
 ---
 
