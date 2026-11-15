@@ -45,19 +45,18 @@ function compare_arms(arms_path)
         Hf, Wf, _ = size(inp.frames[1]); W, H = Int.(PanoramaStitching._covered_extent(inp.frame_map, Wf, Hf))   # the frames' map: (2Wf, 2Hf) for :bin2
         lens = load_lens(C; raw_width = W, raw_height = H)
         reg = registration(C, inp, lens; log = devnull)
-        # the comparison is an Eval product of the set: keyed by this comparison's config, the set's config by content, the code
-        # and the registration it reads (its output's content hash: a registration produced again is compared again)
-        E = VgtkEval.Experiments
-        p = E.Product(C.experiment, A["output"], A; output = "results.md", files = Dict("set" => set_path),
-                      upstream = ("registration" => reg.product,), code = C.code)
-        dir = E.product_dir(p)
-        E.produced(p) && (println("$(C.cfg["name"]): reused $dir"); continue)
-        E.produce(p; driver = "examples/panorama_vignetting/compare_arms.jl", config_source = abspath(arms_path),
-                  gitpath = pkgdir(PanoramaStitching)) do dir
+        # the comparison is an Eval product of the set: keyed by this comparison's config, the set's config and the drivers by
+        # content, the code and the registration it reads (its output's content hash: a registration produced again is compared again)
+        p = VgtkEval.Experiments.Product(C.experiment, A["output"], A; output = "results.md", code = C.code,
+                                         files = Dict("set" => set_path, "driver" => @__FILE__, "run.jl" => joinpath(@__DIR__, "run.jl")),
+                                         upstream = ("registration" => reg.product,))
+        ran = false
+        dir = VgtkEval.Experiments.produce(p; driver = "examples/panorama_vignetting/compare_arms.jl", config_source = abspath(arms_path)) do dir
+            ran = true
             compare_set(A, order, C, inp, lens, reg, dir, p.key, arms_path, set_path)
             nothing                                                   # results.json, then results.md (the product's output)
         end
-        println("$(C.cfg["name"]): $(joinpath(dir, "results.md"))")
+        println("$(C.cfg["name"]): $(ran ? "" : "reused ")$(joinpath(dir, "results.md"))")
     end
 end
 
@@ -86,12 +85,12 @@ function compare_set(A, order, C, inp, lens, reg, dir, key, arms_path, set_path)
         cfg = deepcopy(C.cfg); v = cfg["vignetting"]
         v["gain_correction"] = a["gain_correction"]; v["observation_noise"] = a["observation_noise"]
         v["observation_noise_iterations"] = A["observation_noise_iterations"]
-        Ca = (; cfg, C.out, run = dir, C.path)
+        Ca = (; cfg, run = dir, C.path)
         fkw = (; vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
         fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
         t = time(); r = fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...); dt = time() - t
         V = VgtkCore.estimate(r); m = r.metadata
-        a === ref && (Vref = V)
+        a === first(order) && (Vref = V)                                  # the V of record: the first arm
         G = fit_gains(Ca, r)
         seams = [score_seams(lens, dev.frames, reg.rotations, sview; vignetting = V, gains = G, plane = p, skw...) for p in 1:3]
         pooled = vcat([filter(!isnan, vec(Array(s.ratio))) for s in seams]...)

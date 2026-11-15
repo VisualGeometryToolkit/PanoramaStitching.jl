@@ -17,16 +17,19 @@ configs and results layout break.
   `cached_result` and `keyed_cell_dir`. Each step is an Eval `Product` of the set, in
   `<results>/panorama_vignetting/<name>/<product>/<key>/` with its `_config.toml` and `_provenance.toml`: `verified_pairs/`,
   `registration/`, `run/` (was `verified_pairs_<key>.jld2`, `registration_<key>.jld2` and `run-<key>/` beside them) and
-  compare_arms.jl's `arms/`. Every key holds the code trees (PanoramaStitching's and the stack's); the registration's holds
+  compare_arms.jl's `arms/`. Every key holds the code trees (PanoramaStitching's and the stack's) and the content of the RAW
+  files, the decode's sensor record and the lens (0.8 keyed the record and the lens by their paths); the registration's holds
   the verified pairs' output hash, the run's and the comparison's the registration's (Eval's Merkle chain: an upstream
-  produced again with other outputs re-keys its consumers). **0.8's records are not found**: the first run registers again.
-  The run itself is produced on every call. A product records the code it ran, so a run of record runs on committed code
+  produced again with other outputs re-keys its consumers), and the drivers' content. **0.8's records are not found**: the
+  first run registers again. A produced run is reused (`run.jl <config> --force`, `run_example(config; force = true)`,
+  produces it again), and `run_example` returns the run's directory (0.8: a NamedTuple of its results). A [decode] without
+  `sensor_characterisation` is refused by `load_config`. A product records the code it ran, so a run of record runs on committed code
   (`VGTK_SCRATCH=1` for scratch work), and `VGTK_RESULTS_ROOT` must be set (Eval 0.9 has no default results root outside a
   project with `data/exp_pro`).
 
 ### Fixed
 
-- The example's `write_results_check.jl` passes the frames' sensor record that `write_results` requires; `run_checks.jl`
+- The example's `write_results_check.jl` gives `write_results` the frames' sensor record it requires; `run_checks.jl`
   calls each check in the latest world (Julia 1.12+'s world-age warning, an error under `--depwarn=error`).
 
 ## 0.8.2 (2026-11-14)

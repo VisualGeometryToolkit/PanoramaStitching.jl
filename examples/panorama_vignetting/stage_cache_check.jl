@@ -6,7 +6,8 @@
 # The verified pairs are a stage product (Eval's Product, produced or loaded by Eval's produce): REUSED when only the averaging or
 # the bundle changes, produced again when a matching or detector setting, LoMa's provider or a RAW file changes; the registration
 # is keyed by every [registration] setting and by the pairs' output (Eval's Merkle chain: pairs produced again with other outputs
-# re-key it, and a registration produced from the earlier pairs is no longer produced); the record reads back exactly. Every file
+# re-key it, and a registration produced from the earlier pairs is no longer produced); the decode's sensor record and the lens key
+# the pairs by content; the record reads back exactly. Every file
 # goes into temporary data and results roots; the products record the code they ran, so the check runs on committed code (a
 # fresh clone, as run_checks.jl's stage does), as every run of record.
 include(joinpath(@__DIR__, "run.jl"))
@@ -28,9 +29,10 @@ function stage_cache_check()
                           matcher = (; model = "loma_b128", execution_provider = :cuda, threads = 8)))
     root = mktempdir(); mkpath(joinpath(root, "raw")); results = mktempdir()
     foreach(n -> write(joinpath(root, "raw", n), n), ("a.ARW", "b.ARW"))
+    write(joinpath(root, "lens.json"), "the lens")
     strat(t, l, k, v) = Dict{String, Any}("type" => t, "loss" => l, k => v)
-    cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW"),
-                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false),
+    cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW", "lens" => "lens.json"),
+                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false, "sensor_characterisation" => "none"),
                                      "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
                                                                                "averaging_optimization_strategy" => strat("irls", "huber", "max_iter", 100),
                                                                                "bundle_optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0)),
@@ -42,8 +44,8 @@ function stage_cache_check()
     @testset "the example's stage cache" begin
         withenv("VGTK_DATA_ROOT" => root, "VGTK_RESULTS_ROOT" => results) do
             E = VgtkEval.Experiments
-            C(c) = (; cfg = c, out = results, experiment = "panorama_vignetting/stage_cache_check", code = E.current_code_trees(),
-                    path = joinpath(@__DIR__, "stage_cache_check.jl"))
+            code = E.current_code_trees()
+            C(c) = (; cfg = c, experiment = "panorama_vignetting/stage_cache_check", code, path = @__FILE__)
             matched = Ref(0)                                                  # how often the matching ran
             compute(seconds = 1.0) = (matched[] += 1; merge!(pairs_record(vp), Dict{String, Any}("seconds" => seconds)))
             pairs(c; provider = :cuda) = pairs_product(C(c), inp, provider)
@@ -59,17 +61,18 @@ function stage_cache_check()
             @test all(k -> back.features[k] == vp.features[k], 1:2)          # the described features as they were
             reg(c; provider = :cuda) = stage_product(C(c), "registration", registration_settings(C(c), inp, provider);
                                                      upstream = ("verified_pairs" => pairs(c; provider),))
-            key(f, c; provider = :cuda) = (f === pairs_stage_settings ? pairs(c; provider) : reg(c; provider)).key
+            pkey(c; provider = :cuda) = pairs(c; provider).key
+            rkey(c; provider = :cuda) = reg(c; provider).key
             # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
-            @test key(pairs_stage_settings, cfg(); provider = :cpu) != key(pairs_stage_settings, cfg()) &&
-                  key(registration_settings, cfg(); provider = :cpu) != key(registration_settings, cfg())
+            @test pkey(cfg(); provider = :cpu) != pkey(cfg()) &&
+                  rkey(cfg(); provider = :cpu) != rkey(cfg())
             # a changed averaging or bundle setting: a new registration, the SAME pairs (reused: not matched again)
             for c in (cfg(; averaging_optimization_strategy = strat("irls", "cauchy", "max_iter", 100)),
                       cfg(; bundle_optimization_strategy = strat("triggs", "cauchy", "efficiency_constant", 2.5)),
                       cfg(; bundle_optimization_strategy = strat("triggs", "huber", "efficiency_constant", 3.0)),
                       cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0))
-                @test key(registration_settings, c) != key(registration_settings, cfg()) &&
-                      key(pairs_stage_settings, c) == key(pairs_stage_settings, cfg())
+                @test rkey(c) != rkey(cfg()) &&
+                      pkey(c) == pkey(cfg())
                 stage(c)
             end
             @test matched[] == 1
@@ -78,19 +81,24 @@ function stage_cache_check()
             r0 = reg(cfg())
             produce_stage(() -> Dict{String, Any}("rotations" => 1), r0, C(cfg()); log = devnull, what = "registration")
             @test E.produced(r0) && reg(cfg()).key == r0.key
-            E.produce(_ -> compute(2.0), pairs(cfg()); driver = DRIVER, config_source = C(cfg()).path, force = true,
-                      gitpath = pkgdir(PanoramaStitching))
+            produce_stage(() -> compute(2.0), pairs(cfg()), C(cfg()); log = devnull, what = "verified pairs", force = true)
             @test matched[] == 2 && reg(cfg()).key != r0.key && !E.produced(r0)
             # a changed matching setting, or a changed RAW file: NOT reused, matched again
             stage(cfg(; min_inliers = 30)); @test matched[] == 3
             write(joinpath(root, "raw", "b.ARW"), "b, rewritten"); stage(cfg(; min_inliers = 30)); @test matched[] == 4
             # the detector's keys key the pairs
             for c in (cfg(; selection = "spread"), cfg(; detection_image = "vst"), cfg(; max_detections = 4096))
-                @test key(pairs_stage_settings, c) != key(pairs_stage_settings, cfg())
+                @test pkey(c) != pkey(cfg())
             end
+            # the files the frames and the camera are read from key the pairs by content: the decode's sensor record, the lens
+            write(joinpath(root, "sensor.json"), "a record")
+            recorded() = (c = cfg(); c["decode"]["sensor_characterisation"] = "sensor.json"; c)
+            k = pkey(recorded()); @test k != pkey(cfg())
+            write(joinpath(root, "sensor.json"), "the record, measured again"); @test pkey(recorded()) != k
+            k = pkey(cfg()); write(joinpath(root, "lens.json"), "the lens, calibrated again"); @test pkey(cfg()) != k
             # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its strategy keys the pairs there
-            @test key(pairs_stage_settings, cfg(; pairs = "lag_overlap", averaging_optimization_strategy = strat("irls", "cauchy", "max_iter", 100))) !=
-                  key(pairs_stage_settings, cfg(; pairs = "lag_overlap"))
+            @test pkey(cfg(; pairs = "lag_overlap", averaging_optimization_strategy = strat("irls", "cauchy", "max_iter", 100))) !=
+                  pkey(cfg(; pairs = "lag_overlap"))
         end
     end
     true

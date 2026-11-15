@@ -27,9 +27,9 @@ Everything the run writes goes under VisualGeometryToolkitEval's results root (`
 `<results>/panorama_vignetting/<name>/` holds the decode cache and the set's products: each step is a VisualGeometryToolkitEval
 `Product` (DrWatson's `produce_or_load`: produced once, loaded after), in `<product>/<key>/` with its records (`_config.toml`,
 `_provenance.toml`). The verified pairs are keyed by their settings, the registration by every `[registration]` setting and the
-pairs' output, the run's outputs (`run/<key>/`) by the whole config and the registration's output; every key holds the code
-trees (PanoramaStitching's and the stack's). The run itself is produced on every call: its code is this driver's, which no key
-holds. Products record the code they ran, so a run of record runs on committed code (`VGTK_SCRATCH=1` for scratch work). From a REPL,
+pairs' output, the run's outputs (`run/<key>/`) by the whole config, `run.jl`'s content and the registration's output; every
+key holds the code trees (PanoramaStitching's and the stack's). A produced product is reused: `run.jl <config> --force` (or
+`run_example(config; force = true)`, which returns the run's directory) produces the run again. Products record the code they ran, so a run of record runs on committed code (`VGTK_SCRATCH=1` for scratch work). From a REPL,
 `include("run.jl"); run_example("config_fx3_14mm.toml")` runs everything; each stage is a function and can be rerun alone.
 
 The compute backend is the config's `[compute] device` (`"cuda"`). On a shared GPU without free memory, run once with
@@ -162,9 +162,9 @@ the warm fit time. A produced comparison is reused. The configs of record keep t
 | file | content |
 |---|---|
 | `decoded/linear_raws.jld2` | with `[decode] cache = true`: the decoded frames, VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content, decode settings and noise (Features keys it by the noise's digest) — a derived cache, regenerable from the RAW files |
-| `verified_pairs/<key>/verified_pairs.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): an Eval `Product`, keyed by the matching and verification settings, LoMa's provider, the inputs, the decode settings, the RAW files' hashes and the code trees |
+| `verified_pairs/<key>/verified_pairs.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): an Eval `Product`, keyed by the matching and verification settings, LoMa's provider, the inputs, the decode settings, the content of the RAW files, of the decode's sensor record and of the lens, and the code trees |
 | `registration/<key>/registration.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting and by the verified pairs' output (their content hash: pairs produced again with other outputs are registered again) |
-| `run/<key>/` | the run's outputs below, keyed by the whole config and the registration's output, with the product's records (`_config.toml`, the config of record; `_provenance.toml`, the key, the driver, the inputs read, the outputs' content hash) |
+| `run/<key>/` | the run's outputs below, keyed by the whole config, `run.jl` and the registration's output, with the product's records (`_config.toml`, the config of record; `_provenance.toml`, the key, the driver, the inputs read, the outputs' content hash) |
 | `panorama.json`, `panorama_map.json` (+ `.tiff`) | the results of record, a `vgio/panorama/v2.0` file (VisualGeometryToolkitIO's `save_panorama`; read it with `VgtkIO.load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`) and the bundle's termination record (`fit`); V over the frame's pixels, a Float32 `vgio/raster` (`VgtkIO.load_raster`), a data result |
 | `panorama_compare_<model>.json`, `panorama_compare_<model>_map.json` (+ `.tiff`) | the comparison fits (`compare_models`), the same record |
 | `seams_uncorrected.png`, `seams_corrected.png` | the seam-ratio maps — display figures (8-bit PNG), not data |

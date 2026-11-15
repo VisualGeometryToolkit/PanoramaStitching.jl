@@ -8,7 +8,8 @@
 # (results_root, $VGTK_RESULTS_ROOT): <results>/panorama_vignetting/<name>/, each step a keyed product of Eval's (`Product`,
 # produced or loaded by `produce`, DrWatson's produce_or_load): verified_pairs/<key>/, registration/<key>/ and the run's outputs
 # in run/<key>/, each with its records. The stages are functions, so in a REPL
-# `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
+# `include("run.jl"); run_example("config.toml")` runs it all (a produced run is reused: `force = true`, or `--force`, produces it
+# again) and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
 using CUDA                                         # the [compute] device's kernels
@@ -83,6 +84,14 @@ function refuse_output(cfg, where)
     return cfg
 end
 
+# The frames' sensor record is stated (no default): `[decode] sensor_characterisation`, a vgio/sensor_characterisation file
+# under the data root or "none" — a config without it is refused when it is read, before any file is.
+function refuse_undeclared_sensor_record(decode, where)
+    haskey(decode, "sensor_characterisation") ||
+        throw(ArgumentError("$where sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects)"))
+    return decode
+end
+
 # The config of record and where its results go: `experiment` the set's products under the results root
 # (`panorama_vignetting/<name>`: Eval's `Product`s, each in <results>/<experiment>/<product>/<key>/), `out` that folder (the decode
 # cache), `code` the code trees every product is keyed by (Eval's `current_code_trees`: PanoramaStitching's and every stack
@@ -95,6 +104,7 @@ function load_config(path)
     # the retired [registration] keys: PanoramaStitching's one list, the keywords' (refused by name, never read)
     PanoramaStitching.refuse_retired_registration(cfg["registration"], "$path [registration]")
     refuse_inert_pair_keys(cfg["registration"], "$path [registration]")
+    refuse_undeclared_sensor_record(cfg["decode"], "$path [decode]")
     experiment = "panorama_vignetting/" * cfg["name"]
     out = joinpath(VgtkEval.Experiments.results_root(), experiment)
     return (; cfg, out, experiment, code = VgtkEval.Experiments.current_code_trees(), path = abspath(path))
@@ -128,16 +138,12 @@ state, so a consumer can check that the frames were decoded under the record its
 function decoded_frames(C; masks::Bool, log = devnull)
     dec = C.cfg["decode"]; mode = dec["mode"]; gain = Float64(dec["gain"])
     mode == "bin2" || error("decode.mode = $mode: the example runs on bin2's three planes")
-    haskey(dec, "sensor_characterisation") ||
-        throw(ArgumentError("[decode] sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects)"))
     char = String(dec["sensor_characterisation"])
     dir = joinpath(C.out, "decoded"); mkpath(dir)
     raw_dir = input_path(C.cfg["inputs"]["raw_dir"])
     raws = sort([f for f in readdir(raw_dir) if endswith(f, C.cfg["inputs"]["raw_extension"])])
-    capture = VgtkFeatures.extract_capture_settings(Dict(k => VgtkFeatures.load_raw_metadata(joinpath(raw_dir, f)) for (k, f) in enumerate(raws)))
-    record = char == "none" ? nothing : VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(char))
-    sha = char == "none" ? nothing : open(VgtkCore.sha256_hex, input_path(char))
-    models = [VgtkCore.sensor_model(record, capture, k) for k in eachindex(raws)]
+    models = sensor_models(char, Dict(k => VgtkFeatures.load_raw_metadata(joinpath(raw_dir, f)) for (k, f) in enumerate(raws)))
+    sha = sensor_record_sha256(char)
     decode(k, cache) = (f = raws[k];
                         lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, sensor_model = models[k], decoder = VgtkFeatures.LibRawDecoder(), cache);
                         say(log, "  $f ($(count(lin.saturated)) saturated or defect quads; $(VgtkCore.component_sources(models[k]).reason))"); lin)
@@ -156,6 +162,17 @@ function decoded_frames(C; masks::Bool, log = devnull)
             frame_map = VgtkCore.raw_frame_map(lin1), plane_maps = ntuple(c -> VgtkCore.bayer_plane_map(lin1, c), 3),
             daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)), models, sensor_characterisation_sha256 = sha)
 end
+
+# The frames' sensor models: per frame VisualGeometryToolkitCore's `sensor_model` (the ONE resolver, a lookup) of the body's
+# characterisation `char` (IO's `load` of the vgio/sensor_characterisation file under the data root, or "none": the absent model)
+# at the frame's capture settings (Features' `extract_capture_settings` of `sources`, frame index => its RAW metadata or mosaic).
+function sensor_models(char::AbstractString, sources)
+    record = char == "none" ? nothing : VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(char))
+    capture = VgtkFeatures.extract_capture_settings(sources)
+    return [VgtkCore.sensor_model(record, capture, k) for k in 1:length(sources)]
+end
+# A sensor record's content hash (Eval's `file_sha256`, cached in the process), or `nothing` for "none".
+sensor_record_sha256(char::AbstractString) = char == "none" ? nothing : VgtkEval.Experiments.file_sha256(input_path(char))
 
 # ----------------------------------------------------------------------------- the lens
 
@@ -195,12 +212,15 @@ bundle_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["bundle_op
 # `<name>.jld2` in its keyed directory, reused while its key — a SHA-256 of the record's format, the stage's settings, the ONNX
 # Runtime provider LoMa runs on (`execution_provider = "auto"` resolved: a CPU record is not a CUDA run's, whose matches differ
 # in the pairs at the network's threshold), the inputs, the decode settings, the RAW files' hashes, the code trees and the
-# products it reads (their outputs' content hashes: the registration is the verified pairs' consumer) — matches.
+# products it reads (their outputs' content hashes: the registration is the verified pairs' consumer), and the files the frames
+# and the camera are read from by content (the decode's sensor record, the lens) — matches.
 # `produce_stage` is their one writer, `stage_record` their one reader.
 function stage_settings(C, inp, format, settings, provider::Symbol)
     return Dict{String, Any}("format" => format, "settings" => settings, "provider" => string(provider),
                              "inputs" => C.cfg["inputs"], "decode" => C.cfg["decode"],
-                             "raw_sha256" => [open(VgtkCore.sha256_hex, raw) for raw in raw_paths(C, inp)])
+                             "raw_sha256" => [VgtkEval.Experiments.file_sha256(raw) for raw in raw_paths(C, inp)],
+                             "decode_sensor_characterisation_sha256" => something(sensor_record_sha256(C.cfg["decode"]["sensor_characterisation"]), "none"),
+                             "lens_sha256" => VgtkEval.Experiments.file_sha256(input_path(C.cfg["inputs"]["lens"])))
 end
 raw_paths(C, inp) = [joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n) for n in inp.names]
 stage_product(C, name, settings; upstream = nothing) =
@@ -208,11 +228,10 @@ stage_product(C, name, settings; upstream = nothing) =
 const DRIVER = "examples/panorama_vignetting/run.jl"
 # A stage's product produced: Eval's `produce`, `compute()` (the record, a String-keyed Dict) run when it is not produced;
 # `stage_record` reads the record back (Eval's `load_output`).
-function produce_stage(compute, p, C; log, what, inputs = String[])
-    E = VgtkEval.Experiments
-    reused = E.produced(p)
-    E.produce(_ -> compute(), p; driver = DRIVER, config_source = C.path, inputs, gitpath = pkgdir(PanoramaStitching))
-    reused && say(log, "$what: reused $(E.product_dir(p))")
+function produce_stage(compute, p, C; log, what, inputs = String[], force = false)
+    ran = false
+    VgtkEval.Experiments.produce(_ -> (ran = true; compute()), p; driver = DRIVER, config_source = C.path, inputs, force)
+    ran || say(log, "$what: reused $(VgtkEval.Experiments.product_dir(p))")
     return p
 end
 stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
@@ -276,7 +295,7 @@ end
 function pairs_stage_settings(C, inp, provider::Symbol)
     st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
     char = get(C.cfg["registration"], "sensor_characterisation", "none")
-    char == "none" || (st["sensor_characterisation_sha256"] = open(VgtkCore.sha256_hex, input_path(char)))
+    char == "none" || (st["sensor_characterisation_sha256"] = sensor_record_sha256(char))
     return st
 end
 
@@ -333,16 +352,12 @@ function detector_settings(r)
     return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, characterisation)
 end
 
-# The frames' sensor models and their LinearRaws decoded with them (the one black subtraction, Core's `LinearRaw`): per frame
-# VisualGeometryToolkitCore's `sensor_model` (the ONE resolver, a lookup) of the body's characterisation (IO's `load` of the
-# `sensor_characterisation` file, or none: the absent model) at the capture's settings (Features' `extract_capture_settings`,
-# the RAW files' EXIF).
+# The frames' sensor models (`sensor_models`, of the detector's characterisation) and their LinearRaws decoded with them (the one
+# black subtraction, Core's `LinearRaw`).
 function frame_models(C, inp, characterisation::AbstractString)
     dir = input_path(C.cfg["inputs"]["raw_dir"])
     mosaics = Dict(k => VgtkFeatures.load_raw_mosaic(joinpath(dir, n)) for (k, n) in enumerate(inp.names))
-    capture = VgtkFeatures.extract_capture_settings(mosaics)
-    char = characterisation == "none" ? nothing : VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(characterisation))
-    models = [VgtkCore.sensor_model(char, capture, k) for k in eachindex(inp.names)]
+    models = sensor_models(characterisation, mosaics)
     frames = [VgtkFeatures.load_raw(mosaics[k]; mode = Symbol(C.cfg["decode"]["mode"]), gain = Float64(C.cfg["decode"]["gain"]),
                                     sensor_model = models[k]) for k in eachindex(inp.names)]
     return frames, models
@@ -356,12 +371,12 @@ rotation_local_optimization(r) = VgtkEstimation.optimization_strategy_from_toml(
 
 # The verified pairs' product (verified_pairs/<key>/verified_pairs.jld2): the hour of ASIFT, LoMa and RANSAC of a set is spent
 # once per matching setting, and produced before the view graph is built, so a failure past it (the averaging, the bundle)
-# loses none of it. `produce_pairs` produces it, when it is not produced, and returns it; a produced registration never reads it.
+# loses none of it. `produce_pairs` produces it when it is not produced and returns it; the registration's key reads its output's
+# hash, its compute the record.
 pairs_product(C, inp, provider::Symbol) = stage_product(C, "verified_pairs", pairs_stage_settings(C, inp, provider))
-function produce_pairs(C, inp, lens, p; log)
+function produce_pairs(C, inp, lens, provider::Symbol; log)
     r = C.cfg["registration"]
-    provider = Symbol(p.record["provider"])
-    produce_stage(p, C; log, what = "verified pairs", inputs = raw_paths(C, inp)) do
+    produce_stage(pairs_product(C, inp, provider), C; log, what = "verified pairs", inputs = raw_paths(C, inp)) do
         t0 = time()
         det = detector_settings(r)
         frames, models = det.detection_image === :vst ? frame_models(C, inp, det.characterisation) : (inp.frames, nothing)
@@ -387,7 +402,7 @@ function registration(C, inp, lens; log)
     provider = VgtkFeatures.resolve_execution_provider(Symbol(r["execution_provider"]))
     # the verified pairs first: the registration's key folds their output's content hash (Eval's Merkle chain), so pairs
     # produced again with other outputs are registered again
-    pp = produce_pairs(C, inp, lens, pairs_product(C, inp, provider); log)
+    pp = produce_pairs(C, inp, lens, provider; log)
     p = stage_product(C, "registration", registration_settings(C, inp, provider); upstream = ("verified_pairs" => pp,))
     produce_stage(p, C; log, what = "registration", inputs = raw_paths(C, inp)) do
         rp = stage_record(pp)
@@ -571,10 +586,10 @@ end
 
 # ----------------------------------------------------------------------------- the run
 
-function run_example(config_path)
+function run_example(config_path; force = false)
     C = load_config(config_path)
-    # the run's directory is its product's, keyed by the config, the code and the registration's output (Eval's Merkle chain):
-    # known once the registration is produced, so the log is held until then
+    # the run's directory is its product's, keyed by the config, the code, this driver and the registration's output (Eval's
+    # Merkle chain): known once the registration is produced, so the log is held until then
     log = IOBuffer()
     T = Dict{String, Float64}()
     say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path))")
@@ -584,24 +599,23 @@ function run_example(config_path)
     lens = load_lens(C; raw_width = W, raw_height = H)
     reg = registration(C, inp, lens; log)
     T["registration"] = reg.seconds
-    # the run: produced on every call (`force`), as before: its fits, seams and renders are this driver's own code, which no
-    # key holds (Eval keys a product by the packages' code trees, never a driver's source); its stages above are reused
-    E = VgtkEval.Experiments
-    p = E.Product(C.experiment, "run", C.cfg; output = "summary.md", upstream = ("registration" => reg.product,), code = C.code)
-    result = Ref{Any}(nothing)
-    E.produce(p; driver = DRIVER, config_source = C.path, inputs = [raw_paths(C, inp); input_path(C.cfg["inputs"]["lens"])],
-              force = true, gitpath = pkgdir(PanoramaStitching)) do dir
-        io = open(joinpath(dir, "run.log"), "w")
-        try
+    # the run: its fits, seams and renders are this driver's code, so the driver's content keys it (Eval keys a product by the
+    # packages' code trees, never a driver's source; the stages above key their records' formats instead)
+    p = VgtkEval.Experiments.Product(C.experiment, "run", C.cfg; output = "summary.md", files = Dict("driver" => @__FILE__),
+                                     upstream = ("registration" => reg.product,), code = C.code)
+    ran = false
+    dir = VgtkEval.Experiments.produce(p; driver = DRIVER, config_source = C.path, force,
+                                       inputs = [raw_paths(C, inp); input_path(C.cfg["inputs"]["lens"])]) do dir
+        ran = true
+        open(joinpath(dir, "run.log"), "w") do io
             write(io, take!(log))
             say(io, "output $dir")
-            result[] = run_outputs((; C..., run = dir), inp, lens, reg, T, W, H; log = io)
-        finally
-            close(io)
+            run_outputs((; C..., run = dir), inp, lens, reg, T, W, H; log = io)
         end
         nothing                                                       # the run writes its own outputs, summary.md last
     end
-    return result[]
+    ran || println("run: reused $dir")
+    return dir
 end
 
 # The run's outputs in its product's directory `C.run`: the fit of record, the seams before and after, the renders, the
@@ -690,7 +704,7 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
     write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
-    return (; C, inp, lens, reg, res, before, after, rows, T)
+    return nothing
 end
 
 function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
@@ -750,6 +764,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) == 1 || error("usage: julia --project=<env> run.jl <config.toml>")
-    run_example(ARGS[1])
+    cfgs = filter(!=("--force"), ARGS)
+    length(cfgs) == 1 || error("usage: julia --project=<env> run.jl <config.toml> [--force]")
+    run_example(only(cfgs); force = "--force" in ARGS)              # --force: the run produced again (its stages are reused)
 end

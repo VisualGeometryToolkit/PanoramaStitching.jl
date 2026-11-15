@@ -91,7 +91,7 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
 
 Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold everything the rest reads;
 `register_rotations(pairs::VerifiedPairs, camera; frame_map, …)` runs steps 4–6 from them, so a caller that keeps the verified pairs
-(the example caches them in its `verified_pairs_<key>.jld2` record) reruns the averaging and the bundle alone.
+(the example keeps them as a keyed product, `verified_pairs/<key>/verified_pairs.jld2`) reruns the averaging and the bundle alone.
 
 The example's call states every setting: each is a keyword without a default, so a run states its whole configuration
 (`say = println` prints one line per frame, pair and step). The result, a [`Registration`](@ref), holds the rotations, the
