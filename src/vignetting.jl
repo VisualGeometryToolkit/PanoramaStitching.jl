@@ -417,6 +417,85 @@ function _chart_center(rays_host, rotations)
     return -best[2]
 end
 
+# ----------------------------------------------------------------------------- the symmetric saturation mask
+
+# Whether a frame pixel lies within `reach` frame pixels (Euclidean, between pixel centres) of a saturated one: the mask
+# dilated by a disc, one pixel per call (`pointwise!` over the frame's CartesianIndices, on the mask's backend).
+struct _WithinReach{M}
+    mask::M
+    reach::Float64
+end
+Adapt.@adapt_structure _WithinReach
+@inline function (w::_WithinReach)(I::CartesianIndex{2})
+    H, W = size(w.mask); r = floor(Int, w.reach); r2 = w.reach * w.reach
+    @inbounds for dj in (-r):r, di in (-r):r
+        di * di + dj * dj <= r2 || continue
+        i, j = I[1] + di, I[2] + dj
+        (1 <= i <= H && 1 <= j <= W) && w.mask[i, j] && return true
+    end
+    return false
+end
+
+# Whether the scene direction of frame `k`'s domain pixel (its linear index `j0`, its ray `f`) is saturated in ANY frame
+# whose rows see it: frame k's own dilated mask at the pixel, or, for every other frame j whose domain (`sees`: its fit
+# region and field angle) holds the direction, j's dilated mask at the frame pixel it lands on (the camera's projection of
+# R_jᵀ·R_k·f, through the frames' map's inverse). `masks` the frames' dilated masks, Hf × Wf × K.
+struct _SaturatedInAnyFrame{C, S, M, R, D}
+    camera::C
+    sees::S
+    to_frame::M
+    rotations::R
+    masks::D
+    k::Int
+end
+Adapt.@adapt_structure _SaturatedInAnyFrame
+@inline function (s::_SaturatedInAnyFrame)(j0, f)
+    Hf, Wf, K = size(s.masks)
+    @inbounds s.masks[j0 + (s.k - 1) * Hf * Wf] && return true
+    d = s.rotations[s.k] * f
+    for j in 1:K
+        j == s.k && continue
+        fj = transpose(s.rotations[j]) * d
+        fj[3] > s.sees.cosmax * norm(fj) || continue                    # behind frame j's field angle: not among its rows
+        u = VgtkCore.project(s.camera, fj)
+        s.sees(u, fj) || continue
+        x = s.to_frame(u)
+        c = floor(Int, x[1]) + 1; r = floor(Int, x[2]) + 1
+        (1 <= r <= Hf && 1 <= c <= Wf) || continue
+        @inbounds s.masks[r, c, j] && return true
+    end
+    return false
+end
+
+# The frames' saturation masks made SYMMETRIC (PanoramaStitching 0.8.4; T. Harder's analysis of 2026-11-15): a scene direction
+# counts only where NO frame whose rows see it is saturated there. A frame's own mask alone drops a bright scene point where
+# V is high (it clips) and keeps it where V dims it below white, so the rows that remain see it only at the rim and V comes
+# out too flat there (on the paper's sweeps 5–15 % at the last ring). Each mask is first dilated by `margin` camera pixels
+# (a disc; the frames' map's scale converts it to frame pixels), ≈ the registration error, so a direction a frame's
+# rotation misplaces by that much is still caught. Returns one Hf × Wf mask per frame, `true` at every domain pixel `lin`
+# whose direction is saturated somewhere (its own dilated mask elsewhere), on the frames' backend.
+function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays, margin::Float64, be)
+    Hf, Wf = size(saturated[1]); K = length(saturated)
+    scale = norm(frame_map(SVector(1.0, 0.0)) - frame_map(SVector(0.0, 0.0)))   # camera pixels per frame pixel
+    reach = margin / scale
+    exec = VgtkCore.OnBackend(be)
+    masks = KA.zeros(be, Bool, Hf, Wf, K)
+    for k in 1:K
+        Dk = KA.zeros(be, Bool, Hf, Wf)
+        VgtkCore.pointwise!(_WithinReach(saturated[k], reach), Dk, CartesianIndices((Hf, Wf)); exec)
+        masks[:, :, k] .= Dk
+    end
+    rot = Tuple(Rs)
+    out = map(1:K) do k
+        E = masks[:, :, k]
+        hit = KA.zeros(be, Bool, length(lin))
+        VgtkCore.pointwise!(_SaturatedInAnyFrame(camera, sees, inv(frame_map), rot, masks, k), hit, lin, rays; exec)
+        view(E, lin) .= hit
+        E
+    end
+    return out
+end
+
 # ----------------------------------------------------------------------------- the kernels
 
 # One frame's row weights `weight(I, p)` (`_ReadNoiseWeight`, `_VarianceWeight`, `_PositionWeight`) at its rows (0 elsewhere): the weights' mean.
@@ -637,7 +716,14 @@ V and the gains.
   `imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain)
   less `rim_margin_px` at its lens coverage's edge, and 2 px inside the frame, with its ray within
   `fov_deg` of the optical axis. A row (a pixel of a frame) counts when its
-  `saturated` mask is false and its value positive. `plane` is the plane fitted
+  value is positive and its scene direction is saturated in NO frame whose
+  domain sees it: each frame's `saturated` mask is dilated by
+  `saturation_margin_px` camera pixels (≥ 0, ≈ the registration error, so a
+  direction the rotations misplace by that much is still caught), and a row is
+  dropped from every frame where any frame's dilated mask holds its direction
+  (the camera's projection of `R_jᵀ·R_k·f`). A frame's own mask alone would
+  drop a bright scene point where V is high (it clips there) and keep it where
+  V dims it below white, so V would come out too flat at the rim. `plane` is the plane fitted
   (2: green), read at its own sample position. `frame_map`/`plane_maps`: the
   frames' and the planes' maps onto the camera's pixels
   (VisualGeometryToolkitCore's `raw_frame_map`, `bayer_plane_map`; by
@@ -722,7 +808,7 @@ end
 # statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
                     free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, frame_map,
-                    rim_margin_px::Real, fov_deg::Real, plane::Integer, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg::Real,
+                    rim_margin_px::Real, saturation_margin_px::Real, fov_deg::Real, plane::Integer, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg::Real,
                     penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
                     solver::Union{ConjugateGradient, SparseCholesky},
                     observation_noise::Union{Nothing, PositionNoise}, variances::Union{Nothing, AbstractVector},
@@ -731,6 +817,8 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("fit_vignetting: frames, rotations and saturated disagree"))
     K >= 2 || throw(ArgumentError("fit_vignetting: at least two frames, got $K"))
+    isfinite(saturation_margin_px) && saturation_margin_px >= 0 ||
+        throw(ArgumentError("fit_vignetting: saturation_margin_px is a distance in camera pixels, ≥ 0; got $saturation_margin_px"))
     observation_noise isa PositionNoise && variances === nothing &&
         throw(ArgumentError("fit_vignetting: PositionNoise needs the frames' value variances (an uncertain image: Core's LinearRaw " *
                             "under a sensor model whose noise feeds them); a plain image has none"))
@@ -757,7 +845,8 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     Uall = vec(U2)
     Fall = VgtkCore.backproject(VgtkCore.model(camera), Uall)
     inside = similar(frames[1], Bool, Hf * Wf)
-    VgtkCore.pointwise!(_Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg))), inside, Uall, Fall)
+    sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg)))
+    VgtkCore.pointwise!(sees, inside, Uall, Fall)
     lin = findall(inside)                                                 # the domain: linear indices into one H × W plane
     P = length(lin)
     P > 0 || throw(ArgumentError("fit_vignetting: the fit domain is empty"))
@@ -780,6 +869,12 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     ch = AzimuthalChart(center, acos(clamp(mincos, -1.0, 1.0)) + spacing, spacing)
     nL = ch.n^2
     seconds[:chart] = _elapsed(be, t0)
+
+    # the rows' saturation: symmetric over the frames (`_symmetric_saturation`), every row of a scene direction any frame's
+    # rows see saturated (its mask dilated by `saturation_margin_px`) excluded from every frame
+    t0 = time_ns()
+    saturated = _symmetric_saturation(saturated, VgtkCore.model(camera), sees, frame_map, Rs, lin, rays, Float64(saturation_margin_px), be)
+    seconds[:saturation] = _elapsed(be, t0)
 
     poff = (plane - 1) * Hf * Wf
     nrows = sum(k -> count(.!(saturated[k][lin]) .& (frames[k][lin .+ poff] .> 0)), 1:K)
@@ -947,7 +1042,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     return VgtkCore.FitResult(v, term..., iters, sqrt(swr / sw), length(R_all), meta)
 end
 
-const _STAGES = (:backproject, :chart, :accumulate, :vignetting_block, :penalty, :solve, :residuals, :total)
+const _STAGES = (:backproject, :chart, :saturation, :accumulate, :vignetting_block, :penalty, :solve, :residuals, :total)
 
 # The fit's normal operator N = [S + Pen  BVz; BVzᵀ  AVVz] on the stacked unknowns (the scene's nL = n² controls, then the m
 # coordinates of V and the gains), held on the backend `be`: the scene block through the stencil kernel over `S`'s 49-point

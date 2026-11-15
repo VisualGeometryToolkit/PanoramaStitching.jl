@@ -69,6 +69,9 @@ execution_provider = "cuda"                        # LoMa's ONNX Runtime provide
 
 [domain]                                           # the pixels an observation may use (fit and seam score)
 rim_margin_px = 120.0                              # the circle's soft edge (the falloff from ρ ≈ 1520 px to the 1680 px midpoint)
+saturation_margin_px = 4.0                          # the saturation masks' dilation (camera px) before they are made symmetric over the frames:
+                                                   # ≈ the registration error; T. Harder's dilation diagnostic of 2026-11-15 settled at 4 px for
+                                                   # the 14 mm and the fisheye sweeps (24 px for the Tamron)
 fov_deg = 89.0                                     # rays within 89° of the optical axis
 plane = 2                                          # the GREEN plane (the quad's two greens, at the quad centre)
 

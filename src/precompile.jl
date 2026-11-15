@@ -22,7 +22,7 @@
     saturated = [falses(40, 40) for _ in rotations]
     @compile_workload begin
         kw = (; frame_map, rim_margin_px = 2.0, fov_deg = 100.0)
-        fit = (; saturated, kw..., plane = 2, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,
+        fit = (; saturated, kw..., saturation_margin_px = 2.0, plane = 2, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,
                vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky(), observation_noise = nothing)
         # the radial and the tensor log-vignetting, each from log V ≡ 0
         radial = VgtkCore.LogVignetting(VgtkCore.with_control_points(VgtkCore.RadialVignetting(6, SVector(40.0, 40.0), 42.0), zeros(6)))

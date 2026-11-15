@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased (the symmetric saturation mask; the patch after the valid-domain fix)
+
+### Fixed
+
+- **`fit_vignetting`'s saturation masks are symmetric over the frames** (T. Harder's analysis, 2026-11-15). A row counted
+  when its OWN frame's mask was clear, so a bright scene point was dropped where V is high (it clips there) and kept where V
+  dims it below white: the rows left saw it only towards the rim, and V came out too flat there (on the paper's sweeps the
+  last ring relative to the first: Tamron 0.394 against ≈ 0.345, 14 mm 0.842 against ≈ 0.800, fisheye 0.595 against
+  ≈ 0.557, T. Harder's dilation diagnostic). A scene direction now counts only where NO frame whose domain sees it is
+  saturated there: each frame's mask is dilated by `saturation_margin_px` camera pixels (a disc), and a row is dropped from
+  every frame where any frame's dilated mask holds its direction (the camera's projection of `R_jᵀ·R_k·f`, on the frames'
+  backend, a new `:saturation` stage of the metadata's `seconds`). On the test suite's synthetic sweep (bright points of
+  σ 0.3°, clipped where V is high) V at the rings was 1.9–3.7 % too flat with the frames' own masks and is within 0.06 %.
+
+### Breaking
+
+- **`fit_vignetting` requires `saturation_margin_px`** (camera pixels, ≥ 0, finite; no default: it is the sweep's
+  registration error, ≈ 4 px on the 14 mm and fisheye sweeps, 24 px on the Tamron's). The example's configs of record
+  state it in `[domain]` (4.0), and `run.jl` reads it there.
+
 ## 0.8.3 (unreleased)
 
 ### Fixed (with VisualGeometryToolkitCore 0.10.10)

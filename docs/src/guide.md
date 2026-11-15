@@ -223,7 +223,7 @@ conjugate gradients there, or by a host Cholesky factorization:
 s = VgtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
 v0 = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
 res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCore.pole_regular_basis(v0),
-                     gain_correction = ChannelGains(), saturated, frame_map, rim_margin_px = 12.0, fov_deg = 89.0, plane = 2,
+                     gain_correction = ChannelGains(), saturated, frame_map, rim_margin_px = 12.0, saturation_margin_px = 4.0, fov_deg = 89.0, plane = 2,
                      chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000),   # or SparseCholesky()
