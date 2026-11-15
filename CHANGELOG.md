@@ -1,6 +1,35 @@
 # Changelog
 
-## 0.8.2 (unreleased)
+## 0.9.0 (unreleased)
+
+No source file under src/ changed and the package's API is 0.8.2's: the release is the panorama_vignetting example's, whose
+configs and results layout break.
+
+### Breaking changes
+
+- **The example's `[decode] sensor_characterisation` is required** (no default): a vgio/sensor_characterisation file under
+  the data root, or `"none"` (the file's black, no defects: the frames as 0.8 decoded them). Each frame is decoded under its
+  sensor model, VisualGeometryToolkitCore's resolver `sensor_model` at the frame's EXIF (its dark subtracted, its defects
+  joined to the saturation mask); the panorama record's provenance and `summary.md` state the record's SHA-256
+  (`sensor_characterisation_sha256`). A config without the key is refused before any file is read. Migrate: add
+  `sensor_characterisation = "none"` to `[decode]` (the configs of record do).
+- **The example runs on VisualGeometryToolkitEval 0.9** (its environment's compat), whose keyed products replace
+  `cached_result` and `keyed_cell_dir`. Each step is an Eval `Product` of the set, in
+  `<results>/panorama_vignetting/<name>/<product>/<key>/` with its `_config.toml` and `_provenance.toml`: `verified_pairs/`,
+  `registration/`, `run/` (was `verified_pairs_<key>.jld2`, `registration_<key>.jld2` and `run-<key>/` beside them) and
+  compare_arms.jl's `arms/`. Every key holds the code trees (PanoramaStitching's and the stack's); the registration's holds
+  the verified pairs' output hash, the run's and the comparison's the registration's (Eval's Merkle chain: an upstream
+  produced again with other outputs re-keys its consumers). **0.8's records are not found**: the first run registers again.
+  The run itself is produced on every call. A product records the code it ran, so a run of record runs on committed code
+  (`VGTK_SCRATCH=1` for scratch work), and `VGTK_RESULTS_ROOT` must be set (Eval 0.9 has no default results root outside a
+  project with `data/exp_pro`).
+
+### Fixed
+
+- The example's `write_results_check.jl` passes the frames' sensor record that `write_results` requires; `run_checks.jl`
+  calls each check in the latest world (Julia 1.12+'s world-age warning, an error under `--depwarn=error`).
+
+## 0.8.2 (2026-11-14)
 
 ### Changes
 
