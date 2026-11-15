@@ -70,19 +70,21 @@ Adapt.adapt_structure(to, r::_AngleAt) = _AngleAt(Adapt.adapt(to, r.field_angle)
 @inline (r::_AngleAt)(ok, u) = ok ? Float64(r.field_angle(u)) : NaN
 
 """
-    pair_correspondences(camera::BoundedCamera, frames, rotations, directions; saturated, frame_map, rim_margin_px, fov_deg,
+    pair_correspondences(camera::BoundedCamera, frames, rotations, directions; saturated, saturation_margin_px, frame_map, rim_margin_px, fov_deg,
                          plane, field_angle, edges, tmax = last(edges), symmetric = true,
                          plane_maps = ntuple(_ -> frame_map, 3)) -> PairCorrespondences
 
 The correspondences of the pair equation: the frames sampled at `directions` ([`sample_frames`](@ref), its masks and keywords;
 `plane` the colour plane read), each seen direction's sensor point put on its ring of `field_angle(u)` (degrees; a kernel-lawful
 callable of the camera pixel, e.g. the equisolid angle about the vignetting's centre) among `edges`, cut at `tmax`, and every
-pair of frames that see a direction in two different rings one correspondence. `symmetric = true`: a direction any frame sees
-saturated (its `saturated` mask, as the caller dilated it) is dropped from every frame; `false`: from that frame alone, as
-`sample_frames` masks. The sampling and the per-frame-pair selection run on the frames' backend.
+pair of frames that see a direction in two different rings one correspondence. Each frame's `saturated` mask is dilated by
+`saturation_margin_px` camera pixels (≈ the registration error; [`fit_vignetting`](@ref)'s one dilation). `symmetric = true`: a
+direction any frame whose domain sees it has saturated there is dropped from every frame (`fit_vignetting`'s one symmetric
+test); `false`: from that frame alone, as `sample_frames` masks. The sampling and the per-frame-pair selection run on the frames' backend.
 """
 function pair_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
-                              directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, frame_map, rim_margin_px::Real,
+                              directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, saturation_margin_px::Real,
+                              frame_map, rim_margin_px::Real,
                               fov_deg::Real, plane::Integer, field_angle, edges::AbstractVector{<:Real}, tmax::Real = last(edges),
                               symmetric::Bool = true, plane_maps = ntuple(_ -> frame_map, 3))
     1 <= plane <= 3 || throw(ArgumentError("pair_correspondences: plane must be 1, 2 or 3, got $plane"))
@@ -90,15 +92,22 @@ function pair_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
         throw(ArgumentError("pair_correspondences: edges must be increasing with at least two rings, got $edges"))
     K = length(frames)
     kw = (; frame_map, rim_margin_px, fov_deg, vignetting = (u, f) -> 1.0, plane_maps)
-    s = sample_frames(camera, frames, rotations, directions; saturated, kw...)
-    seen = s.seen
+    # the masks dilated by `saturation_margin_px` (fit_vignetting's one helper, `_dilated_saturation`)
+    be = KA.get_backend(frames[1])
+    Hf, Wf = size(frames[1], 1), size(frames[1], 2)
     n_dropped = 0
     if symmetric                                                           # the directions some frame sees saturated: out of every frame
         clear = [fill!(similar(m), false) for m in saturated]
-        g = sample_frames(camera, frames, rotations, directions; saturated = clear, kw...).seen
-        clipped = vec(any(g .& .!seen; dims = 2))
-        n_dropped = count(Array(clipped))
-        seen = g .& .!clipped
+        s = sample_frames(camera, frames, rotations, directions; saturated = clear, kw...)
+        sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg)))
+        clipped = _saturated_directions(saturated, VgtkCore.model(camera), sees, frame_map, rotations, directions,
+                                        Float64(saturation_margin_px), be)   # fit_vignetting's symmetric test
+        n_dropped = count(Array(clipped) .& vec(any(Array(s.seen); dims = 2)))
+        seen = s.seen .& .!clipped
+    else                                                                   # each frame's own dilated mask (sample_frames' rule)
+        masks = _dilated_saturation(saturated, Float64(saturation_margin_px), frame_map, be)
+        s = sample_frames(camera, frames, rotations, directions; saturated = [masks[:, :, k] for k in 1:K], kw...)
+        seen = s.seen
     end
     ring = similar(seen, Int32)
     ring .= _RingAt(field_angle, Tuple(Float64.(edges)), Float64(tmax)).(seen, s.pixels)
