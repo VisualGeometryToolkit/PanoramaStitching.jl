@@ -121,10 +121,9 @@ Base.eltype(::_CameraObservation) = Float64
 # and at each LM update), not per residual: every observation shares the camera, and a lens with its own fold finds its domain
 # by a search of its view-angle limit (Core's image_circle.jl). NLLSsolver reads it through `nvars`/`update`, the chart's.
 # The domain of a parametric `CameraModel` (the only camera the autocalibration takes) is Core's whole plane or, inside a
-# fold, its pixel disc, an `Ellipse{Float64}` (a radially symmetric lens), or the star polygon through each azimuth's fold,
-# a `PolygonRegion` (a decentred lens: tangential or thin-prism terms, a tilt; Core 0.10.10): the field holds any of them,
-# so a fold appearing or vanishing at an LM update keeps the variable's one type. A polygon costs about 10 ms to build,
-# once per update, never per residual.
+# fold, its pixel disc (`Ellipse{Float64}`) or, for a decentred lens, the star polygon through each azimuth's fold
+# (`PolygonRegion`, about 10 ms to build): the field holds any of them, so a fold appearing or vanishing at an LM update
+# keeps the variable's one type.
 # The model itself is held too (built once per value, not per residual). An update takes plain Float64 steps only (the
 # bundle's residuals have closed-form Jacobians; Core evaluates a domain on plain numbers): a dual step is a MethodError.
 struct _CameraVariable{S, M}
