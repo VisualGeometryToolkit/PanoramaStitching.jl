@@ -1,20 +1,22 @@
-docs-pass: 1b3f6ac
+docs-pass: 07c1ae9
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.9.0 docs pass (julia-docs-pass), at 1b3f6ac
+# 0.8.3 docs pass (julia-docs-pass), at 07c1ae9 (re-run; supersedes the 0.9.0 pass at 1b3f6ac: the version is 0.8.3)
 
-On 0.8.2 (0d6dfcb, released): ps-sensor-model's 4f96116 (the example's frames decoded under their sensor record) and the
-example's port to VisualGeometryToolkitEval 0.9 (keyed products).
-[x] API diff since 0.8.2: no file under src/ changed; no name added, removed or re-signatured. The docstring scans have
-    nothing new to cover.
-[x] Guide: the verified pairs the example keeps are its `verified_pairs/<key>/verified_pairs.jld2` product (was the
-    retired `verified_pairs_<key>.jld2` cache file). Landing page (docs/src/index.md) and the root README name the example
-    only by its folder: unchanged.
-[x] The example's README: the results layout (each step an Eval product, `<product>/<key>/` with its records), what keys
-    each product (settings, code trees, the RAWs', the sensor record's and the lens's content, the upstream outputs, the
-    drivers), reuse and `--force`, `stages.log`, the required `[decode] sensor_characterisation`, `run/<key>` in the
-    compare_makie lines; arms.toml's header; the Maintainers section's stage-cache check.
-[x] CHANGELOG 0.9.0 (Breaking changes, Fixed); 0.8.2's entry dated.
+On 0.8.2 (0d6dfcb, released): ps-sensor-model's 4f96116 (the example's frames decoded under their sensor record), the example's
+port to VisualGeometryToolkitEval 0.9 (keyed products) and its required `[registration] sensor_characterisation`.
+[x] API diff since 0.8.2: no file under src/ changed; no name added, removed or re-signatured (hence 0.8.3). The docstring
+    scans have nothing new to cover.
+[x] Guide: the verified pairs the example keeps are its `verified_pairs/<key>/verified_pairs.jld2` product (was the retired
+    `verified_pairs_<key>.jld2` cache file). Landing page (docs/src/index.md) and the root README name the example only by
+    its folder: unchanged.
+[x] The example's README: the results layout (each step an Eval product, `<product>/<key>/` with its records), what keys each
+    product (settings, code trees, the RAWs', the sensor records' and the lens's content, the upstream outputs, the drivers),
+    reuse and `--force`, `stages.log`, the required `[decode]` and `[registration] sensor_characterisation` (with "tone" the
+    registration's is [decode]'s), the 14 mm lens's missing coverage on the data root, `run/<key>` in the compare_makie lines;
+    arms.toml's header; the Maintainers section's stage-cache check. The configs of record state both records.
+[x] CHANGELOG 0.8.3 (the example's breaking changes, Known: the unresolved-frame refusal for the next patch and the 14 mm
+    lens's coverage, Fixed); 0.8.2's entry dated.
 [x] Docs build: docs/make.jl (strict) in the release gate.
 
 ---
