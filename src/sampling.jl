@@ -69,6 +69,8 @@ struct _Sees{R, T}
     cosmax::T
 end
 @inline (s::_Sees)(u, f) = all(isfinite, u) && VgtkCore.Point2(u[1], u[2]) ∈ s.region && f[3] > s.cosmax * LinearAlgebra.norm(f)
+# moved to the frames' backend with its region (Core's adapt rules: a decentred lens's `PolygonRegion` ring a device array)
+Adapt.@adapt_structure _Sees
 
 # A caller's per-point callable `g(u, f)` where the frame sees the point, NaN elsewhere: it is evaluated only at seen points (a
 # grid's back-projection, say, has no ray off its domain). The vignetting keyword is read through it.
