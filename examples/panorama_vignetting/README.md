@@ -68,7 +68,12 @@ Under `$VGTK_DATA_ROOT`:
    LibRaw_jll; the two steps `load_raw_mosaic` then `LinearRaw(mosaic; mode = :bin2, gain)`): 2 × 2 Bayer quads become one
    pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (the frames' map onto the
    camera's pixels is VisualGeometryToolkitCore's `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
-   centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). With `[decode] cache = true`
+   centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Each frame is decoded under
+   its sensor model: `[decode] sensor_characterisation` (required) names the body's vgio/sensor_characterisation file under the data
+   root — VisualGeometryToolkitCore's resolver `sensor_model` picks, per frame by its EXIF, the dark of its exposure (or the measured
+   channel black) and the defects, which `load_raw` subtracts and joins to the mask — or states `"none"` (the file's black, no defects:
+   the frames as before). The fit's panorama record and the summary state the record's SHA-256 (`sensor_characterisation_sha256`), so
+   a consumer comparing a camera calibrated under a record can check that the frames were decoded under the same one. With `[decode] cache = true`
    (opt-in; the configs of record set it) each RAW is decoded once and cached (below); with `false` every run decodes.
 2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,

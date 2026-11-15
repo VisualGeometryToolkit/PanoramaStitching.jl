@@ -455,10 +455,15 @@ end
     retired(t) = PanoramaStitching.refuse_retired_registration(Dict{String, Any}(t), "config [registration]")
     @test_throws r"`overlap_deg` is retired: .*any view.*min_inliers" retired(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))
     @test_throws r"`near_duplicate_deg` is retired: .*near_duplicate_overlap" retired(("near_duplicate_deg" => 4.0,))
+    # the frames' decode states its sensor record: a [decode] without `sensor_characterisation` is refused before any file is read
+    nodecl = (; cfg = Dict{String, Any}("decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false),
+                                        "inputs" => Dict{String, Any}("raw_dir" => "nowhere", "raw_extension" => ".ARW")), out = mktempdir())
+    @test_throws "[decode] sensor_characterisation: required" Base.invokelatest(m.decoded_frames, nodecl; masks = true)
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test TOML.parsefile(joinpath(dir, f))["decode"]["cache"] isa Bool                      # the decode cache, opt-in, stated
+        @test TOML.parsefile(joinpath(dir, f))["decode"]["sensor_characterisation"] isa String   # the frames' sensor record, stated (no default)
         @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test PanoramaStitching.refuse_retired_registration(TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test TOML.parsefile(joinpath(dir, f))["registration"]["near_duplicate_overlap"] == 0.90   # the owner's value, stated

@@ -112,29 +112,48 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 # the mode, the gain and the decoder; regenerable from the RAW files), backed by JLD2 through Features' package extension. This
 # file loads no JLD2 itself: VisualGeometryToolkitEval (imported above) depends on it, so it is loaded with Eval and Features'
 # extension with it — a caller that includes this file needs no JLD2 of its own.
-"The frames as linear images (H × W × 3 Float32), their saturation masks with `masks = true`, their maps and the daylight white balance; each RAW decoded once, cached."
+"""
+    decoded_frames(C; masks, log = devnull) -> (; names, frames, saturated, frame_map, plane_maps, daylight_wb, models, sensor_characterisation_sha256)
+
+The frames as linear images (H × W × 3 Float32), their saturation masks with `masks = true`, their maps and the daylight white
+balance; each RAW decoded once (cached), under its frame's sensor model: `[decode] sensor_characterisation` (required, no default) is
+the body's characterisation (a vgio/sensor_characterisation file under the data root) or `"none"`. Each frame's model is
+VisualGeometryToolkitCore's resolver `sensor_model` (a lookup) at the frame's capture settings (Features' `extract_capture_settings`,
+the RAW files' EXIF): Features' `load_raw` subtracts its black (a dark per exposure, the measured channel black, or — `"none"` — the
+file's) and joins its defects to `saturated`; the frames are the values (an uncertain image's `value_of`). `models` are the frames'
+models; `sensor_characterisation_sha256` the record's file's SHA-256 (`nothing` for `"none"`), which the fit's and the seams' records
+state, so a consumer can check that the frames were decoded under the record its own calibration used.
+"""
 function decoded_frames(C; masks::Bool, log = devnull)
     dec = C.cfg["decode"]; mode = dec["mode"]; gain = Float64(dec["gain"])
     mode == "bin2" || error("decode.mode = $mode: the example runs on bin2's three planes")
+    haskey(dec, "sensor_characterisation") ||
+        throw(ArgumentError("[decode] sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects)"))
+    char = String(dec["sensor_characterisation"])
     dir = joinpath(C.out, "decoded"); mkpath(dir)
     raw_dir = input_path(C.cfg["inputs"]["raw_dir"])
     raws = sort([f for f in readdir(raw_dir) if endswith(f, C.cfg["inputs"]["raw_extension"])])
-    decode(f, cache) = (lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, decoder = VgtkFeatures.LibRawDecoder(), cache);
-                        say(log, "  $f ($(count(lin.saturated)) saturated quads)"); lin)
+    capture = VgtkFeatures.extract_capture_settings(Dict(k => VgtkFeatures.load_raw_metadata(joinpath(raw_dir, f)) for (k, f) in enumerate(raws)))
+    record = char == "none" ? nothing : VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(char))
+    sha = char == "none" ? nothing : open(VgtkCore.sha256_hex, input_path(char))
+    models = [VgtkCore.sensor_model(record, capture, k) for k in eachindex(raws)]
+    decode(k, cache) = (f = raws[k];
+                        lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, sensor_model = models[k], decoder = VgtkFeatures.LibRawDecoder(), cache);
+                        say(log, "  $f ($(count(lin.saturated)) saturated or defect quads; $(VgtkCore.component_sources(models[k]).reason))"); lin)
     lins = if dec["cache"]
         cache = VgtkFeatures.open_cache(joinpath(dir, "linear_raws.jld2"))
         try
-            map(f -> decode(f, cache), raws)
+            map(k -> decode(k, cache), eachindex(raws))
         finally
             VgtkFeatures.close_cache(cache)
         end
     else
-        map(f -> decode(f, nothing), raws)
+        map(k -> decode(k, nothing), eachindex(raws))
     end
     lin1 = first(lins)
-    return (; names = raws, frames = [Float32.(l.image) for l in lins], saturated = masks ? [l.saturated for l in lins] : BitMatrix[],
+    return (; names = raws, frames = [Float32.(VgtkCore.value_of.(l.image)) for l in lins], saturated = masks ? [l.saturated for l in lins] : BitMatrix[],
             frame_map = VgtkCore.raw_frame_map(lin1), plane_maps = ntuple(c -> VgtkCore.bayer_plane_map(lin1, c), 3),
-            daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)))
+            daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)), models, sensor_characterisation_sha256 = sha)
 end
 
 # ----------------------------------------------------------------------------- the lens
@@ -515,15 +534,17 @@ end
 # (d = R_k·f_k, the world the first frame's camera frame; zero translations: the camera only rotates; each frame's RAW file
 # its image), the fitted V, the frames' gains (none when vignetting.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
 # `VgtkIO.load_panorama`; and V over the frame's pixels (one value per frame pixel, at its centre in the camera's pixels: the
-# frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`.
-function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf))
+# frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`. The panorama record's provenance states the sensor record
+# the frames were decoded under (`sensor_characterisation_sha256`, `nothing` for "none": `decoded_frames`).
+function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf); sensor_characterisation_sha256)
     v = VgtkCore.estimate(res)
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
                              Dict(k => VgtkCore.EuclideanMap(R, zero(SVector{3, Float64}) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
     # the file's generator names PanoramaStitching beside IO (IO 0.10's envelope)
     VgtkIO.with_caller(PanoramaStitching) do
-        VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit)
+        VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit;
+                             provenance = (; sensor_characterisation_sha256 = something(sensor_characterisation_sha256, "none")))
     end
     # V over the frame's pixel grid (each frame pixel's centre through the frames' map): a DATA result, IO's Float32
     # `vgio/raster` (owner ruling "RAW + results only"), `values[r, c]` the frame's pixel at row r, column c
@@ -571,7 +592,7 @@ function run_example(config_path)
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
-    write_results(C, "panorama", lens, inp.names, reg.rotations, reg.bundle_fit, res, inp.frame_map, (Hf, Wf))
+    write_results(C, "panorama", lens, inp.names, reg.rotations, reg.bundle_fit, res, inp.frame_map, (Hf, Wf); inp.sensor_characterisation_sha256)
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
@@ -624,7 +645,7 @@ function run_example(config_path)
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
         s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
-        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf))
+        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf); inp.sensor_characterisation_sha256)
         push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), pp, inp.frame_map, (Hf, Wf); mask = in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
@@ -638,7 +659,8 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
     open(joinpath(C.run, "summary.md"), "w") do io
         println(io, "# $(C.cfg["name"]): panorama vignetting\n")
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
-        println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated quads (all frames): $(sum(count, inp.saturated)).")
+        println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated or defect quads (all frames): $(sum(count, inp.saturated)).")
+        println(io, "- Sensor record of the frames' decode (and of the seam scores): $(something(inp.sensor_characterisation_sha256, "none (the file's black, no defects)")) ([decode] sensor_characterisation = $(C.cfg["decode"]["sensor_characterisation"])).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
                "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the detections' covariances)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *
