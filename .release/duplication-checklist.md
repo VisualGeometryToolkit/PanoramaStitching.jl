@@ -1,3 +1,13 @@
+# PanoramaStitching 0.8.4: the imaged region's frame mask through Core's pixel_mask (coordinator ruling 2026-11-15)
+
+- [x] `_in_frame` (the imaged region mapped into a frame's pixels part by part: `Ellipse`, `Rect`, their `∩`) → Core's
+  `pixel_mask(region, frame_map, width, height)` (since Core 0.9.2; membership at each pixel's mapped centre, any region),
+  deleted (1243042). It had no method for Core 0.10.10's `PolygonRegion` (a `MethodError` in `detect_features` for a
+  decentred lens). This supersedes the 0.9 audit's deferral below ("`_in_frame` (one copy, no stack home)")
+- [x] check_duplication with VGTK_STACK_PATHS = the upstream trees (Core at the CORE_SHA checkout): the release gate
+
+---
+
 # PanoramaStitching 0.8.0: one view-overlap estimate, VisualGeometryToolkitCore's view_overlap (owner ruling 2026-11-14)
 
 - [x] concept search of PanoramaStitching for every overlap notion between two frames built on the angle between optical axes
@@ -96,7 +106,7 @@ the MSAC threshold key retired) and, with `scoring = nothing`, by Estimation's d
 - [x] SIMFIT++ (`_pair_scale`, `_chisq2_quantile`) and `_pooled_scale` → deleted; the scorer's ŝ pooled by Estimation's `pooled_noise_scale` (77efcd1)
 - [x] the bundles' Irls refusal → Estimation's `bundle_loss` (b58c29d)
 - [x] the example's run directory, cache path rule and private arms key → Eval's `keyed_cell_dir`, `cached_result`'s file and `run_key(cfg; files)` (e4959a2)
-- [x] deferred by the owner's rulings (not duplicates of a stack implementation today): `_check_tolerances` (Estimation has no public validator), `level_up` vs `up_frame` (no bit-identical rewire), the tracks as Features' `CspondSet` (a public type change), `_in_frame` (one copy, no stack home)
+- [x] deferred by the owner's rulings (not duplicates of a stack implementation today): `_check_tolerances` (Estimation has no public validator), `level_up` vs `up_frame` (no bit-identical rewire), the tracks as Features' `CspondSet` (a public type change), `_in_frame` (one copy, no stack home) — `_in_frame` superseded in 0.8.4 (Core's `pixel_mask(region, frame_map, w, h)`, 1243042)
 
 ## 0.6.1 (Features 0.8, Core 0.9.3 / 0.9.4)
 
