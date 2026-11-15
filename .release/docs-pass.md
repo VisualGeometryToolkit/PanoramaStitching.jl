@@ -1,7 +1,7 @@
-docs-pass: 9a82644
+docs-pass: 552a00e
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.4 docs review (the docs skill), at 9a82644
+# 0.8.4 docs review (the docs skill), at 9a82644, re-recorded at 552a00e
 
 On 0.8.3 (efe6ffc, released): Core 0.10.10's valid domain of a lens that is not radially symmetric is a `PolygonRegion`.
 [x] API diff since 0.8.3: no exported or public name added, removed or re-signatured (src/PanoramaStitching.jl unchanged).
@@ -16,6 +16,10 @@ On 0.8.3 (efe6ffc, released): Core 0.10.10's valid domain of a lens that is not 
 [x] Floors: Core 0.10.10, Estimation 0.11.7 (General's latest) in every Project.toml that names them; Features 0.9.6, IO
     0.10.3 already General's latest; the example's Eval 0.9.1 (General's latest).
 [x] Docs build: docs/make.jl (strict) in the release gate.
+[x] Re-recorded at 552a00e (the coordinator's rulings): an LM step whose domain Core refuses is a rejected step (f498309,
+    `_NoDomain`, internal), the decentred-lens test items (01049d3), the duplication checklist's `_in_frame` note (d46eb41),
+    the CHANGELOG's Fixed and Tests lines (cf660a3), the LM step's wording (552a00e: check_naming R7 reserves "trial" for a
+    random hypothesis draw). No public name, signature or docstring changed; the guide, README and landing page unchanged.
 
 ---
 
