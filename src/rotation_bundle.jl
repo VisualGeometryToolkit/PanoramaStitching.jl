@@ -134,7 +134,7 @@ Base.in(_, ::_NoDomain) = false
 struct _CameraVariable{S, M}
     chart::S
     model::M
-    domain::Union{VgtkCore.WholePlane, VgtkCore.Ellipse{Float64}, VgtkCore.PolygonRegion, _NoDomain}
+    domain::Union{VgtkCore.WholePlane, VgtkCore.Ellipse{Float64}, VgtkCore.PolygonRegion{Vector{VgtkCore.Point2{Float64}}}, _NoDomain}
 end
 function _CameraVariable(c::VgtkCore.SubsetManifold)
     m = VgtkCore.model(c)
