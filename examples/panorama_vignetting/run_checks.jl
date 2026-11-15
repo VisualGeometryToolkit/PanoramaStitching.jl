@@ -3,7 +3,7 @@
 #   julia --project=examples/panorama_vignetting examples/panorama_vignetting/run_checks.jl
 #
 # stage_cache_check.jl (the verified pairs reused when only the averaging or the bundle changes, recomputed when a pair
-# setting changes: Eval's keyed cache), write_results_check.jl (the results of record written and read back) and
+# setting changes: Eval's keyed products), write_results_check.jl (the results of record written and read back) and
 # provider_agreement_check.jl (LoMa on the CPU and on CUDA keep the same pairs and agree on the rotations: on a GPU, with the
 # 14 mm RAWs), autocalibration_check.jl (the 14 mm bundle-equivalence check; it needs its declared
 # inputs under the data root, and is reported as not run where they are absent). README.md, "Maintainers".
@@ -15,7 +15,7 @@ for (file, f) in CHECKS
     Core.eval(m, :(include(p) = Base.include($m, p)))
     Base.include(m, joinpath(@__DIR__, file))
     ok = try
-        Base.invokelatest(getfield(m, f))
+        Core.eval(m, :($f()))                                        # in the latest world: the check was just defined
     catch e
         e isa ErrorException && startswith(e.msg, "MISSING INPUT") || rethrow()
         println("$file: NOT RUN, ", first(split(e.msg, '\n')))
