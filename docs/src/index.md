@@ -17,6 +17,7 @@ on unit bearings, and every residual is in the camera's pixels.
 | the panorama in a view | [`panorama_view`](@ref), [`render_panorama`](@ref), [`render_cube_map`](@ref) | `(; image, owner, coverage, extent)` |
 | the vignetting from the frames alone, or the gains under a given one | [`fit_vignetting`](@ref) | a `FitResult` of a VisualGeometryToolkitCore vignetting model |
 | the seams a vignetting leaves | [`score_seams`](@ref) | `(; ratio, rms, mad, n)` |
+| the model-free vignetting per ring of a field angle (the pair equation), the frames' additive level | [`pair_correspondences`](@ref), [`ring_pair_vignetting`](@ref), [`fit_additive_level`](@ref) | a `FitResult`: ln V per ring; the level |
 
 The sampling, the render and the vignetting fit run as KernelAbstractions kernels (the first two through
 VisualGeometryToolkitCore's warping machinery): GPU arrays run on the device, host arrays run the same code on the CPU.
