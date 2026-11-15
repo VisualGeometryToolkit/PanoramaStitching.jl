@@ -436,25 +436,21 @@ Adapt.@adapt_structure _WithinReach
     return false
 end
 
-# Whether the scene direction of frame `k`'s domain pixel (its linear index `j0`, its ray `f`) is saturated in ANY frame
-# whose rows see it: frame k's own dilated mask at the pixel, or, for every other frame j whose domain (`sees`: its fit
-# region and field angle) holds the direction, j's dilated mask at the frame pixel it lands on (the camera's projection of
-# R_jᵀ·R_k·f, through the frames' map's inverse). `masks` the frames' dilated masks, Hf × Wf × K.
+# Whether a scene DIRECTION `d` (world) is saturated in any frame whose rows see it: for every frame j whose domain (`sees`: its
+# fit region and field angle) holds d, j's dilated mask at the frame pixel d lands on (the camera's projection of R_jᵀ·d,
+# through the frames' map's inverse). `masks` the frames' dilated masks, Hf × Wf × K (`_dilated_saturation`). The one test of
+# the symmetric mask: `fit_vignetting`'s rows and `pair_correspondences`' directions read it.
 struct _SaturatedInAnyFrame{C, S, M, R, D}
     camera::C
     sees::S
     to_frame::M
     rotations::R
     masks::D
-    k::Int
 end
 Adapt.@adapt_structure _SaturatedInAnyFrame
-@inline function (s::_SaturatedInAnyFrame)(j0, f)
+@inline function (s::_SaturatedInAnyFrame)(d)
     Hf, Wf, K = size(s.masks)
-    @inbounds s.masks[j0 + (s.k - 1) * Hf * Wf] && return true
-    d = s.rotations[s.k] * f
     for j in 1:K
-        j == s.k && continue
         fj = transpose(s.rotations[j]) * d
         fj[3] > s.sees.cosmax * norm(fj) || continue                    # behind frame j's field angle: not among its rows
         u = VgtkCore.project(s.camera, fj)
@@ -466,34 +462,62 @@ Adapt.@adapt_structure _SaturatedInAnyFrame
     end
     return false
 end
+# A row of frame `k` (its domain pixel's linear index `j0`, its ray `f`): its own dilated mask at the pixel, or its direction
+# R_k·f saturated in any frame.
+struct _RowSaturated{S}
+    any_frame::S
+    k::Int
+end
+Adapt.@adapt_structure _RowSaturated
+@inline function (r::_RowSaturated)(j0, f)
+    s = r.any_frame
+    Hf, Wf, _ = size(s.masks)
+    @inbounds s.masks[j0 + (r.k - 1) * Hf * Wf] && return true
+    return s(s.rotations[r.k] * f)
+end
 
-# The frames' saturation masks made SYMMETRIC (PanoramaStitching 0.8.4; T. Harder's analysis of 2026-11-15): a scene direction
-# counts only where NO frame whose rows see it is saturated there. A frame's own mask alone drops a bright scene point where
-# V is high (it clips) and keeps it where V dims it below white, so the rows that remain see it only at the rim and V comes
-# out too flat there (on the paper's sweeps 5–15 % at the last ring). Each mask is first dilated by `margin` camera pixels
-# (a disc; the frames' map's scale converts it to frame pixels), ≈ the registration error, so a direction a frame's
-# rotation misplaces by that much is still caught. Returns one Hf × Wf mask per frame, `true` at every domain pixel `lin`
-# whose direction is saturated somewhere (its own dilated mask elsewhere), on the frames' backend.
-function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays, margin::Float64, be)
+# The frames' saturation masks dilated by a disc of `margin` camera pixels (the frames' map's scale converts it to frame
+# pixels), ≈ the registration error, so a direction a frame's rotation misplaces by that much is still caught: one
+# Hf × Wf × K Bool array on the frames' backend.
+function _dilated_saturation(saturated, margin::Float64, frame_map, be)
+    isfinite(margin) && margin >= 0 ||
+        throw(ArgumentError("saturation_margin_px is a distance in camera pixels, ≥ 0; got $margin"))
     Hf, Wf = size(saturated[1]); K = length(saturated)
-    scale = norm(frame_map(SVector(1.0, 0.0)) - frame_map(SVector(0.0, 0.0)))   # camera pixels per frame pixel
-    reach = margin / scale
-    exec = VgtkCore.OnBackend(be)
+    reach = margin / norm(frame_map(SVector(1.0, 0.0)) - frame_map(SVector(0.0, 0.0)))   # camera pixels per frame pixel
     masks = VgtkCore.device_zeros(Bool, be, Hf, Wf, K)
     for k in 1:K
         Dk = VgtkCore.device_zeros(Bool, be, Hf, Wf)
-        VgtkCore.pointwise!(_WithinReach(saturated[k], reach), Dk, CartesianIndices((Hf, Wf)); exec)
+        VgtkCore.pointwise!(_WithinReach(saturated[k], reach), Dk, CartesianIndices((Hf, Wf)); exec = VgtkCore.OnBackend(be))
         masks[:, :, k] .= Dk
     end
-    rot = Tuple(Rs)
-    out = map(1:K) do k
+    return masks
+end
+
+# The frames' saturation masks made SYMMETRIC (PanoramaStitching 0.8.5; T. Harder's analysis of 2026-11-15): a scene direction
+# counts only where NO frame whose rows see it is saturated there. A frame's own mask alone drops a bright scene point where
+# V is high (it clips) and keeps it where V dims it below white, so the rows that remain see it only at the rim and V comes
+# out too flat there (on the paper's sweeps 5–15 % at the last ring). Returns one Hf × Wf mask per frame, `true` at every
+# domain pixel `lin` whose direction is saturated somewhere (its own dilated mask elsewhere), on the frames' backend.
+function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays, margin::Float64, be)
+    masks = _dilated_saturation(saturated, margin, frame_map, be)
+    any_frame = _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(Rs), masks)
+    return map(1:length(saturated)) do k
         E = masks[:, :, k]
         hit = VgtkCore.device_zeros(Bool, be, length(lin))
-        VgtkCore.pointwise!(_SaturatedInAnyFrame(camera, sees, inv(frame_map), rot, masks, k), hit, lin, rays; exec)
+        VgtkCore.pointwise!(_RowSaturated(any_frame, k), hit, lin, rays; exec = VgtkCore.OnBackend(be))
         view(E, lin) .= hit
         E
     end
-    return out
+end
+
+# The world directions saturated in some frame whose domain sees them (`_SaturatedInAnyFrame` on the dilated masks): the
+# symmetric mask of `pair_correspondences`' sampled directions, one Bool per direction on the frames' backend.
+function _saturated_directions(saturated, camera, sees, frame_map, rotations, directions, margin::Float64, be)
+    masks = _dilated_saturation(saturated, margin, frame_map, be)
+    any_frame = _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(SMatrix{3, 3, Float64, 9}.(rotations)), masks)
+    hit = VgtkCore.device_zeros(Bool, be, length(directions))
+    VgtkCore.pointwise!(any_frame, hit, vec(directions); exec = VgtkCore.OnBackend(be))
+    return hit
 end
 
 # ----------------------------------------------------------------------------- the kernels

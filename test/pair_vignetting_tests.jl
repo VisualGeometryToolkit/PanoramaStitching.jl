@@ -13,7 +13,7 @@
     step_logV(u) = (q = clamp(searchsortedlast(edges, radius(u)), 1, length(edges) - 1); -0.04 * (q - 1)^1.5)
     q = vignetting_sequence(step_logV)
     D = fibonacci_directions(q.R, 40000; fov_deg = 120.0)
-    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
+    kw = (; saturated = q.saturated, saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
     pc = pair_correspondences(q.camera, q.frames, q.R, D; kw...)
     @test length(pc) > 10000 && pc.n_frames == 6 && pc.n_dropped == 0
     @test all(pc.rings[1, :] .< pc.rings[2, :])
@@ -48,7 +48,7 @@ end
     smooth(u) = -0.8 * (radius(u) / 400)^2
     q = vignetting_sequence(smooth)
     D = fibonacci_directions(q.R, 40000; fov_deg = 120.0)
-    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
+    kw = (; saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
     level = 0.004                                                            # ≈ 10 % of the scene's median value
     lifted = [F .+ Float32(level) for F in q.frames]
     x0 = VgtkCore.estimate(ring_pair_vignetting(pair_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = q.saturated)))
@@ -88,7 +88,7 @@ end
         q = vignetting_sequence(u -> -0.8 * (radius(u) / 400)^2)
         sat = [falses(size(F, 1), size(F, 2)) for F in q.frames]; sat[2][150:250, 150:250] .= true
         D = fibonacci_directions(q.R, 40000; fov_deg = 120.0)
-        kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
+        kw = (; saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
         h = pair_correspondences(q.camera, q.frames, q.R, D; saturated = sat, kw...)
         d = pair_correspondences(q.camera, CuArray.(q.frames), q.R, CuArray(D); saturated = CuArray.(sat), kw...)
         @test d.n_dropped == h.n_dropped && abs(length(d) - length(h)) <= length(h) ÷ 1000   # a tap on a ring's edge may round apart
