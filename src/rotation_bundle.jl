@@ -123,10 +123,10 @@ Base.eltype(::_CameraObservation) = Float64
 # The domain of a parametric `CameraModel` (the only camera the autocalibration takes) is Core's whole plane or, inside a
 # fold, its pixel disc (`Ellipse{Float64}`) or, for a decentred lens, the star polygon through each azimuth's fold
 # (`PolygonRegion`, about 10 ms to build): the field holds any of them, so a fold appearing or vanishing at an LM update
-# keeps the variable's one type. A trial step whose domain Core refuses (`ArgumentError`: a decentred lens's fold curve that is
+# keeps the variable's one type. An LM step whose domain Core refuses (`ArgumentError`: a decentred lens's fold curve that is
 # not star-shaped about its centre, or an azimuth that images no ray) holds `_NoDomain`, which no point is in: every residual
 # is NaN, the block's cost +Inf (`finite_cost`) and the LM rejects the step, as it does any iterate off the domain. The start
-# is not a trial: a start camera whose domain is refused is refused.
+# is not an LM step: a start camera whose domain is refused is refused.
 # The model itself is held too (built once per value, not per residual). An update takes plain Float64 steps only (the
 # bundle's residuals have closed-form Jacobians; Core evaluates a domain on plain numbers): a dual step is a MethodError.
 struct _NoDomain end

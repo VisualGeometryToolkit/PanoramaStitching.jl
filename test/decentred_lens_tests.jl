@@ -1,7 +1,7 @@
 # =============================================================================
 # A decentred lens (radial and tangential terms): VisualGeometryToolkitCore 0.10.10's valid domain of a lens that is not
 # radially symmetric is the star `PolygonRegion` through each azimuth's own fold. The autocalibration's camera variable holds
-# it, its LM update builds it again, a trial step whose domain Core refuses is a rejected step (+Inf, never an error), and
+# it, its LM update builds it again, an LM step whose domain Core refuses is a rejected step (+Inf, never an error), and
 # detect_features masks the imaged region that holds it.
 # =============================================================================
 
@@ -19,7 +19,7 @@ const DECENTRED = VgtkCore.CameraModel(VgtkCore.CameraCalibrationMat(@SMatrix([3
 const DECENTRED_FREE = (:f, :cx, :cy, :k1, :k2, :p1, :p2)              # every parameter but the aspect and the skew
 end
 
-@testitem "a decentred lens: the camera variable holds its polygon domain, an update builds it again, a refused trial domain is a rejected step" setup = [DecentredLens] begin
+@testitem "a decentred lens: the camera variable holds its polygon domain, an update builds it again, a refused domain is a rejected step" setup = [DecentredLens] begin
     using Test, LinearAlgebra, StaticArrays
     import NLLSsolver, PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
@@ -36,7 +36,7 @@ end
     obs = PanoramaStitching._CameraObservation{false, NLLSsolver.NoRobust, Nothing}(x, SVector(1, 2, 3), NLLSsolver.NoRobust(), nothing)
     @test VgtkCore.Point2(VgtkCore.project(DECENTRED, d)...) ∈ cu.domain
     @test isfinite(NLLSsolver.computecost(Any[ch, dv, cu], obs))
-    # a trial step to p1 = 0.31: the stepped lens's fold curve is not star-shaped about its centre, and Core refuses its domain.
+    # an LM step to p1 = 0.31: the stepped lens's fold curve is not star-shaped about its centre, and Core refuses its domain.
     # The update holds no domain: the residual is NaN, the block's cost +Inf, a step the LM rejects.
     bad = [0.0, 0, 0, 0, 0, 0.3, 0]
     @test_throws ArgumentError VgtkCore.valid_domain(VgtkCore.model(NLLSsolver.update(chart, bad)))
@@ -44,7 +44,7 @@ end
     @test typeof(cb) === typeof(cc)
     @test all(isnan, NLLSsolver.computeresidual(obs, ch, dv, cb))
     @test NLLSsolver.computecost(Any[ch, dv, cb], obs) == Inf
-    # the start is no trial step: a start camera whose domain Core refuses is refused
+    # the start is no LM step: a start camera whose domain Core refuses is refused
     @test_throws ArgumentError PanoramaStitching._CameraVariable(NLLSsolver.update(chart, bad))
 end
 

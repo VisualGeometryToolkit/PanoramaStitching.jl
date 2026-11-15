@@ -14,14 +14,14 @@ thin-prism terms, a tilt) is a `PolygonRegion`, the star polygon through each az
 - **`detect_features` masks a decentred lens's imaged region.** It mapped the region into the frame's pixels part by part,
   with no method for a `PolygonRegion` (a `MethodError`); the mask is Core's `pixel_mask(region, frame_map, width, height)`,
   each pixel's centre tested in the camera's pixels, for any region.
-- **A camera trial step whose valid domain Core refuses is a rejected step.** For a decentred lens Core refuses a polygon
-  that is not star-shaped about its centre (`ArgumentError`), which a wide LM trial step of the autocalibration can reach; it
+- **A camera step whose valid domain Core refuses is a rejected step.** For a decentred lens Core refuses a polygon
+  that is not star-shaped about its centre (`ArgumentError`), which a wide LM step of the autocalibration can reach; it
   escaped `refine_camera_and_rotations`. That step's residuals are NaN and its cost +Inf, as for any iterate off the valid
   domain, so the LM rejects it. A start camera whose domain is refused is still refused.
 
 ### Tests
 
-- A decentred lens (Core's Brown–Conrady test lens): the camera variable's polygon domain, its LM update, the refused trial
+- A decentred lens (Core's Brown–Conrady test lens): the camera variable's polygon domain, its LM update, the refused
   step, `detect_features`' mask.
 
 ## 0.8.3
