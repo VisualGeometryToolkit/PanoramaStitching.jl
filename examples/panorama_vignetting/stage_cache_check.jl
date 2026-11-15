@@ -92,9 +92,11 @@ function stage_cache_check()
             end
             # the files the frames and the camera are read from key the pairs by content: the decode's sensor record, the lens
             write(joinpath(root, "sensor.json"), "a record")
-            recorded() = (c = cfg(); c["decode"]["sensor_characterisation"] = "sensor.json"; c)
-            k = pkey(recorded()); @test k != pkey(cfg())
-            write(joinpath(root, "sensor.json"), "the record, measured again"); @test pkey(recorded()) != k
+            recorded() = (c = cfg(); c["decode"]["sensor_characterisation"] = c["registration"]["sensor_characterisation"] = "sensor.json"; c)
+            # "vst": the detector decodes again under its own record, its content keyed by itself ([decode]'s here "none")
+            vst() = (c = cfg(; detection_image = "vst", noise_sigmas = 3); c["registration"]["sensor_characterisation"] = "sensor.json"; c)
+            k, kv = pkey(recorded()), pkey(vst()); @test k != pkey(cfg())
+            write(joinpath(root, "sensor.json"), "the record, measured again"); @test pkey(recorded()) != k && pkey(vst()) != kv
             k = pkey(cfg()); write(joinpath(root, "lens.json"), "the lens, calibrated again"); @test pkey(cfg()) != k
             # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its strategy keys the pairs there
             @test pkey(cfg(; pairs = "lag_overlap", averaging_optimization_strategy = strat("irls", "cauchy", "max_iter", 100))) !=

@@ -89,7 +89,7 @@ end
 # without either is refused when it is read, before any file is.
 function refuse_undeclared_sensor_record(table, where)
     haskey(table, "sensor_characterisation") ||
-        throw(ArgumentError("$where sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects)"))
+        throw(ArgumentError("$where sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects); [registration]'s, with detection_image = \"tone\", is [decode]'s"))
     return table
 end
 
@@ -108,6 +108,7 @@ function refuse_config(cfg, where)
     reg["detection_image"] == "tone" && reg["sensor_characterisation"] != dec["sensor_characterisation"] &&
         throw(ArgumentError("$where [registration] sensor_characterisation = $(repr(reg["sensor_characterisation"])): with detection_image = \"tone\" " *
                             "the detector reads the decoded frames, decoded under [decode] sensor_characterisation = $(repr(dec["sensor_characterisation"])); state that record"))
+    detector_settings(reg)                                            # the detector's keys: refused here, not after the decode
     return cfg
 end
 
@@ -307,11 +308,13 @@ function pairs_settings(r)
     drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
     return Dict(k => v for (k, v) in r if k ∉ drop)
 end
-# The body's characterisation keys the pairs by its content (its artifacts' SHA-256s are in it), not its path.
+# The detector's characterisation keys the pairs by its content too (its artifacts' SHA-256s are in it), beside its path in the
+# settings; with "vst" only: with "tone" it is [decode]'s (`refuse_config`), whose content `stage_settings` keys already.
 function pairs_stage_settings(C, inp, provider::Symbol)
-    st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
-    char = C.cfg["registration"]["sensor_characterisation"]
-    char == "none" || (st["sensor_characterisation_sha256"] = sensor_record_sha256(char))
+    r = C.cfg["registration"]
+    st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(r), provider)
+    r["detection_image"] == "vst" && r["sensor_characterisation"] != "none" &&
+        (st["sensor_characterisation_sha256"] = sensor_record_sha256(r["sensor_characterisation"]))
     return st
 end
 
@@ -351,21 +354,18 @@ end
 asift_tilts(t::AbstractString) = Symbol(t)
 asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 
-# The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst"),
-# `sensor_characterisation`, the body's sensor characterisation (a vgio/sensor_characterisation file under the data root, or
-# "none"; always stated, never defaulted: with "tone" it is [decode]'s, `refuse_config`) and, with "vst" only, the threshold
-# `noise_sigmas`. With "vst" the frames are decoded again under it, their models VisualGeometryToolkitCore's resolver's
-# (`frame_models`). `noise_sigmas` with "tone" is refused, never read; the 0.6 constants
-# `electrons_per_dn` and `read_noise_dn` are refused by name (PanoramaStitching.refuse_retired_registration).
-const DETECTION_NOISE_KEYS = ("noise_sigmas",)
+# The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst") and, with
+# "vst" only, the threshold `noise_sigmas` and the record its frames are decoded again under, `sensor_characterisation` (always
+# stated, never defaulted: with "tone" it is [decode]'s, `refuse_config`, and the detector reads the decoded frames), their models
+# VisualGeometryToolkitCore's resolver's (`frame_models`). `noise_sigmas` with "tone" is refused, never read; the 0.6 constants
+# `electrons_per_dn` and `read_noise_dn` are refused by name (PanoramaStitching.refuse_retired_registration). `refuse_config`
+# runs it when the config is read.
 function detector_settings(r)
-    characterisation = String(r["sensor_characterisation"])
     if r["detection_image"] == "vst"
-        noise_sigmas = Float64(r["noise_sigmas"])
+        noise_sigmas = Float64(r["noise_sigmas"]); characterisation = String(r["sensor_characterisation"])
     else
-        inert = filter(k -> haskey(r, k), DETECTION_NOISE_KEYS)
-        isempty(inert) || throw(ArgumentError("[registration] $(join(inert, ", ")): read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
-        noise_sigmas = nothing
+        haskey(r, "noise_sigmas") && throw(ArgumentError("[registration] noise_sigmas: read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
+        noise_sigmas = characterisation = nothing
     end
     return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, characterisation)
 end

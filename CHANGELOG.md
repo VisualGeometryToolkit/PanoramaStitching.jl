@@ -3,7 +3,7 @@
 ## 0.8.3 (unreleased)
 
 No source file under src/ changed and the package's API is 0.8.2's (a patch: the compat floors raised to the gated stack, Core
-0.10.8, IO 0.10.3, Features 0.9.6, Estimation 0.11.6). The release is the panorama_vignetting example's, whose configs and
+0.10.8, Features 0.9.6, Estimation 0.11.6; the test environment's IO 0.10.3). The release is the panorama_vignetting example's, whose configs and
 results layout break.
 
 ### The example's breaking changes (not the package's API)
@@ -17,7 +17,9 @@ results layout break.
 - **The example's `[registration] sensor_characterisation` is required too** (it defaulted to `"none"`, and was refused with
   `detection_image = "tone"`): the record the detector's frames are decoded under. With `"tone"` the detector reads the
   decoded frames, so it must be `[decode]`'s record (another is refused, naming it); with `"vst"` the frames are decoded again
-  under it. Both are refused by `load_config` when absent. Migrate: add `sensor_characterisation = "none"` to
+  under it. Both are refused by `load_config` when absent, as are the detector's keys (`noise_sigmas` with `"tone"`, its
+  absence with `"vst"`), before any file is read. The configs of record's verified pairs and registration re-key (the key holds
+  the stated record). Migrate: add `sensor_characterisation = "none"` to
   `[registration]` (the configs of record do).
 - **The example runs on VisualGeometryToolkitEval 0.9** (its environment's compat), whose keyed products replace
   `cached_result` and `keyed_cell_dir`. Each step is an Eval `Product` of the set, in
