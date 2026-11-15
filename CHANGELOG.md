@@ -1,14 +1,21 @@
 # Changelog
 
-## 0.8.3 (unreleased)
+## 0.8.4
 
-### Fixed (with VisualGeometryToolkitCore 0.10.10)
+A patch for VisualGeometryToolkitCore 0.10.10, whose `valid_domain` of a lens that is not radially symmetric (tangential or
+thin-prism terms, a tilt) is a `PolygonRegion`, the star polygon through each azimuth's own fold, not the inscribed
+`Ellipse`. The API is 0.8.3's. The compat floors: Core 0.10.10, Estimation 0.11.7 (the example's Eval 0.9.1).
 
-- **The autocalibration's camera variable holds a decentred lens's valid domain.** Core 0.10.10's `valid_domain` of a
-  lens that is not radially symmetric (tangential or thin-prism terms, a tilt) is a `PolygonRegion`, the star polygon
-  through each azimuth's own fold, not the inscribed `Ellipse`; the variable's `domain` field
-  (`Union{WholePlane, Ellipse{Float64}}`) could not hold it. It is widened to the polygon, still built once per LM update
-  (about 10 ms) and never per residual. The Core compat floor is 0.10.10.
+### Fixed
+
+- **The autocalibration's camera variable holds a decentred lens's valid domain.** Its `domain` field held a `WholePlane`
+  or an `Ellipse{Float64}` only; it holds the `PolygonRegion` too, built once per LM update (about 10 ms), never per
+  residual.
+- **`detect_features` masks a decentred lens's imaged region.** It mapped the region into the frame's pixels part by part,
+  with no method for a `PolygonRegion` (a `MethodError`); the mask is Core's `pixel_mask(region, frame_map, width, height)`,
+  each pixel's centre tested in the camera's pixels, for any region.
+
+## 0.8.3
 
 No source file under src/ changed and the package's API is 0.8.2's (a patch: the compat floors raised to the gated stack, Core
 0.10.8, Features 0.9.6, Estimation 0.11.6; the test environment's IO 0.10.3). The release is the panorama_vignetting example's, whose configs and
