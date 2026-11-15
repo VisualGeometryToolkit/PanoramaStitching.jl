@@ -24,8 +24,12 @@ VisualGeometryToolkit stack the folder's `Project.toml` names, all registered in
 
 Every setting is in the config — nothing in `run.jl` has a default — and every input path is relative to `$VGTK_DATA_ROOT`.
 Everything the run writes goes under VisualGeometryToolkitEval's results root (`$VGTK_RESULTS_ROOT`):
-`<results>/panorama_vignetting/<name>/` holds the stages' keyed records and the decode cache, and the run's outputs go to
-`run-<run key>/` in it, keyed by the whole config (Eval's `run_key`), with its run records. From a REPL,
+`<results>/panorama_vignetting/<name>/` holds the decode cache and the set's products: each step is a VisualGeometryToolkitEval
+`Product` (DrWatson's `produce_or_load`: produced once, loaded after), in `<product>/<key>/` with its records (`_config.toml`,
+`_provenance.toml`). The verified pairs are keyed by their settings, the registration by every `[registration]` setting and the
+pairs' output, the run's outputs (`run/<key>/`) by the whole config and the registration's output; every key holds the code
+trees (PanoramaStitching's and the stack's). The run itself is produced on every call: its code is this driver's, which no key
+holds. Products record the code they ran, so a run of record runs on committed code (`VGTK_SCRATCH=1` for scratch work). From a REPL,
 `include("run.jl"); run_example("config_fx3_14mm.toml")` runs everything; each stage is a function and can be rerun alone.
 
 The compute backend is the config's `[compute] device` (`"cuda"`). On a shared GPU without free memory, run once with
@@ -148,19 +152,19 @@ registration, domain, radial model and solver). An arm's name is its own label (
 
     julia --project=<env> examples/panorama_vignetting/compare_arms.jl examples/panorama_vignetting/arms.toml
 
-Per set, a run keyed by `arms.toml`, the set's config and its registration record writes
+Per set, a product keyed by `arms.toml`, the set's config and its registration's output writes
 `<results>/panorama_vignetting/<name>/arms/<key>/results.json` and `results.md`: per arm the seams' 1.4826·MAD per colour plane and pooled over the
 planes, their rms, the gains (`K × 3`), V's range, asymmetry and ring profile (100 px rings about the circle's centre), and
-the warm fit time. A key that exists is reused. The configs of record keep their settings until the table decides.
+the warm fit time. A produced comparison is reused. The configs of record keep their settings until the table decides.
 
 ## Outputs (`<results>/panorama_vignetting/<name>/`)
 
 | file | content |
 |---|---|
 | `decoded/linear_raws.jld2` | with `[decode] cache = true`: the decoded frames, VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content, decode settings and noise (Features keys it by the noise's digest) — a derived cache, regenerable from the RAW files |
-| `verified_pairs_<key>.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): Eval's keyed result cache (`cached_result`), keyed by Eval's `run_key` of the matching and verification settings, LoMa's provider, the inputs, the decode settings and the RAW files' hashes |
-| `registration_<key>.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting |
-| `run-<run key>/` | the run's outputs below, keyed by the whole config, with Eval's run records (`write_run_records`: the config of record, the key, the driver, the inputs read) |
+| `verified_pairs/<key>/verified_pairs.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): an Eval `Product`, keyed by the matching and verification settings, LoMa's provider, the inputs, the decode settings, the RAW files' hashes and the code trees |
+| `registration/<key>/registration.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting and by the verified pairs' output (their content hash: pairs produced again with other outputs are registered again) |
+| `run/<key>/` | the run's outputs below, keyed by the whole config and the registration's output, with the product's records (`_config.toml`, the config of record; `_provenance.toml`, the key, the driver, the inputs read, the outputs' content hash) |
 | `panorama.json`, `panorama_map.json` (+ `.tiff`) | the results of record, a `vgio/panorama/v2.0` file (VisualGeometryToolkitIO's `save_panorama`; read it with `VgtkIO.load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`) and the bundle's termination record (`fit`); V over the frame's pixels, a Float32 `vgio/raster` (`VgtkIO.load_raster`), a data result |
 | `panorama_compare_<model>.json`, `panorama_compare_<model>_map.json` (+ `.tiff`) | the comparison fits (`compare_models`), the same record |
 | `seams_uncorrected.png`, `seams_corrected.png` | the seam-ratio maps — display figures (8-bit PNG), not data |
@@ -171,10 +175,10 @@ the warm fit time. A key that exists is reused. The configs of record keep their
 `compare_images`), one above the other with linked axes (pan and zoom move both), and a menu to switch between the projections and the seam maps:
 
 ```bash
-julia --project=examples/panorama_vignetting examples/panorama_vignetting/compare_makie.jl $VGTK_RESULTS_ROOT/panorama_vignetting/fx3_14mm_indoor/run-<key>
+julia --project=examples/panorama_vignetting examples/panorama_vignetting/compare_makie.jl $VGTK_RESULTS_ROOT/panorama_vignetting/fx3_14mm_indoor/run/<key>
 ```
 
-From a REPL: `include("compare_makie.jl"); compare_makie("<results>/panorama_vignetting/fx3_14mm_indoor/run-<key>")`. `save_comparison(path, dir; view)` writes
+From a REPL: `include("compare_makie.jl"); compare_makie("<results>/panorama_vignetting/fx3_14mm_indoor/run/<key>")`. `save_comparison(path, dir; view)` writes
 the figure as a PNG.
 
 **The decode cache.** The linear image is stored as the photosite code sums rather than 16-bit rounded linear values, so it
@@ -193,7 +197,8 @@ julia --project=examples/panorama_vignetting examples/panorama_vignetting/run_ch
 ```
 
 and `reproduce.toml`'s `checks` stage runs it. It runs `stage_cache_check.jl` (the verified pairs reused when only the
-averaging or the bundle changes, recomputed when a pair setting, LoMa's provider or a RAW file changes) and
+averaging or the bundle changes, recomputed when a pair setting, LoMa's provider or a RAW file changes; the registration
+re-keyed when the pairs are produced again with other outputs) and
 `autocalibration_check.jl` (the 14 mm bundle-equivalence check of `refine_camera_and_rotations` against PanoramaStitching
 7bbbea03's bundle on the same tracks; not run where its declared inputs are absent from the data root). Each exits 1 on a
 failure. PanoramaStitching's own suite checks only that `run.jl` and the checks parse, and the example's retired keys.

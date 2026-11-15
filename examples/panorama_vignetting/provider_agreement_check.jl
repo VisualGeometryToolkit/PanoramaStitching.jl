@@ -27,7 +27,8 @@ function provider_agreement_check(config = joinpath(@__DIR__, "config_fx3_14mm.t
     lens = load_lens(C0; raw_width = W, raw_height = H)
     function registered(provider)
         cfg = deepcopy(C0.cfg); cfg["registration"]["execution_provider"] = provider
-        return registration((; C0..., cfg, out = mktempdir()), inp, lens; log = stdout)
+        # computed afresh: its products under a temporary results root
+        return withenv(() -> registration((; C0..., cfg), inp, lens; log = stdout), "VGTK_RESULTS_ROOT" => mktempdir())
     end
     cpu, cuda = registered("cpu"), registered("cuda")
     kc, kg = Set(cpu.pairs_kept), Set(cuda.pairs_kept)

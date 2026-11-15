@@ -5,8 +5,9 @@
 #
 # Every setting is in the config (a config of record: nothing here has a default). Inputs are read under the data root
 # (VisualGeometryToolkitEval's data_root, $VGTK_DATA_ROOT); everything this writes goes under the results root
-# (results_root, $VGTK_RESULTS_ROOT): <results>/panorama_vignetting/<name>/, its stages' records keyed by their settings
-# (Eval's cached_result at Eval's run_key) and the run's outputs in run-<run_key(config)>/ with its run records. The stages are functions, so in a REPL
+# (results_root, $VGTK_RESULTS_ROOT): <results>/panorama_vignetting/<name>/, each step a keyed product of Eval's (`Product`,
+# produced or loaded by `produce`, DrWatson's produce_or_load): verified_pairs/<key>/, registration/<key>/ and the run's outputs
+# in run/<key>/, each with its records. The stages are functions, so in a REPL
 # `include("run.jl"); run_example("config.toml")` runs it all and each stage can be rerun alone. See README.md.
 
 using LibRaw_jll                                   # Features' LibRaw decoder (its package extension)
@@ -77,13 +78,15 @@ end
 # the config — a config that names one is refused, never read.
 function refuse_output(cfg, where)
     haskey(cfg, "output") && throw(ArgumentError("$where: the key output is retired: every result goes under VisualGeometryToolkitEval's " *
-                                                 "results_root() (\$VGTK_RESULTS_ROOT), <results>/panorama_vignetting/<name>/, the run's " *
-                                                 "outputs keyed by the config's run_key; remove the key"))
+                                                 "results_root() (\$VGTK_RESULTS_ROOT), <results>/panorama_vignetting/<name>/, each step " *
+                                                 "a keyed product (Eval's Product); remove the key"))
     return cfg
 end
 
-# The config of record and where its results go: `out` the set's folder under the results root (its stages' keyed records and
-# the decode cache), `run` the run's outputs, keyed by the whole config (Eval's run_key), with its run records.
+# The config of record and where its results go: `experiment` the set's products under the results root
+# (`panorama_vignetting/<name>`: Eval's `Product`s, each in <results>/<experiment>/<product>/<key>/), `out` that folder (the decode
+# cache), `code` the code trees every product is keyed by (Eval's `current_code_trees`: PanoramaStitching's and every stack
+# package's this environment loads; computed once: a `Product` would compute them again each time).
 function load_config(path)
     cfg = TOML.parsefile(path)
     refuse_output(cfg, path)
@@ -92,11 +95,9 @@ function load_config(path)
     # the retired [registration] keys: PanoramaStitching's one list, the keywords' (refused by name, never read)
     PanoramaStitching.refuse_retired_registration(cfg["registration"], "$path [registration]")
     refuse_inert_pair_keys(cfg["registration"], "$path [registration]")
-    base = joinpath(VgtkEval.Experiments.results_root(), "panorama_vignetting")
-    out = joinpath(base, cfg["name"])
-    run = VgtkEval.Experiments.keyed_cell_dir(cfg, cfg["name"], "run"; base)    # <out>/run-<run_key(cfg)>
-    mkpath(run)
-    return (; cfg, out, run, path = abspath(path))
+    experiment = "panorama_vignetting/" * cfg["name"]
+    out = joinpath(VgtkEval.Experiments.results_root(), experiment)
+    return (; cfg, out, experiment, code = VgtkEval.Experiments.current_code_trees(), path = abspath(path))
 end
 
 say(io, msg) = (println(msg); println(io, msg); flush(io))
@@ -190,26 +191,31 @@ averaging_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["averag
 bundle_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["bundle_optimization_strategy"]; class = :refine_rotations,
                                                                    section = "registration.bundle_optimization_strategy")
 
-# The stages' records (the verified pairs, the registration): one JSON record each in the output folder, reused while its key —
-# a SHA-256 of the record's format, the stage's settings, the ONNX Runtime provider LoMa runs on (`execution_provider = "auto"`
-# resolved: a CPU record is not a CUDA run's, whose matches differ in the pairs at the network's threshold), the inputs, the
-# decode settings and the RAW files' hashes — matches.
-# `staged_record` is the one reader and writer: a record of other settings is another file (Eval's cached_result).
+# The stages' records (the verified pairs, the registration): each an Eval `Product` of the set (`stage_product`), its record
+# `<name>.jld2` in its keyed directory, reused while its key — a SHA-256 of the record's format, the stage's settings, the ONNX
+# Runtime provider LoMa runs on (`execution_provider = "auto"` resolved: a CPU record is not a CUDA run's, whose matches differ
+# in the pairs at the network's threshold), the inputs, the decode settings, the RAW files' hashes, the code trees and the
+# products it reads (their outputs' content hashes: the registration is the verified pairs' consumer) — matches.
+# `produce_stage` is their one writer, `stage_record` their one reader.
 function stage_settings(C, inp, format, settings, provider::Symbol)
     return Dict{String, Any}("format" => format, "settings" => settings, "provider" => string(provider),
                              "inputs" => C.cfg["inputs"], "decode" => C.cfg["decode"],
-                             "raw_sha256" => [open(VgtkCore.sha256_hex, joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n)) for n in inp.names])
+                             "raw_sha256" => [open(VgtkCore.sha256_hex, raw) for raw in raw_paths(C, inp)])
 end
-# A stage's record: VisualGeometryToolkitEval's keyed result cache (`cached_result`, keyed by Eval's `run_key` of the stage's
-# settings), `<C.out>/<prefix>_<key>.jld2`, computed by `compute()` (a String-keyed Dict) when absent. Returns the record and
-# its file.
-function staged_record(compute, prefix, C, settings; log, what)
-    computed = Ref(false)                                             # the file is cached_result's, named by its own rule
-    rec, file = VgtkEval.Experiments.cached_result(_ -> (computed[] = true; compute()), prefix, settings, C.out;
-                                                    key = VgtkEval.Experiments.run_key, gitpath = pkgdir(PanoramaStitching))
-    computed[] || say(log, "$what: reused $file")
-    return rec, file
+raw_paths(C, inp) = [joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n) for n in inp.names]
+stage_product(C, name, settings; upstream = nothing) =
+    VgtkEval.Experiments.Product(C.experiment, name, settings; output = name * ".jld2", upstream, code = C.code)
+const DRIVER = "examples/panorama_vignetting/run.jl"
+# A stage's product produced: Eval's `produce`, `compute()` (the record, a String-keyed Dict) run when it is not produced;
+# `stage_record` reads the record back (Eval's `load_output`).
+function produce_stage(compute, p, C; log, what, inputs = String[])
+    E = VgtkEval.Experiments
+    reused = E.produced(p)
+    E.produce(_ -> compute(), p; driver = DRIVER, config_source = C.path, inputs, gitpath = pkgdir(PanoramaStitching))
+    reused && say(log, "$what: reused $(E.product_dir(p))")
+    return p
 end
+stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
 
 # The registration's key: every [registration] setting and LoMa's provider. v3: PanoramaStitching 0.2.2 seeds each pair's sampler
 # by stable_seed(seed, i, j), so a v2 record's rotations are not this code's; they are recomputed. v5: PanoramaStitching 0.6's
@@ -348,11 +354,14 @@ end
 rotation_local_optimization(r) = VgtkEstimation.optimization_strategy_from_toml(r["local_optimization_strategy"]; class = :rotation,
                                                                                 section = "registration.local_optimization_strategy")
 
-# The verified pairs, cached (verified_pairs_<key>.jld2): the hour of ASIFT, LoMa and RANSAC of a set is spent once per matching
-# setting, and written before the view graph is built, so a failure past it (the averaging, the bundle) loses none of it.
-function verified_pairs(C, inp, lens, provider::Symbol; log)
+# The verified pairs' product (verified_pairs/<key>/verified_pairs.jld2): the hour of ASIFT, LoMa and RANSAC of a set is spent
+# once per matching setting, and produced before the view graph is built, so a failure past it (the averaging, the bundle)
+# loses none of it. `produce_pairs` produces it, when it is not produced, and returns it; a produced registration never reads it.
+pairs_product(C, inp, provider::Symbol) = stage_product(C, "verified_pairs", pairs_stage_settings(C, inp, provider))
+function produce_pairs(C, inp, lens, p; log)
     r = C.cfg["registration"]
-    rec, _ = staged_record("verified_pairs", C, pairs_stage_settings(C, inp, provider); log, what = "verified pairs") do
+    provider = Symbol(p.record["provider"])
+    produce_stage(p, C; log, what = "verified pairs", inputs = raw_paths(C, inp)) do
         t0 = time()
         det = detector_settings(r)
         frames, models = det.detection_image === :vst ? frame_models(C, inp, det.characterisation) : (inp.frames, nothing)
@@ -370,15 +379,19 @@ function verified_pairs(C, inp, lens, provider::Symbol; log)
                           execution_provider = provider, say = m -> say(log, m))
         merge!(pairs_record(vp), Dict{String, Any}("frames" => inp.names, "seconds" => time() - t0))
     end
-    return (; pairs = pairs_from_record(rec), seconds = Float64(rec["seconds"]))
 end
 
 function registration(C, inp, lens; log)
     r = C.cfg["registration"]
     # "auto" → "cuda" or "cpu" (warning why) here, before the keys; "cuda" that cannot run is an error naming why
     provider = VgtkFeatures.resolve_execution_provider(Symbol(r["execution_provider"]))
-    rec, file = staged_record("registration", C, registration_settings(C, inp, provider); log, what = "registration") do
-        vp = verified_pairs(C, inp, lens, provider; log)
+    # the verified pairs first: the registration's key folds their output's content hash (Eval's Merkle chain), so pairs
+    # produced again with other outputs are registered again
+    pp = produce_pairs(C, inp, lens, pairs_product(C, inp, provider); log)
+    p = stage_product(C, "registration", registration_settings(C, inp, provider); upstream = ("verified_pairs" => pp,))
+    produce_stage(p, C; log, what = "registration", inputs = raw_paths(C, inp)) do
+        rp = stage_record(pp)
+        vp = (; pairs = pairs_from_record(rp), seconds = Float64(rp["seconds"]))
         t0 = time()
         reg = register_rotations(vp.pairs, lens; frame_map = inp.frame_map, averaging_optimization_strategy = averaging_strategy(r),
                                  cycle_tol = deg2rad(r["cycle_tol_deg"]), orientation_tol = deg2rad(r["orientation_tol_deg"]),
@@ -425,6 +438,7 @@ function registration(C, inp, lens; log)
                           # the ONNX Runtime provider used, its threads and, on CUDA, the driver, runtime and cuDNN versions
                           "loma" => loma_record(reg.loma))
     end
+    rec = stage_record(p)
     return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
             pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], pairs_no_covariance = rec["pairs_no_covariance"],
             bundle_rms_px = rec["bundle_rms_px"], bundle_inlier_rms_px = rec["bundle_inlier_rms_px"],
@@ -432,7 +446,7 @@ function registration(C, inp, lens; log)
             bundle_sigma = rec["bundle_sigma"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
             bundle_retcode = rec["bundle_retcode"], bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
-            loma = rec["loma"], record = file,
+            loma = rec["loma"], product = p,
             # the bundle's termination record (no estimate, no metadata): what vgio/panorama's `fit` stores
             bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, b.iterations, b.rms, b.n, nothing)))
 end
@@ -559,15 +573,41 @@ end
 
 function run_example(config_path)
     C = load_config(config_path)
-    log = open(joinpath(C.run, "run.log"), "w")
+    # the run's directory is its product's, keyed by the config, the code and the registration's output (Eval's Merkle chain):
+    # known once the registration is produced, so the log is held until then
+    log = IOBuffer()
     T = Dict{String, Float64}()
-    say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path)), output $(C.run)")
+    say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path))")
     t = time(); inp = decoded_frames(C; masks = true, log); T["decode (or cache)"] = time() - t
     K = length(inp.frames); Hf, Wf, _ = size(inp.frames[1]); W, H = Int.(PanoramaStitching._covered_extent(inp.frame_map, Wf, Hf))   # the frames' map: (2Wf, 2Hf) for :bin2
     say(log, "frames: $K, $(Wf) × $(Hf) bin2 ($(W) × $(H) camera pixels), saturated quads $(sum(count, inp.saturated))")
     lens = load_lens(C; raw_width = W, raw_height = H)
     reg = registration(C, inp, lens; log)
     T["registration"] = reg.seconds
+    # the run: produced on every call (`force`), as before: its fits, seams and renders are this driver's own code, which no
+    # key holds (Eval keys a product by the packages' code trees, never a driver's source); its stages above are reused
+    E = VgtkEval.Experiments
+    p = E.Product(C.experiment, "run", C.cfg; output = "summary.md", upstream = ("registration" => reg.product,), code = C.code)
+    result = Ref{Any}(nothing)
+    E.produce(p; driver = DRIVER, config_source = C.path, inputs = [raw_paths(C, inp); input_path(C.cfg["inputs"]["lens"])],
+              force = true, gitpath = pkgdir(PanoramaStitching)) do dir
+        io = open(joinpath(dir, "run.log"), "w")
+        try
+            write(io, take!(log))
+            say(io, "output $dir")
+            result[] = run_outputs((; C..., run = dir), inp, lens, reg, T, W, H; log = io)
+        finally
+            close(io)
+        end
+        nothing                                                       # the run writes its own outputs, summary.md last
+    end
+    return result[]
+end
+
+# The run's outputs in its product's directory `C.run`: the fit of record, the seams before and after, the renders, the
+# comparison fits and summary.md (last).
+function run_outputs(C, inp, lens, reg, T, W, H; log)
+    Hf, Wf, _ = size(inp.frames[1])
     uc = C.cfg["render"]["up"]
     uc in ("level", "first_frame") || error("render.up = $uc is not \"level\" or \"first_frame\"")
     sweep = sweep_up(reg.rotations)                                       # the sweep's up; its least eigenvalue the roll-free check
@@ -650,7 +690,6 @@ function run_example(config_path)
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
     write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
-    close(log)
     return (; C, inp, lens, reg, res, before, after, rows, T)
 end
 
@@ -704,14 +743,10 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         end
         println(io, "\n## Files\n")
         for x in sort(readdir(C.run))
-            isfile(joinpath(C.run, x)) && println(io, "- `$x`")
+            isfile(joinpath(C.run, x)) && !startswith(x, "_") && println(io, "- `$x`")    # not the product's records
         end
     end
-    # the run's records (VisualGeometryToolkitEval): its config of record, its key, its driver and the inputs it read
-    raws = [input_path(joinpath(C.cfg["inputs"]["raw_dir"], n)) for n in inp.names]
-    VgtkEval.Experiments.write_run_records(C.run, C.cfg; driver = "examples/panorama_vignetting/run.jl", config_source = C.path,
-                                           key = VgtkEval.Experiments.run_key(C.cfg), inputs = [raws; input_path(C.cfg["inputs"]["lens"])])
-    return C.run
+    return nothing
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

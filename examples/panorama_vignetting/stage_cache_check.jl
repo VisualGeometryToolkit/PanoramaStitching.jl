@@ -3,10 +3,12 @@
 #
 #   julia --project=examples/panorama_vignetting examples/panorama_vignetting/stage_cache_check.jl
 #
-# The verified pairs are a cached stage (Eval's cached_result, keyed by Eval's run_key of the stage's settings): REUSED when only
-# the averaging or the bundle changes, recomputed when a matching or detector setting, LoMa's provider or a RAW file changes;
-# the registration is keyed by every [registration] setting; the record reads back exactly. Every file goes into temporary data
-# and results roots.
+# The verified pairs are a stage product (Eval's Product, produced or loaded by Eval's produce): REUSED when only the averaging or
+# the bundle changes, produced again when a matching or detector setting, LoMa's provider or a RAW file changes; the registration
+# is keyed by every [registration] setting and by the pairs' output (Eval's Merkle chain: pairs produced again with other outputs
+# re-key it, and a registration produced from the earlier pairs is no longer produced); the record reads back exactly. Every file
+# goes into temporary data and results roots; the products record the code they ran, so the check runs on committed code (a
+# fresh clone, as run_checks.jl's stage does), as every run of record.
 include(joinpath(@__DIR__, "run.jl"))
 using Test
 
@@ -39,21 +41,25 @@ function stage_cache_check()
     ok = try
     @testset "the example's stage cache" begin
         withenv("VGTK_DATA_ROOT" => root, "VGTK_RESULTS_ROOT" => results) do
-            out = mktempdir(results)
+            E = VgtkEval.Experiments
+            C(c) = (; cfg = c, out = results, experiment = "panorama_vignetting/stage_cache_check", code = E.current_code_trees(),
+                    path = joinpath(@__DIR__, "stage_cache_check.jl"))
             matched = Ref(0)                                                  # how often the matching ran
-            compute() = (matched[] += 1; merge!(pairs_record(vp), Dict{String, Any}("seconds" => 1.0)))
-            stage(c) = staged_record(compute, "verified_pairs", (; cfg = c, out), pairs_stage_settings((; cfg = c, out), inp, :cuda);
-                                     log = devnull, what = "verified pairs")
-            rec, file = stage(cfg())
-            @test matched[] == 1 && isfile(file) && startswith(basename(file), "verified_pairs_")
-            @test first(stage(cfg())) == rec && matched[] == 1                # a second run with the same matching settings skips it
+            compute(seconds = 1.0) = (matched[] += 1; merge!(pairs_record(vp), Dict{String, Any}("seconds" => seconds)))
+            pairs(c; provider = :cuda) = pairs_product(C(c), inp, provider)
+            stage(c) = stage_record(produce_stage(compute, pairs(c), C(c); log = devnull, what = "verified pairs"))
+            rec = stage(cfg())
+            @test matched[] == 1 && isfile(E.product_output(pairs(cfg()))) && E.produced(pairs(cfg()))
+            @test stage(cfg()) == rec && matched[] == 1                       # a second run with the same matching settings skips it
             back = pairs_from_record(rec)                                     # the record reads back exactly
             @test back isa VerifiedPairs && back.verified == vp.verified && back.inlier_matches == vp.inlier_matches &&
                   back.stats == vp.stats && back.scales == vp.scales
             prov(d, k) = string(haskey(d, k) ? d[k] : d[Symbol(k)])                  # LoMa's provenance, as recorded
             @test prov(back.loma.descriptor, "execution_provider") == "cuda" && prov(back.loma.matcher, "model") == "loma_b128"
             @test all(k -> back.features[k] == vp.features[k], 1:2)          # the described features as they were
-            key(f, c; provider = :cuda) = VgtkEval.Experiments.run_key(f((; cfg = c, out), inp, provider))
+            reg(c; provider = :cuda) = stage_product(C(c), "registration", registration_settings(C(c), inp, provider);
+                                                     upstream = ("verified_pairs" => pairs(c; provider),))
+            key(f, c; provider = :cuda) = (f === pairs_stage_settings ? pairs(c; provider) : reg(c; provider)).key
             # the provider LoMa runs on keys both stages: a CPU record is not a CUDA run's
             @test key(pairs_stage_settings, cfg(); provider = :cpu) != key(pairs_stage_settings, cfg()) &&
                   key(registration_settings, cfg(); provider = :cpu) != key(registration_settings, cfg())
@@ -67,9 +73,17 @@ function stage_cache_check()
                 stage(c)
             end
             @test matched[] == 1
+            # the Merkle chain: a registration produced from the pairs is reused while they stand; the pairs produced again with
+            # other outputs re-key it, and the registration produced from the earlier pairs is no longer produced
+            r0 = reg(cfg())
+            produce_stage(() -> Dict{String, Any}("rotations" => 1), r0, C(cfg()); log = devnull, what = "registration")
+            @test E.produced(r0) && reg(cfg()).key == r0.key
+            E.produce(_ -> compute(2.0), pairs(cfg()); driver = DRIVER, config_source = C(cfg()).path, force = true,
+                      gitpath = pkgdir(PanoramaStitching))
+            @test matched[] == 2 && reg(cfg()).key != r0.key && !E.produced(r0)
             # a changed matching setting, or a changed RAW file: NOT reused, matched again
-            stage(cfg(; min_inliers = 30)); @test matched[] == 2
-            write(joinpath(root, "raw", "b.ARW"), "b, rewritten"); stage(cfg(; min_inliers = 30)); @test matched[] == 3
+            stage(cfg(; min_inliers = 30)); @test matched[] == 3
+            write(joinpath(root, "raw", "b.ARW"), "b, rewritten"); stage(cfg(; min_inliers = 30)); @test matched[] == 4
             # the detector's keys key the pairs
             for c in (cfg(; selection = "spread"), cfg(; detection_image = "vst"), cfg(; max_detections = 4096))
                 @test key(pairs_stage_settings, c) != key(pairs_stage_settings, cfg())
