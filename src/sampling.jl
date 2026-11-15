@@ -37,17 +37,6 @@ function _imaged_less_rim(camera::VgtkCore.BoundedCamera, m)
     return c === nothing ? VgtkCore.Rect2{Float64}() : VgtkCore.imaged_region(VgtkCore.with_lens_coverage(camera, c))
 end
 
-# A region of the camera's pixels in a frame's pixels, `frame_map` the frame's map onto the camera's pixels (a Core
-# `SimilarityMap` without rotation: VisualGeometryToolkitCore's `raw_frame_map`), by its parts: an `Ellipse` by Core's
-# similarity image under the map's inverse, a `Rect` by its corners (axis-aligned under a scale and a translation).
-_in_frame(e::VgtkCore.Ellipse, frame_map) = inv(frame_map)(e)
-function _in_frame(r::VgtkCore.Rect, frame_map)
-    lo = inv(frame_map)(SVector{2, Float64}(r.origin[1], r.origin[2]))
-    hi = inv(frame_map)(SVector{2, Float64}(r.origin[1] + r.widths[1], r.origin[2] + r.widths[2]))
-    return VgtkCore.Rect(lo[1], lo[2], hi[1] - lo[1], hi[2] - lo[2])
-end
-_in_frame(r::VgtkCore.RegionIntersection, frame_map) = _in_frame(r.a, frame_map) ∩ _in_frame(r.b, frame_map)
-
 # The camera's pixels a `width × height` frame covers (`frame_map` without a translation, as a Bayer cell grid's): its far
 # corner's image.
 _covered_extent(frame_map, width, height) = Tuple(frame_map(SVector{2, Float64}(width, height)))

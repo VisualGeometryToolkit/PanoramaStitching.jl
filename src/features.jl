@@ -117,7 +117,7 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
     img = _frame_image(frame)
     Hf, Wf = size(img, 1), size(img, 2)
     region = VgtkCore.imaged_region(camera)
-    inside = VgtkCore.pixel_mask(_in_frame(region, frame_map), Wf, Hf)        # the imaged region in the frame's pixels
+    inside = VgtkCore.pixel_mask(region, frame_map, Wf, Hf)                   # the imaged region in the frame's pixels
     p = quantile(vec(view(img, :, :, 2))[vec(inside)], tone_percentile / 100)
     toned = sqrt.(clamp.(Float64.(img) ./ p, 0, 1))
     # the detections in Features' canonical order (a function of the image), so the kept set, its order and every

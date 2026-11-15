@@ -26,7 +26,7 @@
     @test round(Int, 0.9N) <= length(sp) <= round(Int, 1.1N)
     # the oracle: the global top N by |response| of the region's detections (ASIFT on the documented tone) leaves the dim half
     # nearly empty, the spread selection covers it
-    p = quantile(vec(view(frame, :, :, 2))[vec(VgtkCore.pixel_mask(PanoramaStitching._in_frame(VgtkCore.imaged_region(q.cam), FRAME_MAP), Wf, Hf))], 0.995)
+    p = quantile(vec(view(frame, :, :, 2))[vec(VgtkCore.pixel_mask(VgtkCore.imaged_region(q.cam), FRAME_MAP, Wf, Hf))], 0.995)
     dets = VgtkFeatures.asift_detect(Float32.(sqrt.(clamp.(Float64.(view(frame, :, :, 2)) ./ p, 0, 1))); tilts = [(1.0, 0.0)])
     kept = PanoramaStitching._imaged_less_rim(q.cam, 20.0)
     inside = filter(d -> VgtkCore.Point2(FRAME_MAP(SVector{2, Float64}(d.center...))...) ∈ kept, dets)
