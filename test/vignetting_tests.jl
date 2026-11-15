@@ -403,8 +403,9 @@ end
     defines(x, name) = x isa Expr && (x.head === :const ? defines(x.args[1], name) : x.head === :(=) ? x.args[1] === name :
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
+    Core.eval(m, :(import PanoramaStitching))
     for name in (:RENAMED_KEYS, :RETIRED_VIGNETTING_KEYS, :refuse_renamed_keys, :refuse_circle, :refuse_output, :refuse_inert_pair_keys,
-                 :refuse_undeclared_sensor_record)
+                 :refuse_undeclared_sensor_record, :refuse_config)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -461,11 +462,20 @@ end
     undeclared(t) = Base.invokelatest(m.refuse_undeclared_sensor_record, Dict{String, Any}(t), "config [decode]")
     @test_throws "[decode] sensor_characterisation: required" undeclared(("mode" => "bin2", "gain" => 1.0, "cache" => false))
     @test undeclared(("sensor_characterisation" => "none",))["sensor_characterisation"] == "none"
+    # so does the registration's (no default "none"): a config without either is refused by `load_config`'s `refuse_config`;
+    # with detection_image = "tone" the detector reads the decoded frames, so its record is [decode]'s
+    of_record = TOML.parsefile(joinpath(dir, "config_fx3_14mm.toml"))
+    config(edit!) = (c = deepcopy(of_record); edit!(c); Base.invokelatest(m.refuse_config, c, "config"))
+    @test config(identity) isa AbstractDict
+    @test_throws "[registration] sensor_characterisation: required" config(c -> delete!(c["registration"], "sensor_characterisation"))
+    @test_throws "[decode] sensor_characterisation: required" config(c -> delete!(c["decode"], "sensor_characterisation"))
+    @test_throws "[decode] sensor_characterisation" config(c -> c["registration"]["sensor_characterisation"] = "another_record.json")
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test TOML.parsefile(joinpath(dir, f))["decode"]["cache"] isa Bool                      # the decode cache, opt-in, stated
         @test TOML.parsefile(joinpath(dir, f))["decode"]["sensor_characterisation"] isa String   # the frames' sensor record, stated (no default)
+        @test TOML.parsefile(joinpath(dir, f))["registration"]["sensor_characterisation"] isa String   # the detector's, stated too
         @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test PanoramaStitching.refuse_retired_registration(TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test TOML.parsefile(joinpath(dir, f))["registration"]["near_duplicate_overlap"] == 0.90   # the owner's value, stated
@@ -510,15 +520,15 @@ end
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     call(f, args...; kw...) = Base.invokelatest(getfield(m, f), args...; kw...)
-    # the detector's settings: "vst" reads the noise keys, "tone" refuses them (never read)
+    # the detector's settings: its sensor record always (no default), "vst" its threshold, which "tone" refuses (never read)
     det(r) = call(:detector_settings, Dict{String, Any}(r))
-    @test det(Dict("selection" => "spread", "detection_image" => "tone")) ==
-          (; selection = :spread, detection_image = :tone, noise_sigmas = nothing, characterisation = nothing)
+    @test det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_characterisation" => "none")) ==
+          (; selection = :spread, detection_image = :tone, noise_sigmas = nothing, characterisation = "none")
     v = det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3, "sensor_characterisation" => "none"))
     @test v == (; selection = :spread, detection_image = :vst, noise_sigmas = 3.0, characterisation = "none")
-    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3))
-    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_characterisation" => "none"))
-    @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst"))
+    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3, "sensor_characterisation" => "none"))
+    @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3))
+    @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "tone"))
 end
 
 # The uncertain path end to end (owner ruling D10): the frames as RAW mosaics decoded by Core's LinearRaw under a sensor model
