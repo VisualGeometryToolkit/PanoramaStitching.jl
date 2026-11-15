@@ -1,3 +1,24 @@
+docs-pass: 9a82644
+landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.8.4 docs review (the docs skill), at 9a82644
+
+On 0.8.3 (efe6ffc, released): Core 0.10.10's valid domain of a lens that is not radially symmetric is a `PolygonRegion`.
+[x] API diff since 0.8.3: no exported or public name added, removed or re-signatured (src/PanoramaStitching.jl unchanged).
+    Internal only: `_CameraVariable.domain` holds a `PolygonRegion` too (6373160, comment 2ffc262); `_in_frame` deleted,
+    `detect_features` masks through Core's `pixel_mask(region, frame_map, width, height)` (1243042).
+[x] Docstrings: `detect_features`, `sample_frames`, `frame_region`, `render_panorama`, `fit_vignetting` and the bundles
+    name the imaged region and the valid domain without their types: unchanged. The suite's docs item (undocumented public,
+    signature drift, detached docstrings) runs in the release gate.
+[x] Guide (docs/src/guide.md:52), landing page, README and the example's README: they name the valid domain, never its
+    type, and no lens they show is decentred: unchanged.
+[x] CHANGELOG: 0.8.4 (Fixed: the camera variable's domain, detect_features' mask; the floors); 0.8.3's heading as released.
+[x] Floors: Core 0.10.10, Estimation 0.11.7 (General's latest) in every Project.toml that names them; Features 0.9.6, IO
+    0.10.3 already General's latest; the example's Eval 0.9.1 (General's latest).
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
+
 docs-pass: d508b31
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
