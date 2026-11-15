@@ -22,7 +22,7 @@
 
 ### New: the model-free vignetting of a sweep, the pair equation (src/pair_vignetting.jl)
 
-- `pair_correspondences(camera, frames, rotations, directions; saturated, saturation_margin_px, …, plane, field_angle, edges, tmax, symmetric = true)`: the frames
+- `ring_correspondences(camera, frames, rotations, directions; saturated, saturation_margin_px, …, plane, field_angle, edges, tmax, symmetric = true)`: the frames
   sampled at directions (`sample_frames`), each seen direction's sensor point on its ring of a caller's field angle, every pair of
   frames that see a direction in two different rings one correspondence (`PairCorrespondences`). `symmetric = true` drops a
   direction any frame sees saturated from every frame (masking only the clipped frame biases the rim's pairs low). The masks

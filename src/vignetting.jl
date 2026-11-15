@@ -439,7 +439,7 @@ end
 # Whether a scene DIRECTION `d` (world) is saturated in any frame whose rows see it: for every frame j whose domain (`sees`: its
 # fit region and field angle) holds d, j's dilated mask at the frame pixel d lands on (the camera's projection of R_jᵀ·d,
 # through the frames' map's inverse). `masks` the frames' dilated masks, Hf × Wf × K (`_dilated_saturation`). The one test of
-# the symmetric mask: `fit_vignetting`'s rows and `pair_correspondences`' directions read it.
+# the symmetric mask: `fit_vignetting`'s rows and `ring_correspondences`' directions read it.
 struct _SaturatedInAnyFrame{C, S, M, R, D}
     camera::C
     sees::S
@@ -511,7 +511,7 @@ function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays
 end
 
 # The world directions saturated in some frame whose domain sees them (`_SaturatedInAnyFrame` on the dilated masks): the
-# symmetric mask of `pair_correspondences`' sampled directions, one Bool per direction on the frames' backend.
+# symmetric mask of `ring_correspondences`' sampled directions, one Bool per direction on the frames' backend.
 function _saturated_directions(saturated, camera, sees, frame_map, rotations, directions, margin::Float64, be)
     masks = _dilated_saturation(saturated, margin, frame_map, be)
     any_frame = _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(SMatrix{3, 3, Float64, 9}.(rotations)), masks)
