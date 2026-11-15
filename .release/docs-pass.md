@@ -1,7 +1,7 @@
-docs-pass: 07c1ae9
+docs-pass: d508b31
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
-# 0.8.3 docs pass (julia-docs-pass), at 07c1ae9 (re-run; supersedes the 0.9.0 pass at 1b3f6ac: the version is 0.8.3)
+# 0.8.3 docs pass (julia-docs-pass), at 07c1ae9, re-recorded at d508b31 (its only change since: the stage check's config; supersedes the 0.9.0 pass at 1b3f6ac: the version is 0.8.3)
 
 On 0.8.2 (0d6dfcb, released): ps-sensor-model's 4f96116 (the example's frames decoded under their sensor record), the example's
 port to VisualGeometryToolkitEval 0.9 (keyed products) and its required `[registration] sensor_characterisation`.
