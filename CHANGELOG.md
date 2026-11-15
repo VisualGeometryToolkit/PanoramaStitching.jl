@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### New: the model-free vignetting of a sweep, the pair equation (src/pair_vignetting.jl)
+
+- `pair_correspondences(camera, frames, rotations, directions; …, plane, field_angle, edges, tmax, symmetric = true)`: the frames
+  sampled at directions (`sample_frames`), each seen direction's sensor point on its ring of a caller's field angle, every pair of
+  frames that see a direction in two different rings one correspondence (`PairCorrespondences`). `symmetric = true` drops a
+  direction any frame sees saturated from every frame (masking only the clipped frame biases the rim's pairs low). The sampling
+  and the per-frame-pair selection run on the frames' backend.
+- `ring_pair_vignetting(pc; offset, frame_weights)`: per ring pair the weighted median of `ln(I_k − c) − ln(I_l − c)`, then the
+  least squares of `ln V_a − ln V_b` over the ring pairs with `ln V₁ = 0` (the gauge eliminated): ln V per ring, no spline and no
+  scene model (a `FitResult`, `(Success, ClosedForm)`; `PairVignettingMetadata`). `frame_weights` takes a bootstrap's
+  multiplicities.
+- `fit_additive_level(pc; bounds, tolerance)`: the frames' additive level `c` (`I = L·V + c`) as the root of
+  `additive_level_slope` — the pooled within-ring-pair slope of the log ratio on the scene's brightness, zero at the true level —
+  by bisection.
+
 ## 0.8.3 (unreleased)
 
 No source file under src/ changed and the package's API is 0.8.2's (a patch: the compat floors raised to the gated stack, Core

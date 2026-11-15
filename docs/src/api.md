@@ -61,3 +61,14 @@ PanoramaStitching.OBSERVATION_NOISES
 score_seams
 vignetting_summary
 ```
+
+## The model-free vignetting: the pair equation
+
+```@docs
+pair_correspondences
+PairCorrespondences
+ring_pair_vignetting
+PairVignettingMetadata
+fit_additive_level
+additive_level_slope
+```

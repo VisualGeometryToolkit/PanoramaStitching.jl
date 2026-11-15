@@ -53,6 +53,7 @@ export true_up, up_frame, sweep_up, PanoramaView, panorama_view, render_panorama
 export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, PositionNoise
 export IntensityGains, ChannelGains
 export score_seams, vignetting_summary
+export PairCorrespondences, pair_correspondences, ring_pair_vignetting, fit_additive_level, additive_level_slope, PairVignettingMetadata
 public detect_features, pair_bearings, frame_region, CUBE_FACES, GAIN_CORRECTIONS, OBSERVATION_NOISES, refuse_retired_registration
 
 include("tracks.jl")
@@ -63,6 +64,7 @@ include("registration.jl")
 include("panorama.jl")
 include("vignetting.jl")
 include("seams.jl")
+include("pair_vignetting.jl")
 include("precompile.jl")             # the precompile workload: the entry points' native code, cached in the package image
 
 end # module PanoramaStitching
