@@ -25,7 +25,7 @@
 """
     PairCorrespondences
 
-The correspondences of a sweep on rings of a field angle ([`pair_correspondences`](@ref)): per correspondence the frames
+The correspondences of a sweep on rings of a field angle ([`ring_correspondences`](@ref)): per correspondence the frames
 `frames[:, i] = (k, l)`, the rings `rings[:, i] = (a, b)` (a < b; frame `k` sees the direction in ring `a`), the values
 `values[:, i] = (I_k, I_l)` of the plane read, the field angles `angles[:, i] = (θ_k, θ_l)` (degrees), and the ring edges
 `edges` (degrees) with the field-angle cut `tmax`; `n_frames`
@@ -70,7 +70,7 @@ Adapt.adapt_structure(to, r::_AngleAt) = _AngleAt(Adapt.adapt(to, r.field_angle)
 @inline (r::_AngleAt)(ok, u) = ok ? Float64(r.field_angle(u)) : NaN
 
 """
-    pair_correspondences(camera::BoundedCamera, frames, rotations, directions; saturated, saturation_margin_px, frame_map, rim_margin_px, fov_deg,
+    ring_correspondences(camera::BoundedCamera, frames, rotations, directions; saturated, saturation_margin_px, frame_map, rim_margin_px, fov_deg,
                          plane, field_angle, edges, tmax = last(edges), symmetric = true,
                          plane_maps = ntuple(_ -> frame_map, 3)) -> PairCorrespondences
 
@@ -82,14 +82,14 @@ pair of frames that see a direction in two different rings one correspondence. E
 direction any frame whose domain sees it has saturated there is dropped from every frame (`fit_vignetting`'s one symmetric
 test); `false`: from that frame alone, as `sample_frames` masks. The sampling and the per-frame-pair selection run on the frames' backend.
 """
-function pair_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
+function ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
                               directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, saturation_margin_px::Real,
                               frame_map, rim_margin_px::Real,
                               fov_deg::Real, plane::Integer, field_angle, edges::AbstractVector{<:Real}, tmax::Real = last(edges),
                               symmetric::Bool = true, plane_maps = ntuple(_ -> frame_map, 3))
-    1 <= plane <= 3 || throw(ArgumentError("pair_correspondences: plane must be 1, 2 or 3, got $plane"))
+    1 <= plane <= 3 || throw(ArgumentError("ring_correspondences: plane must be 1, 2 or 3, got $plane"))
     length(edges) >= 3 && issorted(edges) && allunique(edges) ||
-        throw(ArgumentError("pair_correspondences: edges must be increasing with at least two rings, got $edges"))
+        throw(ArgumentError("ring_correspondences: edges must be increasing with at least two rings, got $edges"))
     K = length(frames)
     kw = (; frame_map, rim_margin_px, fov_deg, vignetting = (u, f) -> 1.0, plane_maps)
     # the masks dilated by `saturation_margin_px` (fit_vignetting's one helper, `_dilated_saturation`)

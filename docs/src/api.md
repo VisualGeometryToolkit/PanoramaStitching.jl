@@ -65,7 +65,7 @@ vignetting_summary
 ## The model-free vignetting: the pair equation
 
 ```@docs
-pair_correspondences
+ring_correspondences
 PairCorrespondences
 ring_pair_vignetting
 PairVignettingMetadata
