@@ -551,7 +551,8 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
     gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
     return fit_vignetting(m, lens, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
                           saturated = dev.saturated, frame_map = dev.frame_map,
-                          rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_maps = dev.plane_maps,
+                          rim_margin_px = d["rim_margin_px"], saturation_margin_px = d["saturation_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"],
+                          plane_maps = dev.plane_maps,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
                           observation_noise = fit_observation_noise(v, point_scale_px))

@@ -16,7 +16,7 @@
     q = vignetting_sequence(falloff; gains = G)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     r = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(),
-                       saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+                       saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, plane = 2,
                        chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6,
                        solver = SparseCholesky(), observation_noise = nothing)
     # the rotations as the panorama's trajectory: camera → world (d = R_k·f_k), zero translations, each frame's image

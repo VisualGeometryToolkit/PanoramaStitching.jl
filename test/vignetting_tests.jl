@@ -5,7 +5,7 @@
 # compensation, the same solve), and the seam score of the true V is far below that of no correction.
 
 @testsetup module VignettingSequence
-using LinearAlgebra: I, normalize
+using LinearAlgebra: I, normalize, dot
 using StaticArrays: SVector, SMatrix, SA
 using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, backproject, exp_so3, Circle, Point2, BoundedCamera, Size2,
     Uncertain, CovMat
@@ -18,14 +18,19 @@ relative_frames(frames, σ_rel) = [map(x -> Uncertain(Float64(x), CovMat{1}(σ =
 scene(d) = 0.05 * exp(0.6 * sin(3d[1] + 2d[2]) * cos(2d[3]) + 0.3 * sin(9d[1] - 7d[3] + 5d[2]))
 
 # `gains`: the frames' exposure gains, one per frame g_k or one per frame and colour plane g_kc (a K × 3 matrix): I_kc = g_kc·t_c·L·V,
-# t = (0.8, 1, 1.3) the scene's colour (all 1 by default)
-function vignetting_sequence(logV; gains = ones(6))
+# t = (0.8, 1, 1.3) the scene's colour (all 1 by default). `spikes`: bright scene points (directions) added to L, each a Gaussian of
+# angular σ `width_deg` and peak `amp`; `white`: the sensor's clip level, every value at or above it clipped there and its pixel
+# `saturated` (no clip by default).
+function vignetting_sequence(logV; gains = ones(6), spikes = SVector{3, Float64}[], amp = 0.0, width_deg = 1.0, white = Inf)
     G = gains isa AbstractMatrix ? gains : repeat(gains, 1, 3); tint = (0.8, 1.0, 1.3)
     W = H = 800; s = 2; Wf, Hf = W ÷ s, H ÷ s
     model = CameraModel(260.0px, SA[400.0px, 400.0px]; lens = KannalaBrandt(-0.02))
     circle = Circle(Point2(400.0, 400.0), 390.0)
     angles = [(0.0, 0.0), (30.0, 0.0), (60.0, 0.0), (15.0, 25.0), (45.0, 25.0), (30.0, -20.0)]   # (yaw, pitch) degrees
     R = [SMatrix{3, 3}(exp_so3(SVector(0.0, deg2rad(y), 0.0))) * SMatrix{3, 3}(exp_so3(SVector(deg2rad(p), 0.0, 0.0))) for (y, p) in angles]
+    σ = deg2rad(width_deg)
+    L(d) = scene(d) + amp * sum((exp(-acos(clamp(dot(d, a), -1.0, 1.0))^2 / (2σ^2)) for a in spikes); init = 0.0)
+    saturated = [falses(Hf, Wf) for _ in R]
     frames = map(enumerate(R)) do (k, Rk)
         img = zeros(Float32, Hf, Wf, 3)
         for j in 1:Wf, i in 1:Hf
@@ -33,13 +38,15 @@ function vignetting_sequence(logV; gains = ones(6))
             hypot(u[1] - 400.0, u[2] - 400.0) < 390.0 || continue
             f = backproject(model, u)
             for c in 1:3
-                img[i, j, c] = Float32(G[k, c] * tint[c] * scene(Rk * f) * exp(logV(u)))
+                I = G[k, c] * tint[c] * L(Rk * f) * exp(logV(u))
+                I >= white && (saturated[k][i, j] = true)
+                img[i, j, c] = Float32(min(I, white))
             end
         end
         img
     end
     camera = BoundedCamera(model, Size2(W, H); lens_coverage = circle)                 # the sensor lit inside the image circle
-    return (; frames, camera, R, saturated = [falses(Hf, Wf) for _ in R])
+    return (; frames, camera, R, saturated)
 end
 end
 
@@ -60,7 +67,7 @@ end
         r = exp.(a .- b) .- 1
         return maximum(abs, r), sqrt(mean(abs2, r))
     end
-    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, observation_noise = nothing,
+    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, observation_noise = nothing,
           plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
           vignetting_penalty_weight = 1.0e-6, gain_correction = nothing)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
@@ -139,7 +146,7 @@ end
         radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
         q = vignetting_sequence(radial)
         v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-        kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, observation_noise = nothing,
+        kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, observation_noise = nothing,
               plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
               vignetting_penalty_weight = 1.0e-6, gain_correction = ChannelGains(), free_directions = pole_regular_basis(v0),
               solver = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000))
@@ -194,7 +201,7 @@ end
     g = [1.0, 1.12, 0.9, 1.2, 0.95, 1.07]
     q = vignetting_sequence(radial; gains = g)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
-    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
+    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6)
     cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
     function v_error(v)
@@ -310,7 +317,7 @@ end
     q = vignetting_sequence(radial; gains = G)
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     truth(u, f) = exp(radial(u))                                     # a V given as any callable
-    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
+    kw = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
           chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky())
     function v_error(v)
         us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
@@ -552,7 +559,7 @@ end
     @test vals == plain[1] && vars ≈ (0.01 .* plain[1]) .^ 2
     v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
     kw = (; free_directions = pole_regular_basis(v0), gain_correction = nothing, saturated = [L.saturated for L in Ls], frame_map = FRAME_MAP,
-          rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
+          rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
           vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky(), observation_noise = nothing)
     u = fit_vignetting(v0, q.camera, [L.image for L in Ls], q.R; kw...)
     p = fit_vignetting(v0, q.camera, plain, q.R; kw...)
@@ -560,4 +567,56 @@ end
     us = filter(x -> hypot(x[1] - 400, x[2] - 400) < 380, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
     err(r) = (a = [log(VgtkCore.estimate(r)(x)) for x in us]; b = radial.(us); maximum(abs, (a .- mean(a)) .- (b .- mean(b))))
     @test err(u) < 5.0e-3 && err(p) < 5.0e-3                               # 14-bit codes: the quantization, not the weights
+end
+
+# PanoramaStitching 0.8.4 (T. Harder's analysis, 2026-11-15): the saturation masks are SYMMETRIC over the frames. Bright scene points
+# (σ 0.3°, under the scene's 1° chart, so its spline cannot follow them) clip where V is high — near each frame's centre — and stay
+# below white where V dims them. With each frame's own mask alone (PanoramaStitching ≤ 0.8.3) the rows that remain see the points
+# only towards the rim, the scene's misfit there pulls V up and V comes out too flat: on this sweep 1.9–3.7 % high at the rings
+# (measured 2026-11-15 on 0.8.3). Dropped from every frame where any frame whose domain sees the direction is saturated (masks
+# dilated by 2 camera px = 1 frame px, the nearest-pixel lookup's own quantization), V is recovered to 0.05 %.
+@testitem "fit_vignetting: the saturation masks are symmetric over the frames (a bright point clipped near the centre only)" setup = [VignettingSequence, BayerMaps] begin
+    using Test, Statistics, StaticArrays, CUDA
+    using PanoramaStitching: fit_vignetting, SparseCholesky
+    import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points, control_points
+    c = SVector(430.0, 390.0)
+    radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
+    plain = vignetting_sequence(radial)
+    spikes = [R * SVector(0.0, 0.0, 1.0) for R in plain.R]                  # a bright point on every frame's axis
+    q = vignetting_sequence(radial; spikes, amp = 5.0, width_deg = 0.3, white = 1.0)
+    # each point is imaged at 0°, ~25° and 60° off the frames' axes (r ≈ 0, 110 and 270 px); its clipped core, where
+    # 5·t_c·V·exp(−θ²/2σ²) ≥ 1, shrinks as V dims it, so a frame where V is high drops more of it than one where V is low
+    @test sum(count, q.saturated) > 100
+    v0 = LogVignetting(with_control_points(RadialVignetting(12, c, 420.0), zeros(12)))
+    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, observation_noise = nothing, plane = 2, chart_spacing_deg = 1.0,
+          penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, gain_correction = nothing, solver = SparseCholesky(),
+          free_directions = pole_regular_basis(v0))
+    # V's error at rings about its centre, both in the gauge V = 1 at the centre: > 0 is too flat
+    function ring_error(v)
+        radii = 0.0:40.0:360.0
+        lv = [log(v(c + SVector(r, 0.0))) for r in radii]; lt = [radial(c + SVector(r, 0.0)) for r in radii]
+        return exp.((lv .- lv[1]) .- (lt .- lt[1])) .- 1
+    end
+    r = fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, saturation_margin_px = 2.0, kw...)
+    e = ring_error(VgtkCore.estimate(r))
+    @info "fit_vignetting symmetric saturation: ring errors $(round.(e; digits = 5)), $(r.n) rows, $(r.metadata.seconds.saturation) s"
+    @test VgtkCore.converged(r) && maximum(abs, e) < 1.0e-3
+    # no margin: the nearest-pixel lookup misses the clipped points' edges, and part of the bias stays
+    e0 = ring_error(VgtkCore.estimate(fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, saturation_margin_px = 0.0, kw...)))
+    @test maximum(e0) > 5.0e-3
+    # the rows dropped: more than the frames' own saturated pixels (each point's direction from every frame that sees it)
+    rp = fit_vignetting(v0, plain.camera, plain.frames, plain.R; saturated = plain.saturated, saturation_margin_px = 2.0, kw...)
+    @test rp.n - r.n > 2 * sum(count, q.saturated)
+    @test maximum(abs, ring_error(VgtkCore.estimate(rp))) < 1.0e-4                 # nothing saturated: V as before
+    @test_throws ArgumentError fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, saturation_margin_px = -1.0, kw...)
+    @test_throws ArgumentError fit_vignetting(v0, q.camera, q.frames, q.R; saturated = q.saturated, saturation_margin_px = NaN, kw...)
+    # the device: the same masks, the same V
+    if CUDA.functional()
+        d = fit_vignetting(v0, q.camera, CuArray.(q.frames), q.R; saturated = CuArray.(q.saturated), saturation_margin_px = 2.0, kw...)
+        @test d.n == r.n
+        @test maximum(abs.(control_points(VgtkCore.estimate(d)) .- control_points(VgtkCore.estimate(r)))) < 1.0e-6
+    else
+        @test_skip "no CUDA device"
+    end
 end
