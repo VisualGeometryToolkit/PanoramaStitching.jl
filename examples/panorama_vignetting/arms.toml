@@ -10,10 +10,10 @@
 # An arm's name is its own label: selfcal (V fitted) or given_v (V held at the V of record); no_gain, shared_gain (one gain per
 # frame, shared by the planes) or plane_gain (one per frame and colour plane); value (noise in the value) or value_point (in the value and the sensor
 # point).
-# A run is keyed by this file's content, the set's config and its registration record: results under
-# <set output>/arms/<key>/ (results.json, results.md), reused when the key matches.
+# Per set, an Eval product keyed by this file's content, the set's config, the drivers and the code, and the registration's output:
+# <results>/panorama_vignetting/<name>/arms/<key>/ (results.json, results.md), reused while it is produced.
 
-output = "arms"                                    # under each set's output folder
+output = "arms"                                    # the product's name, under each set's results folder
 sets = ["config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml"]
 kind = "radial"                                    # the V model of every arm (the configs of record's)
 fixed_from = "selfcal_shared_gain_value"              # the V of record: the fit with the record's settings (one gain per frame, I²)

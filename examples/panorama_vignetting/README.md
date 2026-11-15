@@ -79,7 +79,7 @@ Under `$VGTK_DATA_ROOT`:
    the frames as before). The fit's panorama record and the summary state the record's SHA-256 (`sensor_characterisation_sha256`), so
    a consumer comparing a camera calibrated under a record can check that the frames were decoded under the same one. With `[decode] cache = true`
    (opt-in; the configs of record set it) each RAW is decoded once and cached (below); with `false` every run decodes.
-2. **Register** (`verified_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
+2. **Register** (`produce_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
    pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (`find_rotation`, the
    Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), cached in
@@ -92,7 +92,7 @@ Under `$VGTK_DATA_ROOT`:
    the rotations and track directions. `near_duplicate_deg` and `overlap_deg` (PanoramaStitching 0.7's optical-axis angles)
    are refused by name when a config is read. A grid lens is read
    as a `SplineLens` camera and projects through its forward spline, fitted over its imaged region. The rotations are
-   cached in the registration record (`registration_<key>.jld2`), keyed by the registration settings, the inputs and the RAW files' hashes, with the bundle's
+   kept in the registration's product (`registration/<key>/registration.jld2`), keyed by the registration settings, the inputs, the RAW files' and the lens's content and the verified pairs' output, with the bundle's
    outcome (`converged`, `not_run` or another retcode) and its count of observations dropped at its start (a start prediction
    off the camera model's valid domain: such an observation is left out, the rest solved); `summary.md` states it.
 3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the camera's
@@ -162,6 +162,7 @@ the warm fit time. A produced comparison is reused. The configs of record keep t
 | file | content |
 |---|---|
 | `decoded/linear_raws.jld2` | with `[decode] cache = true`: the decoded frames, VisualGeometryToolkitFeatures' decode cache (`load_raw(path; cache)`, a `FileCache`), one `LinearRaw` per RAW content, decode settings and noise (Features keys it by the noise's digest) — a derived cache, regenerable from the RAW files |
+| `stages.log` | the last run's log of the decode and the stages (on disk as they run; copied into the run's `run.log`) |
 | `verified_pairs/<key>/verified_pairs.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): an Eval `Product`, keyed by the matching and verification settings, LoMa's provider, the inputs, the decode settings, the content of the RAW files, of the decode's sensor record and of the lens, and the code trees |
 | `registration/<key>/registration.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting and by the verified pairs' output (their content hash: pairs produced again with other outputs are registered again) |
 | `run/<key>/` | the run's outputs below, keyed by the whole config, `run.jl` and the registration's output, with the product's records (`_config.toml`, the config of record; `_provenance.toml`, the key, the driver, the inputs read, the outputs' content hash) |

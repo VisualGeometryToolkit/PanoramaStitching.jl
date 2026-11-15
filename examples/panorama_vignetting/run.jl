@@ -142,7 +142,9 @@ function decoded_frames(C; masks::Bool, log = devnull)
     dir = joinpath(C.out, "decoded"); mkpath(dir)
     raw_dir = input_path(C.cfg["inputs"]["raw_dir"])
     raws = sort([f for f in readdir(raw_dir) if endswith(f, C.cfg["inputs"]["raw_extension"])])
-    models = sensor_models(char, Dict(k => VgtkFeatures.load_raw_metadata(joinpath(raw_dir, f)) for (k, f) in enumerate(raws)))
+    models = sensor_models(char, length(raws)) do
+        Dict(k => VgtkFeatures.load_raw_metadata(joinpath(raw_dir, f)) for (k, f) in enumerate(raws))
+    end
     sha = sensor_record_sha256(char)
     decode(k, cache) = (f = raws[k];
                         lin = VgtkFeatures.load_raw(joinpath(raw_dir, f); mode = Symbol(mode), gain, sensor_model = models[k], decoder = VgtkFeatures.LibRawDecoder(), cache);
@@ -165,11 +167,13 @@ end
 
 # The frames' sensor models: per frame VisualGeometryToolkitCore's `sensor_model` (the ONE resolver, a lookup) of the body's
 # characterisation `char` (IO's `load` of the vgio/sensor_characterisation file under the data root, or "none": the absent model)
-# at the frame's capture settings (Features' `extract_capture_settings` of `sources`, frame index => its RAW metadata or mosaic).
-function sensor_models(char::AbstractString, sources)
-    record = char == "none" ? nothing : VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(char))
-    capture = VgtkFeatures.extract_capture_settings(sources)
-    return [VgtkCore.sensor_model(record, capture, k) for k in 1:length(sources)]
+# at the frame's capture settings (Features' `extract_capture_settings` of `sources()`, frame index => its RAW metadata or mosaic).
+# "none" reads no capture (the absent model needs none, and a set whose EXIF Features cannot read decodes as before).
+function sensor_models(sources, char::AbstractString, n::Integer)
+    char == "none" && return fill(VgtkCore.SensorModel(), n)
+    record = VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(char))
+    capture = VgtkFeatures.extract_capture_settings(sources())
+    return [VgtkCore.sensor_model(record, capture, k) for k in 1:n]
 end
 # A sensor record's content hash (Eval's `file_sha256`, cached in the process), or `nothing` for "none".
 sensor_record_sha256(char::AbstractString) = char == "none" ? nothing : VgtkEval.Experiments.file_sha256(input_path(char))
@@ -357,7 +361,7 @@ end
 function frame_models(C, inp, characterisation::AbstractString)
     dir = input_path(C.cfg["inputs"]["raw_dir"])
     mosaics = Dict(k => VgtkFeatures.load_raw_mosaic(joinpath(dir, n)) for (k, n) in enumerate(inp.names))
-    models = sensor_models(characterisation, mosaics)
+    models = sensor_models(() -> mosaics, characterisation, length(inp.names))
     frames = [VgtkFeatures.load_raw(mosaics[k]; mode = Symbol(C.cfg["decode"]["mode"]), gain = Float64(C.cfg["decode"]["gain"]),
                                     sensor_model = models[k]) for k in eachindex(inp.names)]
     return frames, models
@@ -589,8 +593,11 @@ end
 function run_example(config_path; force = false)
     C = load_config(config_path)
     # the run's directory is its product's, keyed by the config, the code, this driver and the registration's output (Eval's
-    # Merkle chain): known once the registration is produced, so the log is held until then
-    log = IOBuffer()
+    # Merkle chain): known once the registration is produced, so until then the log is the set's stages.log (the decode and the
+    # stages, on disk as they run), copied into the run's run.log
+    mkpath(C.out)
+    stages_log = joinpath(C.out, "stages.log")
+    log = open(stages_log, "w")
     T = Dict{String, Float64}()
     say(log, "panorama_vignetting: $(C.cfg["name"]) ($(C.path))")
     t = time(); inp = decoded_frames(C; masks = true, log); T["decode (or cache)"] = time() - t
@@ -598,17 +605,19 @@ function run_example(config_path; force = false)
     say(log, "frames: $K, $(Wf) × $(Hf) bin2 ($(W) × $(H) camera pixels), saturated quads $(sum(count, inp.saturated))")
     lens = load_lens(C; raw_width = W, raw_height = H)
     reg = registration(C, inp, lens; log)
+    close(log)
     T["registration"] = reg.seconds
     # the run: its fits, seams and renders are this driver's code, so the driver's content keys it (Eval keys a product by the
     # packages' code trees, never a driver's source; the stages above key their records' formats instead)
+    # (Eval's run_key leaves a config's [render] out, as panel knobs; here it sets the seams' up frame and the renders: a part)
     p = VgtkEval.Experiments.Product(C.experiment, "run", C.cfg; output = "summary.md", files = Dict("driver" => @__FILE__),
-                                     upstream = ("registration" => reg.product,), code = C.code)
+                                     parts = Dict("render" => C.cfg["render"]), upstream = ("registration" => reg.product,), code = C.code)
     ran = false
     dir = VgtkEval.Experiments.produce(p; driver = DRIVER, config_source = C.path, force,
                                        inputs = [raw_paths(C, inp); input_path(C.cfg["inputs"]["lens"])]) do dir
         ran = true
         open(joinpath(dir, "run.log"), "w") do io
-            write(io, take!(log))
+            write(io, read(stages_log))
             say(io, "output $dir")
             run_outputs((; C..., run = dir), inp, lens, reg, T, W, H; log = io)
         end
