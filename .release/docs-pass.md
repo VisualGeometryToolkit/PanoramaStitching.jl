@@ -1,5 +1,23 @@
-docs-pass: 3d4629d
+docs-pass: 1b3f6ac
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.9.0 docs pass (julia-docs-pass), at 1b3f6ac
+
+On 0.8.2 (0d6dfcb, released): ps-sensor-model's 4f96116 (the example's frames decoded under their sensor record) and the
+example's port to VisualGeometryToolkitEval 0.9 (keyed products).
+[x] API diff since 0.8.2: no file under src/ changed; no name added, removed or re-signatured. The docstring scans have
+    nothing new to cover.
+[x] Guide: the verified pairs the example keeps are its `verified_pairs/<key>/verified_pairs.jld2` product (was the
+    retired `verified_pairs_<key>.jld2` cache file). Landing page (docs/src/index.md) and the root README name the example
+    only by its folder: unchanged.
+[x] The example's README: the results layout (each step an Eval product, `<product>/<key>/` with its records), what keys
+    each product (settings, code trees, the RAWs', the sensor record's and the lens's content, the upstream outputs, the
+    drivers), reuse and `--force`, `stages.log`, the required `[decode] sensor_characterisation`, `run/<key>` in the
+    compare_makie lines; arms.toml's header; the Maintainers section's stage-cache check.
+[x] CHANGELOG 0.9.0 (Breaking changes, Fixed); 0.8.2's entry dated.
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
 
 # 0.8.2 docs pass (julia-docs-pass), at 3d4629d
 
