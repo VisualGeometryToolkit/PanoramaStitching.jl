@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.9.0 (unreleased)
+## 0.8.3 (unreleased)
 
-No source file under src/ changed and the package's API is 0.8.2's: the release is the panorama_vignetting example's, whose
-configs and results layout break.
+No source file under src/ changed and the package's API is 0.8.2's (a patch: the compat floors raised to the gated stack, Core
+0.10.8, IO 0.10.3, Features 0.9.6, Estimation 0.11.6). The release is the panorama_vignetting example's, whose configs and
+results layout break.
 
-### Breaking changes
+### The example's breaking changes (not the package's API)
 
 - **The example's `[decode] sensor_characterisation` is required** (no default): a vgio/sensor_characterisation file under
   the data root, or `"none"` (the file's black, no defects: the frames as 0.8 decoded them). Each frame is decoded under its
@@ -13,6 +14,11 @@ configs and results layout break.
   joined to the saturation mask); the panorama record's provenance and `summary.md` state the record's SHA-256
   (`sensor_characterisation_sha256`). A config without the key is refused before any file is read. Migrate: add
   `sensor_characterisation = "none"` to `[decode]` (the configs of record do).
+- **The example's `[registration] sensor_characterisation` is required too** (it defaulted to `"none"`, and was refused with
+  `detection_image = "tone"`): the record the detector's frames are decoded under. With `"tone"` the detector reads the
+  decoded frames, so it must be `[decode]`'s record (another is refused, naming it); with `"vst"` the frames are decoded again
+  under it. Both are refused by `load_config` when absent. Migrate: add `sensor_characterisation = "none"` to
+  `[registration]` (the configs of record do).
 - **The example runs on VisualGeometryToolkitEval 0.9** (its environment's compat), whose keyed products replace
   `cached_result` and `keyed_cell_dir`. Each step is an Eval `Product` of the set, in
   `<results>/panorama_vignetting/<name>/<product>/<key>/` with its `_config.toml` and `_provenance.toml`: `verified_pairs/`,
@@ -26,6 +32,16 @@ configs and results layout break.
   `sensor_characterisation` is refused by `load_config`. A product records the code it ran, so a run of record runs on committed code
   (`VGTK_SCRATCH=1` for scratch work), and `VGTK_RESULTS_ROOT` must be set (Eval 0.9 has no default results root outside a
   project with `data/exp_pro`).
+
+### Known (next patch)
+
+- The example: when a sensor record is stated, a frame whose model does not resolve (`sensor_model`'s `OtherBody` or
+  `UnmatchedISO`: another body, or an ISO the record does not hold) is decoded under the absent model, while the panorama
+  record and `summary.md` state the record's SHA-256. It is to be refused, as RadiometricCamera 0.11.1 does.
+- The example's configs of record set `radial_center = "circle_center"`, which needs the camera's lens coverage, an image
+  circle. The 14 mm lens on the data root (`panorama_good/derived/fx3-14mm-kb_fit.cameras-v4.json`) holds none, so its run stops
+  at the fit; the record with its coverage is RadiometricCamera's to publish there. This release's run was checked with that
+  record in its place.
 
 ### Fixed
 

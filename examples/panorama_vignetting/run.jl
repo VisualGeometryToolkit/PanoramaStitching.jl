@@ -84,12 +84,31 @@ function refuse_output(cfg, where)
     return cfg
 end
 
-# The frames' sensor record is stated (no default): `[decode] sensor_characterisation`, a vgio/sensor_characterisation file
-# under the data root or "none" — a config without it is refused when it is read, before any file is.
-function refuse_undeclared_sensor_record(decode, where)
-    haskey(decode, "sensor_characterisation") ||
+# The frames' sensor records are stated (no default): `[decode] sensor_characterisation` (the frames') and `[registration]
+# sensor_characterisation` (the detector's), each a vgio/sensor_characterisation file under the data root or "none" — a config
+# without either is refused when it is read, before any file is.
+function refuse_undeclared_sensor_record(table, where)
+    haskey(table, "sensor_characterisation") ||
         throw(ArgumentError("$where sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects)"))
-    return decode
+    return table
+end
+
+# Every refusal of a config of record when it is read (`load_config`), before any file is: the keys of earlier releases, the
+# inert pair keys, the undeclared sensor records; and with detection_image = "tone" the detector reads the decoded frames, so
+# its record is [decode]'s (with "vst" it decodes the frames again, under its own).
+function refuse_config(cfg, where)
+    refuse_output(cfg, where)
+    refuse_renamed_keys(cfg["vignetting"], "$where [vignetting]")
+    refuse_circle(cfg["inputs"], "$where [inputs]")
+    # the retired [registration] keys: PanoramaStitching's one list, the keywords' (refused by name, never read)
+    PanoramaStitching.refuse_retired_registration(cfg["registration"], "$where [registration]")
+    refuse_inert_pair_keys(cfg["registration"], "$where [registration]")
+    dec = refuse_undeclared_sensor_record(cfg["decode"], "$where [decode]")
+    reg = refuse_undeclared_sensor_record(cfg["registration"], "$where [registration]")
+    reg["detection_image"] == "tone" && reg["sensor_characterisation"] != dec["sensor_characterisation"] &&
+        throw(ArgumentError("$where [registration] sensor_characterisation = $(repr(reg["sensor_characterisation"])): with detection_image = \"tone\" " *
+                            "the detector reads the decoded frames, decoded under [decode] sensor_characterisation = $(repr(dec["sensor_characterisation"])); state that record"))
+    return cfg
 end
 
 # The config of record and where its results go: `experiment` the set's products under the results root
@@ -97,14 +116,7 @@ end
 # cache), `code` the code trees every product is keyed by (Eval's `current_code_trees`: PanoramaStitching's and every stack
 # package's this environment loads; computed once: a `Product` would compute them again each time).
 function load_config(path)
-    cfg = TOML.parsefile(path)
-    refuse_output(cfg, path)
-    refuse_renamed_keys(cfg["vignetting"], "$path [vignetting]")
-    refuse_circle(cfg["inputs"], "$path [inputs]")
-    # the retired [registration] keys: PanoramaStitching's one list, the keywords' (refused by name, never read)
-    PanoramaStitching.refuse_retired_registration(cfg["registration"], "$path [registration]")
-    refuse_inert_pair_keys(cfg["registration"], "$path [registration]")
-    refuse_undeclared_sensor_record(cfg["decode"], "$path [decode]")
+    cfg = refuse_config(TOML.parsefile(path), path)
     experiment = "panorama_vignetting/" * cfg["name"]
     out = joinpath(VgtkEval.Experiments.results_root(), experiment)
     return (; cfg, out, experiment, code = VgtkEval.Experiments.current_code_trees(), path = abspath(path))
@@ -298,7 +310,7 @@ end
 # The body's characterisation keys the pairs by its content (its artifacts' SHA-256s are in it), not its path.
 function pairs_stage_settings(C, inp, provider::Symbol)
     st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg["registration"]), provider)
-    char = get(C.cfg["registration"], "sensor_characterisation", "none")
+    char = C.cfg["registration"]["sensor_characterisation"]
     char == "none" || (st["sensor_characterisation_sha256"] = sensor_record_sha256(char))
     return st
 end
@@ -339,19 +351,21 @@ end
 asift_tilts(t::AbstractString) = Symbol(t)
 asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 
-# The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst") and, with
-# "vst" only, the threshold `noise_sigmas` and `sensor_characterisation`, the body's sensor characterisation (a
-# vgio/sensor_characterisation file under the data root, or "none"; stated either way, never defaulted). The frames' models are
-# VisualGeometryToolkitCore's resolver's (`frame_models`). A noise key with "tone" is refused, never read; the 0.6 constants
+# The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst"),
+# `sensor_characterisation`, the body's sensor characterisation (a vgio/sensor_characterisation file under the data root, or
+# "none"; always stated, never defaulted: with "tone" it is [decode]'s, `refuse_config`) and, with "vst" only, the threshold
+# `noise_sigmas`. With "vst" the frames are decoded again under it, their models VisualGeometryToolkitCore's resolver's
+# (`frame_models`). `noise_sigmas` with "tone" is refused, never read; the 0.6 constants
 # `electrons_per_dn` and `read_noise_dn` are refused by name (PanoramaStitching.refuse_retired_registration).
-const DETECTION_NOISE_KEYS = ("noise_sigmas", "sensor_characterisation")
+const DETECTION_NOISE_KEYS = ("noise_sigmas",)
 function detector_settings(r)
+    characterisation = String(r["sensor_characterisation"])
     if r["detection_image"] == "vst"
-        noise_sigmas = Float64(r["noise_sigmas"]); characterisation = String(r["sensor_characterisation"])
+        noise_sigmas = Float64(r["noise_sigmas"])
     else
         inert = filter(k -> haskey(r, k), DETECTION_NOISE_KEYS)
         isempty(inert) || throw(ArgumentError("[registration] $(join(inert, ", ")): read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
-        noise_sigmas = characterisation = nothing
+        noise_sigmas = nothing
     end
     return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, characterisation)
 end

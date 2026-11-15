@@ -51,7 +51,9 @@ Under `$VGTK_DATA_ROOT`:
 
 - `panorama_good/14mm/*.ARW` and `vignetting/data/sony_fisheye/*.ARW` — the RAW frames, in capture order by name.
 - `vignetting/data/ref_grid.json` — the 8 mm fisheye as a generic grid lens (`vgio/generic_camera/v2`).
-- `panorama_good/derived/fx3-14mm-kb_fit.cameras-v4.json` — the 14 mm lens, a `vgio/cameras/v4` store. It is DERIVED: the
+- `panorama_good/derived/fx3-14mm-kb_fit.cameras-v4.json` — the 14 mm lens, a `vgio/cameras/v4` store. The config's
+  `radial_center = "circle_center"` needs the camera's lens coverage (its image circle) in it; the copy migrated below holds
+  none, so the run stops at the fit until the record with its coverage (RadiometricCamera's) is in its place. It is DERIVED: the
   original, `geometric_accuracy/results/logs/night_stars/fx3-14mm/kb_fit/lens.json`, is a `vgio/cameras/v3` file and is
   never modified. Produce the v4 copy once with VisualGeometryToolkitIO's `vgio_migrate`, which writes a new file, reads it
   back and compares it with the original number for number before it renames it into place:
@@ -80,11 +82,13 @@ Under `$VGTK_DATA_ROOT`:
    a consumer comparing a camera calibrated under a record can check that the frames were decoded under the same one. With `[decode] cache = true`
    (opt-in; the configs of record set it) each RAW is decoded once and cached (below); with `false` every run decodes.
 2. **Register** (`produce_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
-   pixel: Features' detection mask) described by DeDoDe and matched by LoMa,
+   pixel: Features' detection mask; on the decoded frames' tone map, `detection_image = "tone"`, or on the RAW's
+   variance-stabilized green, `"vst"`, decoded again under `[registration] sensor_characterisation`: required, as `[decode]`'s, and
+   with `"tone"` it must be `[decode]`'s record) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (`find_rotation`, the
-   Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), cached in
-   `verified_pairs_<key>.jld2` before anything else runs on them, keyed by the matching and verification settings (every
-   `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files' hashes: changing only the
+   Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), produced as
+   `verified_pairs/<key>/` before anything else runs on them, keyed by the matching and verification settings (every
+   `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files', the sensor records' and the lens's content: changing only the
    averaging or the bundle reuses the pairs, and a failure past them loses none of the hour they take. Then
    `register_rotations` on the pairs: robust rotation averaging over VisualGeometryToolkitEstimation's view graph, tracks
    (a near-duplicate pair, one whose frames share at least `near_duplicate_overlap = 0.90` of the smaller footprint by

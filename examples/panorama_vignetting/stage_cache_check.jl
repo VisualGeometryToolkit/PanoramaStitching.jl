@@ -33,7 +33,7 @@ function stage_cache_check()
     strat(t, l, k, v) = Dict{String, Any}("type" => t, "loss" => l, k => v)
     cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW", "lens" => "lens.json"),
                                      "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false, "sensor_characterisation" => "none"),
-                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1,
+                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1, "sensor_characterisation" => "none",
                                                                                "averaging_optimization_strategy" => strat("irls", "huber", "max_iter", 100),
                                                                                "bundle_optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0)),
                                                              Dict{String, Any}(string(k) => v for (k, v) in kw)))
