@@ -39,9 +39,9 @@ Static = "1.4"
 StaticArrays = "1.9"
 Statistics = "1.11"
 StatsBase = "0.34"
-VisualGeometryToolkitCore = "0.10"
-VisualGeometryToolkitEstimation = "0.11"
-VisualGeometryToolkitFeatures = "0.9"
+VisualGeometryToolkitCore = "0.10.8"
+VisualGeometryToolkitEstimation = "0.11.6"
+VisualGeometryToolkitFeatures = "0.9.6"
 julia = "1.13"
 
 
