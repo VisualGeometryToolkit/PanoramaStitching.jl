@@ -18,11 +18,15 @@ thin-prism terms, a tilt) is a `PolygonRegion`, the star polygon through each az
   that is not star-shaped about its centre (`ArgumentError`), which a wide LM step of the autocalibration can reach; it
   escaped `refine_camera_and_rotations`. That step's residuals are NaN and its cost +Inf, as for any iterate off the valid
   domain, so the LM rejects it. A start camera whose domain is refused is still refused.
+- **The device masks hold a decentred lens's imaged region.** The mask `sample_frames`, `render_panorama` and
+  `fit_vignetting` evaluate in their kernels reached the device with the region as it was on the host, and a
+  `PolygonRegion`'s ring is a host array: the launch failed for device frames. The mask is now moved to the frames' backend
+  with its region (Core 0.10.10's adapt rule for the polygon).
 
 ### Tests
 
 - A decentred lens (Core's Brown–Conrady test lens): the camera variable's polygon domain, its LM update, the refused
-  step, `detect_features`' mask.
+  step, `detect_features`' mask, and `sample_frames` on the device as on the host.
 
 ## 0.8.3
 
