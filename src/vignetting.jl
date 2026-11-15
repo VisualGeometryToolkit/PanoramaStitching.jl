@@ -479,16 +479,16 @@ function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays
     scale = norm(frame_map(SVector(1.0, 0.0)) - frame_map(SVector(0.0, 0.0)))   # camera pixels per frame pixel
     reach = margin / scale
     exec = VgtkCore.OnBackend(be)
-    masks = KA.zeros(be, Bool, Hf, Wf, K)
+    masks = VgtkCore.device_zeros(Bool, be, Hf, Wf, K)
     for k in 1:K
-        Dk = KA.zeros(be, Bool, Hf, Wf)
+        Dk = VgtkCore.device_zeros(Bool, be, Hf, Wf)
         VgtkCore.pointwise!(_WithinReach(saturated[k], reach), Dk, CartesianIndices((Hf, Wf)); exec)
         masks[:, :, k] .= Dk
     end
     rot = Tuple(Rs)
     out = map(1:K) do k
         E = masks[:, :, k]
-        hit = KA.zeros(be, Bool, length(lin))
+        hit = VgtkCore.device_zeros(Bool, be, length(lin))
         VgtkCore.pointwise!(_SaturatedInAnyFrame(camera, sees, inv(frame_map), rot, masks, k), hit, lin, rays; exec)
         view(E, lin) .= hit
         E
