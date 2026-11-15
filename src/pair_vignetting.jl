@@ -27,7 +27,8 @@
 
 The correspondences of a sweep on rings of a field angle ([`pair_correspondences`](@ref)): per correspondence the frames
 `frames[:, i] = (k, l)`, the rings `rings[:, i] = (a, b)` (a < b; frame `k` sees the direction in ring `a`), the values
-`values[:, i] = (I_k, I_l)` of the plane read, and the ring edges `edges` (degrees) with the field-angle cut `tmax`; `n_frames`
+`values[:, i] = (I_k, I_l)` of the plane read, the field angles `angles[:, i] = (θ_k, θ_l)` (degrees), and the ring edges
+`edges` (degrees) with the field-angle cut `tmax`; `n_frames`
 the frames of the sweep, `n_directions` the directions sampled and `n_dropped` those dropped as saturated in some frame.
 Host arrays.
 """
@@ -37,6 +38,7 @@ struct PairCorrespondences
     frames::Matrix{Int32}
     rings::Matrix{Int32}
     values::Matrix{Float64}
+    angles::Matrix{Float64}
     n_frames::Int
     n_directions::Int
     n_dropped::Int
@@ -60,6 +62,12 @@ struct _RingAt{F, E, T}
 end
 Adapt.adapt_structure(to, r::_RingAt) = _RingAt(Adapt.adapt(to, r.field_angle), r.edges, r.tmax)
 @inline (r::_RingAt)(ok, u) = ok ? _ring_of(r.field_angle(u), r.edges, r.tmax) : Int32(0)
+# the field angle of a seen sensor point, NaN where unseen
+struct _AngleAt{F}
+    field_angle::F
+end
+Adapt.adapt_structure(to, r::_AngleAt) = _AngleAt(Adapt.adapt(to, r.field_angle))
+@inline (r::_AngleAt)(ok, u) = ok ? Float64(r.field_angle(u)) : NaN
 
 """
     pair_correspondences(camera::BoundedCamera, frames, rotations, directions; saturated, frame_map, rim_margin_px, fov_deg,
@@ -94,8 +102,10 @@ function pair_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
     end
     ring = similar(seen, Int32)
     ring .= _RingAt(field_angle, Tuple(Float64.(edges)), Float64(tmax)).(seen, s.pixels)
+    ang = similar(seen, Float64)
+    ang .= _AngleAt(field_angle).(seen, s.pixels)
     V = view(s.values, :, :, plane)
-    F = Int32[]; A = Int32[]; B = Int32[]; Ia = Float64[]; Ib = Float64[]; Ka = Int32[]; Kb = Int32[]
+    A = Int32[]; B = Int32[]; Ia = Float64[]; Ib = Float64[]; Ta = Float64[]; Tb = Float64[]; Ka = Int32[]; Kb = Int32[]
     for k in 1:K, l in (k + 1):K                                           # one broadcast per frame pair on the backend
         rk = view(ring, :, k); rl = view(ring, :, l)
         keep = findall((rk .> 0) .& (rl .> 0) .& (rk .!= rl))
@@ -104,10 +114,12 @@ function pair_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
         lo = a .< b                                                        # orient every correspondence a < b
         append!(A, ifelse.(lo, a, b)); append!(B, ifelse.(lo, b, a))
         append!(Ia, ifelse.(lo, va, vb)); append!(Ib, ifelse.(lo, vb, va))
+        ta = Array(view(ang, :, k)[keep]); tb = Array(view(ang, :, l)[keep])
+        append!(Ta, ifelse.(lo, ta, tb)); append!(Tb, ifelse.(lo, tb, ta))
         append!(Ka, ifelse.(lo, Int32(k), Int32(l))); append!(Kb, ifelse.(lo, Int32(l), Int32(k)))
     end
     return PairCorrespondences(Float64.(edges), Float64(tmax), permutedims(hcat(Ka, Kb)), permutedims(hcat(A, B)),
-                               permutedims(hcat(Ia, Ib)), K, length(directions), n_dropped)
+                               permutedims(hcat(Ia, Ib)), permutedims(hcat(Ta, Tb)), K, length(directions), n_dropped)
 end
 
 """
@@ -228,18 +240,29 @@ end
     additive_level_slope(pc::PairCorrespondences, c; frame_weights = ones(pc.n_frames)) -> Float64
 
 The dependence of the pair equation on the scene's brightness at the level `c`: the pooled within-ring-pair least-squares slope of
-`y = ln(I_k − c) − ln(I_l − c)` on `ln(I_k − c) + ln(I_l − c)`, each ring pair centred on its own median of `y` and mean of the
-brightness, the correspondences past 5 robust deviations of their pair's median left out. Zero at the true level (the log
-ratio then is `ln V_a − ln V_b`, whatever `L`); positive below it (a residual level lifts the dark directions' ratio toward 0)
-and negative above it.
+the residual `e = ln(I_k − c) − ln(I_l − c) − (v(θ_k) − v(θ_l))` on the brightness `ln(I_k − c) − v(θ_k) + ln(I_l − c) − v(θ_l)`
+(`v` the [`ring_pair_vignetting`](@ref) solution at `c`, linear in the field angle between the ring centres and held beyond: the
+vignetting's variation inside a ring taken out of both, so neither carries it), each ring pair centred on its own median of `e`
+and mean of the brightness, the correspondences past 5 robust deviations of their pair's median left out. Zero at the true
+level (the log ratio then is the vignetting's, whatever `L`); positive below it (a residual level lifts the dark directions'
+ratio toward 0) and negative above it.
 """
 function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
     R = length(pc.edges) - 1
-    y, w = _pair_rows(pc, c, Float64.(frame_weights))
+    fw = Float64.(frame_weights)
+    x = VgtkCore.estimate(ring_pair_vignetting(pc; offset = c, frame_weights = fw))
+    mids = (pc.edges[1:(end - 1)] .+ pc.edges[2:end]) ./ 2
+    ok = isfinite.(x); xm = mids[ok]; xv = x[ok]
+    length(xv) >= 2 || return NaN
+    v(θ) = θ <= xm[1] ? xv[1] : θ >= xm[end] ? xv[end] :
+           (j = searchsortedlast(xm, θ); xv[j] + (xv[j + 1] - xv[j]) * (θ - xm[j]) / (xm[j + 1] - xm[j]))
+    y, w = _pair_rows(pc, c, fw)
     I1 = view(pc.values, 1, :) .- c; I2 = view(pc.values, 2, :) .- c
-    b = ifelse.(w .> 0, log.(max.(I1, floatmin())) .+ log.(max.(I2, floatmin())), 0.0)
+    va = v.(view(pc.angles, 1, :)); vb = v.(view(pc.angles, 2, :))
+    e0 = y .- (va .- vb)
+    b = ifelse.(w .> 0, log.(max.(I1, floatmin())) .- va .+ log.(max.(I2, floatmin())) .- vb, 0.0)
     g = (Int.(view(pc.rings, 1, :)) .- 1) .* R .+ Int.(view(pc.rings, 2, :))
-    p = sortperm(collect(zip(g, y)))
+    p = sortperm(collect(zip(g, e0)))
     num = 0.0; den = 0.0; lo = 1
     while lo <= length(p)
         hi = lo
@@ -248,9 +271,9 @@ function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::A
         end
         idx = view(p, lo:hi); lo = hi + 1
         ws = view(w, idx); sum(ws) > 0 || continue
-        ys = view(y, idx); m = _sorted_weighted_median(ys, ws)
-        e = ys .- m; ae = abs.(e); q = sortperm(ae); s = _sorted_weighted_median(ae[q], ws[q])
-        keep = (ws .> 0) .& (ae .<= 5 * 1.4826 * s)
+        es = view(e0, idx); m = _sorted_weighted_median(es, ws)
+        e = es .- m; ae = abs.(e); q = sortperm(ae); sc = _sorted_weighted_median(ae[q], ws[q])
+        keep = (ws .> 0) .& (ae .<= 5 * 1.4826 * sc)
         wk = ws[keep]; sum(wk) > 0 || continue
         bk = view(b, idx)[keep]; bk = bk .- sum(wk .* bk) / sum(wk)
         num += sum(wk .* e[keep] .* bk); den += sum(wk .* bk .^ 2)
