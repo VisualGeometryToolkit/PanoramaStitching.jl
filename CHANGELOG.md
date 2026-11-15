@@ -2,6 +2,14 @@
 
 ## 0.8.3 (unreleased)
 
+### Fixed (with VisualGeometryToolkitCore 0.10.10)
+
+- **The autocalibration's camera variable holds a decentred lens's valid domain.** Core 0.10.10's `valid_domain` of a
+  lens that is not radially symmetric (tangential or thin-prism terms, a tilt) is a `PolygonRegion`, the star polygon
+  through each azimuth's own fold, not the inscribed `Ellipse`; the variable's `domain` field
+  (`Union{WholePlane, Ellipse{Float64}}`) could not hold it. It is widened to the polygon, still built once per LM update
+  (about 10 ms) and never per residual. The Core compat floor is 0.10.10.
+
 No source file under src/ changed and the package's API is 0.8.2's (a patch: the compat floors raised to the gated stack, Core
 0.10.8, Features 0.9.6, Estimation 0.11.6; the test environment's IO 0.10.3). The release is the panorama_vignetting example's, whose configs and
 results layout break.
