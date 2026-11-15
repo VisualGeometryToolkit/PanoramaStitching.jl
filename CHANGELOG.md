@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (the symmetric saturation mask; the patch after the valid-domain fix)
+## 0.8.5 (unreleased): the symmetric saturation mask and the pair-equation vignetting
 
 ### Fixed
 
@@ -19,6 +19,21 @@
 - **`fit_vignetting` requires `saturation_margin_px`** (camera pixels, ≥ 0, finite; no default: it is the sweep's
   registration error, ≈ 4 px on the 14 mm and fisheye sweeps, 24 px on the Tamron's). The example's configs of record
   state it in `[domain]` (4.0), and `run.jl` reads it there.
+
+### New: the model-free vignetting of a sweep, the pair equation (src/pair_vignetting.jl)
+
+- `pair_correspondences(camera, frames, rotations, directions; …, plane, field_angle, edges, tmax, symmetric = true)`: the frames
+  sampled at directions (`sample_frames`), each seen direction's sensor point on its ring of a caller's field angle, every pair of
+  frames that see a direction in two different rings one correspondence (`PairCorrespondences`). `symmetric = true` drops a
+  direction any frame sees saturated from every frame (masking only the clipped frame biases the rim's pairs low). The sampling
+  and the per-frame-pair selection run on the frames' backend.
+- `ring_pair_vignetting(pc; offset, frame_weights)`: per ring pair the weighted median of `ln(I_k − c) − ln(I_l − c)`, then the
+  least squares of `ln V_a − ln V_b` over the ring pairs with `ln V₁ = 0` (the gauge eliminated): ln V per ring, no spline and no
+  scene model (a `FitResult`, `(Success, ClosedForm)`; `PairVignettingMetadata`). `frame_weights` takes a bootstrap's
+  multiplicities.
+- `fit_additive_level(pc; bounds, tolerance)`: the frames' additive level `c` (`I = L·V + c`) as the root of
+  `additive_level_slope` — the pooled within-ring-pair slope of the log ratio on the scene's brightness, zero at the true level —
+  by bisection.
 
 ## 0.8.4
 
