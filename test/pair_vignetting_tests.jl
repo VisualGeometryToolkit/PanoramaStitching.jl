@@ -66,7 +66,7 @@ end
     # saturation: one frame clipped over a patch; symmetric drops those directions from every frame, per-frame only from it
     sat = [falses(size(F, 1), size(F, 2)) for F in q.frames]; sat[2][150:250, 150:250] .= true
     ps = ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = sat)
-    pf = ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = sat, symmetric = false)
+    pf = PanoramaStitching._ring_correspondences(q.camera, q.frames, q.R, D, false; kw..., saturated = sat)   # the per-frame rule (≤ 0.8)
     p0 = ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = q.saturated)
     @test ps.n_dropped > 0 && pf.n_dropped == 0
     @test length(ps) < length(pf) < length(p0)
@@ -111,7 +111,7 @@ end
     # the rotations in the kernel)
     for symmetric in (true, false), n in (5, 7)
         sat = [falses(size(q.frames[1], 1), size(q.frames[1], 2)) for _ in 1:n]
-        @test_throws DimensionMismatch ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = sat, saturation_margin_px = 2.0, symmetric)
+        @test_throws DimensionMismatch PanoramaStitching._ring_correspondences(q.camera, q.frames, q.R, D, symmetric; kw..., saturated = sat, saturation_margin_px = 2.0)
     end
     # frame 2's scattered clipped pixels (1 in 50) read 1000, the scene ≤ 0.2: with no dilation (0 px) a sample whose nearest
     # pixel is clear but whose bilinear taps reach a clipped one is dropped by the symmetric test as by the frame's own mask
@@ -122,9 +122,11 @@ end
         view(frames[2], :, :, p)[sat[2]] .= 1.0f3
     end
     for symmetric in (true, false)
-        pc = ring_correspondences(q.camera, frames, q.R, D; kw..., saturated = sat, saturation_margin_px = 0.0, symmetric)
+        pc = PanoramaStitching._ring_correspondences(q.camera, frames, q.R, D, symmetric; kw..., saturated = sat, saturation_margin_px = 0.0)
         @test length(pc) > 1000 && maximum(pc.values) < 1.0
     end
+    # the public signature has no per-frame rule
+    @test_throws MethodError ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = q.saturated, saturation_margin_px = 2.0, symmetric = false)
     # three rings, the only ring pair (2, 3): nothing is connected to the gauge's ring, so nothing is identified — not a success
     pc1 = PairCorrespondences([0.0, 1.0, 2.0, 3.0], 3.0, Int32[1 1; 2 2], Int32[2 2; 3 3], [1.0 2.0; 0.5 1.0], [1.5 1.5; 2.5 2.5], 2, 2, 0)
     r1 = ring_pair_vignetting(pc1)

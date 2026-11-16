@@ -16,8 +16,8 @@
 # removed.
 #
 # The correspondences are the frames sampled at directions (`sample_frames`: one batch per frame on the frames' backend); a
-# direction that any frame sees saturated is dropped from every frame (`symmetric`: the clipped frame and the frames that see the
-# same direction unclipped alike — masking only the clipped frame leaves its partners, which biases the rim's pairs low). The
+# direction that any frame sees saturated is dropped from every frame (the clipped frame and the frames that see the same
+# direction unclipped alike — masking only the clipped frame leaves its partners, which biases the rim's pairs low). The
 # per-frame-pair selection is one broadcast per pair on the backend; only the compacted correspondences come to the host, where
 # the ring pairs' medians and the least squares (at most (R − 1)R/2 rows) are reductions.
 # =============================================================================
@@ -64,22 +64,25 @@ Adapt.adapt_structure(to, r::_AngleAt) = _AngleAt(Adapt.adapt(to, r.field_angle)
 
 """
     ring_correspondences(camera::BoundedCamera, frames, rotations, directions; saturated, saturation_margin_px, frame_map, rim_margin_px, fov_deg,
-                         plane, field_angle, edges, tmax = last(edges), symmetric = true,
-                         plane_maps = ntuple(_ -> frame_map, 3)) -> PairCorrespondences
+                         plane, field_angle, edges, tmax = last(edges), plane_maps = ntuple(_ -> frame_map, 3)) -> PairCorrespondences
 
 The correspondences of the pair equation: the frames sampled at `directions` ([`sample_frames`](@ref), its masks and keywords;
 `plane` the colour plane read), each seen direction's sensor point put on its ring of `field_angle(u)` (degrees; a kernel-lawful
 callable of the camera pixel, e.g. the equisolid angle about the vignetting's centre) among `edges`, cut at `tmax`, and every
 pair of frames that see a direction in two different rings one correspondence. Each frame's `saturated` mask is dilated by
-`saturation_margin_px` camera pixels (≈ the registration error; [`fit_vignetting`](@ref)'s one dilation). `symmetric = true`: a
-direction any frame whose domain sees it has saturated there is dropped from every frame (`fit_vignetting`'s one symmetric
-test); `false`: from that frame alone, as `sample_frames` masks. The sampling and the per-frame-pair selection run on the frames' backend.
+`saturation_margin_px` camera pixels (≈ the registration error; [`fit_vignetting`](@ref)'s one dilation), read by
+`sample_frames`' rule, and a direction any frame whose domain sees it has saturated there is dropped from every frame
+(`fit_vignetting`'s one symmetric test). The sampling and the per-frame-pair selection run on the frames' backend.
 """
-function ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
-                              directions::AbstractArray{<:StaticVector{3}}; saturated::AbstractVector, saturation_margin_px::Real,
-                              frame_map, rim_margin_px::Real,
-                              fov_deg::Real, plane::Integer, field_angle, edges::AbstractVector{<:Real}, tmax::Real = last(edges),
-                              symmetric::Bool = true, plane_maps = ntuple(_ -> frame_map, 3))
+ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
+                     directions::AbstractArray{<:StaticVector{3}}; kw...) = _ring_correspondences(camera, frames, rotations, directions, true; kw...)
+
+# `ring_correspondences`, its saturation test chosen: `symmetric = false` drops a direction from the frames whose own dilated mask
+# holds it alone (PanoramaStitching ≤ 0.8's per-frame rule; the tests' reference for the bias the symmetric test removes).
+function _ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
+                               directions::AbstractArray{<:StaticVector{3}}, symmetric::Bool; saturated::AbstractVector,
+                               saturation_margin_px::Real, frame_map, rim_margin_px::Real, fov_deg::Real, plane::Integer, field_angle,
+                               edges::AbstractVector{<:Real}, tmax::Real = last(edges), plane_maps = ntuple(_ -> frame_map, 3))
     1 <= plane <= 3 || throw(ArgumentError("ring_correspondences: plane must be 1, 2 or 3, got $plane"))
     length(edges) >= 3 && issorted(edges) && allunique(edges) ||
         throw(ArgumentError("ring_correspondences: edges must be increasing with at least two rings, got $edges"))
@@ -91,7 +94,7 @@ function ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
     margin = _checked_saturation_margin("ring_correspondences", saturation_margin_px)
     # the sweep's symmetric saturation test (fit_vignetting's one implementation, `_sweep_saturation`): each frame's own mask
     # dilated by `saturation_margin_px`, read by sample_frames' rule (no clipped pixel among a sample's bilinear taps), and a
-    # direction any frame sees saturated dropped from every frame (`symmetric = false`: the own masks alone)
+    # direction any frame sees saturated dropped from every frame (`symmetric = false`: the own masks alone, the tests' reference)
     any_frame = _sweep_saturation(saturated, camera, frame_map, rim_margin_px, fov_deg, rotations, margin, be)
     own = _own_masks(any_frame)
     if symmetric
