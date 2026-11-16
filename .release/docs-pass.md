@@ -1,3 +1,24 @@
+docs-pass: 635440d
+landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.10.0 docs pass (julia-docs-pass), at 635440d
+
+On 0.9.0 (8abc4b7): the Core 0.11.0 cascade (VisualGeometryToolkitCore 0.11: an LM tolerance stop is converged).
+[x] API diff since 0.9.0: no name added, removed or re-signatured (the diff touches src/rotation_bundle.jl's prose only).
+[x] Docstrings: `refine_rotations` (and `refine_camera_and_rotations`, which refers to it): the termination record is Core's
+    `lmsolve_chart!` verdict, returned as it is (an ftol/xtol stop is Success with no stationarity test; a NaN wall
+    (Stalled, NonFinite); the cap MaxIters; max_iter = 0 (MaxIters, IterationCap)); "a refine descends towards the local
+    minimum ... until a stop" (it no longer claims to end in it). `Registration`'s bundle field names Core's record: unchanged.
+[x] Guide (docs/src/guide.md:106, `VgtkCore.retcode(reg.bundle)`: "how the bundle ended"), landing page, README and the
+    example's README: no claim about stationarity or Stalled (grep): unchanged.
+[x] CHANGELOG 0.10.0: Breaking (the bundle's tolerance stop reads Success; its migration) and why a minor; the floors.
+[x] Floors: VisualGeometryToolkitCore 0.11, VisualGeometryToolkitEstimation 0.12, VisualGeometryToolkitFeatures 0.9.7
+    (test and example: VisualGeometryToolkitIO 0.10.6, VisualGeometryToolkitEval 0.9.2), the registry latest.
+[x] The suite's docs item (undocumented public, signature drift, detached docstrings) and the README item, and the strict
+    docs build (docs/make.jl): in the release gate.
+
+---
+
 docs-pass: f7eb270
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
