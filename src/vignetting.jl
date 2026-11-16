@@ -480,18 +480,26 @@ end
 # pixels), ≈ the registration error, so a direction a frame's rotation misplaces by that much is still caught: one
 # Hf × Wf × K Bool array on the frames' backend.
 function _dilated_saturation(saturated, margin::Float64, frame_map, be)
-    isfinite(margin) && margin >= 0 ||
-        throw(ArgumentError("saturation_margin_px is a distance in camera pixels, ≥ 0; got $margin"))
     Hf, Wf = size(saturated[1]); K = length(saturated)
     reach = margin / norm(frame_map(SVector(1.0, 0.0)) - frame_map(SVector(0.0, 0.0)))   # camera pixels per frame pixel
     masks = VgtkCore.device_zeros(Bool, be, Hf, Wf, K)
-    for k in 1:K
-        Dk = VgtkCore.device_zeros(Bool, be, Hf, Wf)
-        VgtkCore.pointwise!(_WithinReach(saturated[k], reach), Dk, CartesianIndices((Hf, Wf)); exec = VgtkCore.OnBackend(be))
-        masks[:, :, k] .= Dk
+    for k in 1:K                                                           # each frame's slice written in place
+        VgtkCore.pointwise!(_WithinReach(saturated[k], reach), view(masks, :, :, k), CartesianIndices((Hf, Wf)); exec = VgtkCore.OnBackend(be))
     end
     return masks
 end
+
+# `saturation_margin_px` checked at a public entry (`what`): a distance in camera pixels, ≥ 0, finite; as a Float64.
+function _checked_saturation_margin(what, margin::Real)
+    isfinite(margin) && margin >= 0 ||
+        throw(ArgumentError("$what: saturation_margin_px is a distance in camera pixels, ≥ 0; got $margin"))
+    return Float64(margin)
+end
+
+# The one symmetric test of a sweep (`_SaturatedInAnyFrame`) on its frames' dilated masks, its rotations as SMatrix values.
+_any_frame_saturation(saturated, camera, sees, frame_map, rotations, margin::Float64, be) =
+    _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(SMatrix{3, 3, Float64, 9}.(rotations)),
+                         _dilated_saturation(saturated, margin, frame_map, be))
 
 # The frames' saturation masks made SYMMETRIC (PanoramaStitching 0.8.5; T. Harder's analysis of 2026-11-15): a scene direction
 # counts only where NO frame whose rows see it is saturated there. A frame's own mask alone drops a bright scene point where
@@ -499,8 +507,8 @@ end
 # out too flat there (on the paper's sweeps 5–15 % at the last ring). Returns one Hf × Wf mask per frame, `true` at every
 # domain pixel `lin` whose direction is saturated somewhere (its own dilated mask elsewhere), on the frames' backend.
 function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays, margin::Float64, be)
-    masks = _dilated_saturation(saturated, margin, frame_map, be)
-    any_frame = _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(Rs), masks)
+    any_frame = _any_frame_saturation(saturated, camera, sees, frame_map, Rs, margin, be)
+    masks = any_frame.masks
     return map(1:length(saturated)) do k
         E = masks[:, :, k]
         hit = VgtkCore.device_zeros(Bool, be, length(lin))
@@ -513,8 +521,7 @@ end
 # The world directions saturated in some frame whose domain sees them (`_SaturatedInAnyFrame` on the dilated masks): the
 # symmetric mask of `ring_correspondences`' sampled directions, one Bool per direction on the frames' backend.
 function _saturated_directions(saturated, camera, sees, frame_map, rotations, directions, margin::Float64, be)
-    masks = _dilated_saturation(saturated, margin, frame_map, be)
-    any_frame = _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(SMatrix{3, 3, Float64, 9}.(rotations)), masks)
+    any_frame = _any_frame_saturation(saturated, camera, sees, frame_map, rotations, margin, be)
     hit = VgtkCore.device_zeros(Bool, be, length(directions))
     VgtkCore.pointwise!(any_frame, hit, vec(directions); exec = VgtkCore.OnBackend(be))
     return hit
@@ -841,8 +848,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     K = length(frames)
     length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("fit_vignetting: frames, rotations and saturated disagree"))
     K >= 2 || throw(ArgumentError("fit_vignetting: at least two frames, got $K"))
-    isfinite(saturation_margin_px) && saturation_margin_px >= 0 ||
-        throw(ArgumentError("fit_vignetting: saturation_margin_px is a distance in camera pixels, ≥ 0; got $saturation_margin_px"))
+    margin = _checked_saturation_margin("fit_vignetting", saturation_margin_px)
     observation_noise isa PositionNoise && variances === nothing &&
         throw(ArgumentError("fit_vignetting: PositionNoise needs the frames' value variances (an uncertain image: Core's LinearRaw " *
                             "under a sensor model whose noise feeds them); a plain image has none"))
@@ -897,7 +903,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     # the rows' saturation: symmetric over the frames (`_symmetric_saturation`), every row of a scene direction any frame's
     # rows see saturated (its mask dilated by `saturation_margin_px`) excluded from every frame
     t0 = time_ns()
-    saturated = _symmetric_saturation(saturated, VgtkCore.model(camera), sees, frame_map, Rs, lin, rays, Float64(saturation_margin_px), be)
+    saturated = _symmetric_saturation(saturated, VgtkCore.model(camera), sees, frame_map, Rs, lin, rays, margin, be)
     seconds[:saturation] = _elapsed(be, t0)
 
     poff = (plane - 1) * Hf * Wf

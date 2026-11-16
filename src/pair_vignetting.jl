@@ -54,14 +54,6 @@ Base.length(pc::PairCorrespondences) = size(pc.frames, 2)
     end
     return q
 end
-# θ of a seen sensor point through the caller's field angle, the ring of it; 0 where unseen
-struct _RingAt{F, E, T}
-    field_angle::F
-    edges::E
-    tmax::T
-end
-Adapt.adapt_structure(to, r::_RingAt) = _RingAt(Adapt.adapt(to, r.field_angle), r.edges, r.tmax)
-@inline (r::_RingAt)(ok, u) = ok ? _ring_of(r.field_angle(u), r.edges, r.tmax) : Int32(0)
 # the field angle of a seen sensor point, NaN where unseen
 struct _AngleAt{F}
     field_angle::F
@@ -94,25 +86,26 @@ function ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
     kw = (; frame_map, rim_margin_px, fov_deg, vignetting = (u, f) -> 1.0, plane_maps)
     # the masks dilated by `saturation_margin_px` (fit_vignetting's one helper, `_dilated_saturation`)
     be = KA.get_backend(frames[1])
-    Hf, Wf = size(frames[1], 1), size(frames[1], 2)
+    margin = _checked_saturation_margin("ring_correspondences", saturation_margin_px)
     n_dropped = 0
     if symmetric                                                           # the directions some frame sees saturated: out of every frame
-        clear = [fill!(similar(m), false) for m in saturated]
+        clear = fill(fill!(similar(saturated[1]), false), K)               # one all-clear mask, read by every frame
         s = sample_frames(camera, frames, rotations, directions; saturated = clear, kw...)
+        Hf, Wf = size(frames[1], 1), size(frames[1], 2)
         sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg)))
         clipped = _saturated_directions(saturated, VgtkCore.model(camera), sees, frame_map, rotations, directions,
-                                        Float64(saturation_margin_px), be)   # fit_vignetting's symmetric test
-        n_dropped = count(Array(clipped) .& vec(any(Array(s.seen); dims = 2)))
+                                        margin, be)                        # fit_vignetting's symmetric test
+        n_dropped = count(clipped .& vec(any(s.seen; dims = 2)))
         seen = s.seen .& .!clipped
     else                                                                   # each frame's own dilated mask (sample_frames' rule)
-        masks = _dilated_saturation(saturated, Float64(saturation_margin_px), frame_map, be)
+        masks = _dilated_saturation(saturated, margin, frame_map, be)
         s = sample_frames(camera, frames, rotations, directions; saturated = [masks[:, :, k] for k in 1:K], kw...)
         seen = s.seen
     end
-    ring = similar(seen, Int32)
-    ring .= _RingAt(field_angle, Tuple(Float64.(edges)), Float64(tmax)).(seen, s.pixels)
     ang = similar(seen, Float64)
-    ang .= _AngleAt(field_angle).(seen, s.pixels)
+    ang .= _AngleAt(field_angle).(seen, s.pixels)                          # the field angle once; NaN where unseen
+    ring = similar(seen, Int32)
+    ring .= _ring_of.(ang, Ref(Tuple(Float64.(edges))), Float64(tmax))     # 0 where unseen (a NaN angle)
     V = view(s.values, :, :, plane)
     A = Int32[]; B = Int32[]; Ia = Float64[]; Ib = Float64[]; Ta = Float64[]; Tb = Float64[]; Ka = Int32[]; Kb = Int32[]
     for k in 1:K, l in (k + 1):K                                           # one broadcast per frame pair on the backend
@@ -161,6 +154,24 @@ function _sorted_weighted_median(y, w)
     return Float64(y[end])
 end
 
+# The correspondences grouped by ring pair (a, b): the permutation sorting them by ring pair and then by `y`, and each ring
+# pair's range of it (`ring_pair_vignetting`'s medians, `additive_level_slope`'s within-pair slopes).
+function _ring_pair_runs(pc::PairCorrespondences, y)
+    R = length(pc.edges) - 1
+    key = (Int.(view(pc.rings, 1, :)) .- 1) .* R .+ Int.(view(pc.rings, 2, :))
+    p = sortperm(collect(zip(key, y)))
+    runs = UnitRange{Int}[]
+    lo = 1
+    while lo <= length(p)
+        hi = lo
+        while hi < length(p) && key[p[hi + 1]] == key[p[lo]]
+            hi += 1
+        end
+        push!(runs, lo:hi); lo = hi + 1
+    end
+    return p, runs
+end
+
 # The pair equation's left-hand sides at the level `c` and their weights (the product of the frames' weights; a value at or
 # below c: no row)
 function _pair_rows(pc::PairCorrespondences, c::Real, frame_weights)
@@ -188,22 +199,15 @@ function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame
     R = length(pc.edges) - 1
     y, w = _pair_rows(pc, offset, Float64.(frame_weights))
     a = view(pc.rings, 1, :); b = view(pc.rings, 2, :)
-    key = (Int.(a) .- 1) .* R .+ Int.(b)
-    p = sortperm(collect(zip(key, y)))                                    # by ring pair, then by value: the medians' order
+    p, runs = _ring_pair_runs(pc, y)                                      # by ring pair, then by value: the medians' order
     med = fill(NaN, R, R); wt = zeros(R, R); cnt = zeros(R)
-    lo = 1
-    while lo <= length(p)
-        hi = lo
-        while hi < length(p) && key[p[hi + 1]] == key[p[lo]]
-            hi += 1
-        end
-        idx = view(p, lo:hi); i = Int(a[p[lo]]); j = Int(b[p[lo]])
+    for run in runs
+        idx = view(p, run); i = Int(a[first(idx)]); j = Int(b[first(idx)])
         ws = sum(view(w, idx))
         if ws > 0
             med[i, j] = _sorted_weighted_median(view(y, idx), view(w, idx)); wt[i, j] = ws
             cnt[i] += ws; cnt[j] += ws
         end
-        lo = hi + 1
     end
     rows = [(i, j) for i in 1:R for j in (i + 1):R if wt[i, j] > 0]
     x = fill(NaN, R)
@@ -218,7 +222,7 @@ function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame
         m[r] = med[i, j]; s[r] = sqrt(wt[i, j])
     end
     z = isempty(free) ? Float64[] : (s .* M) \ (s .* m)
-    x[1] = 0.0; foreach(((c, q),) -> x[q] = z[c], enumerate(free))
+    x[1] = 0.0; x[free] .= z
     res = (M * z .- m)
     rms = sqrt(sum(s .^ 2 .* res .^ 2) / sum(abs2, s))
     # the robust scale of the correspondences' residuals under the solution
@@ -257,7 +261,6 @@ level (the log ratio then is the vignetting's, whatever `L`); positive below it 
 ratio toward 0) and negative above it.
 """
 function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
-    R = length(pc.edges) - 1
     fw = Float64.(frame_weights)
     x = VgtkCore.estimate(ring_pair_vignetting(pc; offset = c, frame_weights = fw))
     mids = (pc.edges[1:(end - 1)] .+ pc.edges[2:end]) ./ 2
@@ -270,15 +273,10 @@ function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::A
     va = v.(view(pc.angles, 1, :)); vb = v.(view(pc.angles, 2, :))
     e0 = y .- (va .- vb)
     b = ifelse.(w .> 0, log.(max.(I1, floatmin())) .- va .+ log.(max.(I2, floatmin())) .- vb, 0.0)
-    g = (Int.(view(pc.rings, 1, :)) .- 1) .* R .+ Int.(view(pc.rings, 2, :))
-    p = sortperm(collect(zip(g, e0)))
-    num = 0.0; den = 0.0; lo = 1
-    while lo <= length(p)
-        hi = lo
-        while hi < length(p) && g[p[hi + 1]] == g[p[lo]]
-            hi += 1
-        end
-        idx = view(p, lo:hi); lo = hi + 1
+    p, runs = _ring_pair_runs(pc, e0)
+    num = 0.0; den = 0.0
+    for run in runs
+        idx = view(p, run)
         ws = view(w, idx); sum(ws) > 0 || continue
         es = view(e0, idx); m = _sorted_weighted_median(es, ws)
         e = es .- m; ae = abs.(e); q = sortperm(ae); sc = _sorted_weighted_median(ae[q], ws[q])
@@ -306,7 +304,7 @@ function fit_additive_level(pc::PairCorrespondences; bounds::Tuple{Real, Real}, 
     lo, hi = Float64.(bounds)
     lo < hi && tolerance > 0 || throw(ArgumentError("fit_additive_level: bounds must be (lo, hi) with lo < hi and tolerance > 0, got $bounds, $tolerance"))
     length(pc) > 0 || throw(ArgumentError("fit_additive_level: no correspondences"))
-    count(>(hi), view(pc.values, 1, :) .* (view(pc.values, 2, :) .> hi)) > 0 ||
+    any((view(pc.values, 1, :) .> hi) .& (view(pc.values, 2, :) .> hi)) ||
         throw(ArgumentError("fit_additive_level: no correspondence has both values above the upper bound $hi"))
     f(c) = additive_level_slope(pc, c; frame_weights)
     a, b = lo, hi; fa, fb = f(a), f(b)
