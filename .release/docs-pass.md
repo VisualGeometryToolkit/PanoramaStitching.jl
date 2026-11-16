@@ -1,3 +1,39 @@
+docs-pass: f7eb270
+landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+
+# 0.9.0 docs pass (julia-docs-pass), at f7eb270
+
+On 0.8.4 (befe6ca): the symmetric saturation mask and the pair-equation vignetting (vignetting-saturation-symmetric,
+0777a1a..f2a14c3, cherry-picked), the review's fixes and the coordinator's rulings Q1–Q3.
+[x] API diff since 0.8.4. Added (exported): `PairCorrespondences`, `ring_correspondences`, `ring_pair_vignetting`,
+    `fit_additive_level`, `additive_level_slope`, `PairVignettingMetadata`, each documented and listed in docs/src/api.md
+    ("The model-free vignetting: the pair equation") and on the landing page's table. Re-signatured: `fit_vignetting` and
+    `score_seams` require `saturation_margin_px` (both signature lines name it; bb921b9, fa07d6b). `ring_correspondences`
+    takes no `symmetric` keyword (0e142c1; the per-frame rule is internal). No name removed.
+[x] Docstrings: `fit_vignetting` (the row rule: the symmetric, dilated masks), `score_seams` (it reads the fit's observations),
+    `ring_correspondences` (one mask and one rotation per frame; the own masks by `sample_frames`' rule and the symmetric test),
+    `PairCorrespondences.n_dropped`, `ring_pair_vignetting` ((InitialFailure, NoRule) when no ring pair connects a ring to the
+    first). The suite's docs item (undocumented public, signature drift, detached docstrings) ran green in the full suite,
+    job 20310 (731/731 at f7eb270).
+[x] Guide (docs/src/guide.md): `fit_vignetting` and `score_seams` examples state `saturation_margin_px = 4.0`; the seam score's
+    observations are the fit's. Landing page: the pair equation's row. README: names neither function's keywords: unchanged.
+    The example's README: the fit's domain and the seam score's masks (symmetric, dilated by `[domain] saturation_margin_px`;
+    the seam numbers differ from 0.8's). The configs of record: the margin's rule, √χ²₂(99 %)·σ ≈ 3 × the bundle RMS.
+[x] CHANGELOG 0.9.0: Breaking (`saturation_margin_px` required by `fit_vignetting` and by `score_seams`, the seam numbers move;
+    each with its migration), Fixed (the symmetric masks, one test for the fit, the seam score and the pair equation), New
+    (the pair equation); the floors.
+[x] Floors: VisualGeometryToolkitCore 0.10.10, VisualGeometryToolkitEstimation 0.11.7 (0.8.4's, General's latest; the new code
+    reads only Core names public in 0.10.10 and nothing of Estimation).
+[x] Naming: `ring_correspondences` is a noun for a computation that samples the frames (a pipeline, by the naming rule);
+    check_naming reports nothing and the name stays the author's (`pair_correspondences` is Core's Pools accessor). Recorded,
+    not changed.
+[x] Red-first evidence: (a)–(c) red at c0ff5a2 (job 20254: 6 failures, the expected ones), green at 3d507f7 (job 20255,
+    33/33). Q2: red = the missing keyword; behaviour green on fa07d6b (job 20308 at ada5bb1: one error, a MethodError,
+    score_seams had no saturation_margin_px keyword; job 20309 at fa07d6b: 84/84).
+[x] Docs build: docs/make.jl (strict) in the release gate.
+
+---
+
 docs-pass: 1d35556
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
 
