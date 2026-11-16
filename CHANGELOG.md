@@ -12,7 +12,7 @@ moves to Core 0.11. The compat floors are the registry latest: VisualGeometryToo
   `LmProblem` / `lmsolve_chart!` and returns its verdict as the result's `retcode` / `stop_rule`. Core 0.11 maps a stop on
   the relative cost decrease (`ftol`, `CostDecrease`) or on the step size (`xtol`, `IncrementSize`) to `ReturnCode.Success`
   with no stationarity test; until 0.9 such a stop where the robust cost was not stationary was `Stalled`, and
-  `converged(result)` false. A step-size stop at a non-finite trial (a NaN wall) is `(Stalled, NonFinite)`. The same result
+  `converged(result)` false. A step-size stop at a non-finite step (a NaN wall) is `(Stalled, NonFinite)`. The same result
   is `register_rotations`' `bundle`, so a `Registration`'s `retcode(reg.bundle)` can read `Success` where 0.9 read `Stalled`.
   **Migrate:** a caller that read `Stalled` (or `!converged(result)`) as "the bundle stopped short of a minimum" tightens
   `ftol` / `xtol` (`bundle_ftol` / `bundle_xtol` in `register_rotations`) or tests the result itself.

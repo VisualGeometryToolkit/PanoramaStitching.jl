@@ -365,8 +365,8 @@ result's `n` is the number of observations kept; its metadata's
 
 A refine descends towards the local minimum its start leads to, until a stop; the result's termination
 record (Core's `retcode` and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `converged(result)` its success) says how
-the bundle ended: Core's `lmsolve_chart!` verdict, passed through (an `ftol` or `xtol` stop is `Success` with no
-stationarity test, so a loose tolerance converges short of the minimum; a step-size stop at a non-finite trial is
+the bundle ended: Core's `lmsolve_chart!` verdict, returned as it is (an `ftol` or `xtol` stop is `Success` with no
+stationarity test, so a loose tolerance converges short of the minimum; a step-size stop at a non-finite step is
 `Stalled` with `NonFinite`; the iteration cap `MaxIters`); `max_iter = 0` (no
 solve: the start's rotations are the result) `MaxIters` with `IterationCap`. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
