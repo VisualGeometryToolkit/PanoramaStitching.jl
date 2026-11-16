@@ -1,6 +1,26 @@
 # Changelog
 
-## 0.8.5 (unreleased): the symmetric saturation mask and the pair-equation vignetting
+## 0.9.0
+
+A breaking minor: the saturation masks are symmetric over the frames (the fit and the seam score read one test), and the
+model-free vignetting of a sweep, the pair equation, is new. The compat floors are 0.8.4's: VisualGeometryToolkitCore 0.10.10,
+VisualGeometryToolkitEstimation 0.11.7.
+
+### Breaking
+
+- **`fit_vignetting` requires `saturation_margin_px`** (camera pixels, finite, ≥ 0; no default). Each frame's saturation mask
+  is dilated by it before the masks are made symmetric over the frames (Fixed, below). It is the sweep's registration error at
+  99 %: √χ²₂(99 %)·σ ≈ 3 × the sweep's bundle RMS (σ the error per axis), so a direction the rotations misplace by that much is
+  still caught. 0.8 read each frame's own mask undilated. **Migrate:** add `saturation_margin_px = 3 * rms` with `rms` the
+  rotation bundle's RMS of the sweep in camera pixels (`saturation_margin_px = 0.0` keeps the undilated masks, but the masks
+  are symmetric either way). The example's configs of record state it in `[domain]` (4.0, T. Harder's dilation diagnostic of
+  2026-11-15 for the 14 mm and the fisheye sweeps; 24 px for the Tamron's), and `run.jl` and `compare_arms.jl` read it there.
+- **`score_seams` requires `saturation_margin_px` too, and scores the fit's own observations**: a direction any frame whose
+  domain sees it has saturated there is measured by NO frame (the sweep's symmetric test, each frame's mask dilated by the
+  margin). 0.8 dropped a clipped value from its own frame only, so at a bright point the frames where V dims it below white
+  still counted. **The seam numbers move**: `rms`, `mad` and `n` of a sweep with saturated pixels differ from 0.8's (fewer
+  pixels, the clipped points' rim observations gone); a sweep with no saturated pixel and a margin of 0 scores as before.
+  **Migrate:** pass the margin given to `fit_vignetting`; compare seam scores only between runs of one version.
 
 ### Fixed
 
@@ -13,25 +33,21 @@
   every frame where any frame's dilated mask holds its direction (the camera's projection of `R_jᵀ·R_k·f`, on the frames'
   backend, a new `:saturation` stage of the metadata's `seconds`). On the test suite's synthetic sweep (bright points of
   σ 0.3°, clipped where V is high) V at the rings was 1.9–3.7 % too flat with the frames' own masks and is within 0.06 %.
-
-### Breaking
-
-- **`fit_vignetting` requires `saturation_margin_px`** (camera pixels, ≥ 0, finite; no default: it is the sweep's
-  registration error, ≈ 4 px on the 14 mm and fisheye sweeps, 24 px on the Tamron's). The example's configs of record
-  state it in `[domain]` (4.0), and `run.jl` reads it there.
+  The test is built once per sweep, in one place, and `fit_vignetting`, `score_seams` and `ring_correspondences` read it.
 
 ### New: the model-free vignetting of a sweep, the pair equation (src/pair_vignetting.jl)
 
-- `ring_correspondences(camera, frames, rotations, directions; saturated, saturation_margin_px, …, plane, field_angle, edges, tmax, symmetric = true)`: the frames
-  sampled at directions (`sample_frames`), each seen direction's sensor point on its ring of a caller's field angle, every pair of
-  frames that see a direction in two different rings one correspondence (`PairCorrespondences`). `symmetric = true` drops a
-  direction any frame sees saturated from every frame (masking only the clipped frame biases the rim's pairs low). The masks
-  are dilated by `saturation_margin_px` and the symmetric test is `fit_vignetting`'s own (`_dilated_saturation`,
-  `_SaturatedInAnyFrame`: one implementation for both). The sampling and the per-frame-pair selection run on the frames' backend.
+- `ring_correspondences(camera, frames, rotations, directions; saturated, saturation_margin_px, …, plane, field_angle, edges, tmax)`:
+  the frames sampled at directions (`sample_frames`), each seen direction's sensor point on its ring of a caller's field angle,
+  every pair of frames that see a direction in two different rings one correspondence (`PairCorrespondences`). Each frame's
+  own dilated mask is read by `sample_frames`' rule (no clipped pixel among a sample's bilinear taps), and a direction any
+  frame sees saturated is dropped from every frame (`fit_vignetting`'s symmetric test: masking only the clipped frame biases
+  the rim's pairs low). One saturation mask and one rotation per frame (`DimensionMismatch` otherwise). The sampling and the
+  per-frame-pair selection run on the frames' backend.
 - `ring_pair_vignetting(pc; offset, frame_weights)`: per ring pair the weighted median of `ln(I_k − c) − ln(I_l − c)`, then the
   least squares of `ln V_a − ln V_b` over the ring pairs with `ln V₁ = 0` (the gauge eliminated): ln V per ring, no spline and no
-  scene model (a `FitResult`, `(Success, ClosedForm)`; `PairVignettingMetadata`). `frame_weights` takes a bootstrap's
-  multiplicities.
+  scene model (a `FitResult`, `(Success, ClosedForm)`; `(InitialFailure, NoRule)` when no ring pair connects a ring to the
+  first; `PairVignettingMetadata`). `frame_weights` takes a bootstrap's multiplicities.
 - `fit_additive_level(pc; bounds, tolerance)`: the frames' additive level `c` (`I = L·V + c`) as the root of
   `additive_level_slope` — the pooled within-ring-pair slope of the log ratio on the scene's brightness, zero at the true level —
   by bisection.

@@ -569,9 +569,9 @@ end
     @test err(u) < 5.0e-3 && err(p) < 5.0e-3                               # 14-bit codes: the quantization, not the weights
 end
 
-# PanoramaStitching 0.8.4 (T. Harder's analysis, 2026-11-15): the saturation masks are SYMMETRIC over the frames. Bright scene points
+# PanoramaStitching 0.9.0 (T. Harder's analysis, 2026-11-15): the saturation masks are SYMMETRIC over the frames. Bright scene points
 # (σ 0.3°, under the scene's 1° chart, so its spline cannot follow them) clip where V is high — near each frame's centre — and stay
-# below white where V dims them. With each frame's own mask alone (PanoramaStitching ≤ 0.8.3) the rows that remain see the points
+# below white where V dims them. With each frame's own mask alone (PanoramaStitching ≤ 0.8.4) the rows that remain see the points
 # only towards the rim, the scene's misfit there pulls V up and V comes out too flat: on this sweep 1.9–3.7 % high at the rings
 # (measured 2026-11-15 on 0.8.3). Dropped from every frame where any frame whose domain sees the direction is saturated (masks
 # dilated by 2 camera px = 1 frame px, the nearest-pixel lookup's own quantization), V is recovered to 0.05 %.
