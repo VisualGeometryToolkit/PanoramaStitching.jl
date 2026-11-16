@@ -20,7 +20,7 @@ VisualGeometryToolkitEstimation 0.11.7.
   margin). 0.8 dropped a clipped value from its own frame only, so at a bright point the frames where V dims it below white
   still counted. **The seam numbers move**: `rms`, `mad` and `n` of a sweep with saturated pixels differ from 0.8's (fewer
   pixels, the clipped points' rim observations gone); a sweep with no saturated pixel and a margin of 0 scores as before.
-  **Migrate:** pass the margin given to `fit_vignetting`; compare seam scores only between runs of one version.
+  **Migrate:** give `score_seams` the margin `fit_vignetting` was given; compare seam scores only between runs of one version.
 
 ### Fixed
 
