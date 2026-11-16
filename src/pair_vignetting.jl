@@ -89,18 +89,16 @@ function ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
     kw = (; frame_map, rim_margin_px, fov_deg, vignetting = (u, f) -> 1.0, plane_maps)
     be = KA.get_backend(frames[1])
     margin = _checked_saturation_margin("ring_correspondences", saturation_margin_px)
-    # each frame's own mask dilated by `saturation_margin_px` (fit_vignetting's one helper, `_dilated_saturation`), read by
-    # sample_frames' rule (no clipped pixel among a sample's bilinear taps) on either path
-    masks = _dilated_saturation(saturated, margin, frame_map, be)
-    s = sample_frames(camera, frames, rotations, directions; saturated = [masks[:, :, k] for k in 1:K], kw...)
-    n_dropped = 0
-    seen = s.seen
-    if symmetric                                                           # the directions some frame sees saturated: out of every frame
-        Hf, Wf = size(frames[1], 1), size(frames[1], 2)
-        sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg)))
-        clipped = _saturated_directions(masks, VgtkCore.model(camera), sees, frame_map, rotations, directions, be)   # fit_vignetting's symmetric test
-        n_dropped = count(clipped .& vec(any(seen; dims = 2)))
-        seen = seen .& .!clipped
+    # the sweep's symmetric saturation test (fit_vignetting's one implementation, `_sweep_saturation`): each frame's own mask
+    # dilated by `saturation_margin_px`, read by sample_frames' rule (no clipped pixel among a sample's bilinear taps), and a
+    # direction any frame sees saturated dropped from every frame (`symmetric = false`: the own masks alone)
+    any_frame = _sweep_saturation(saturated, camera, frame_map, rim_margin_px, fov_deg, rotations, margin, be)
+    own = _own_masks(any_frame)
+    if symmetric
+        s, seen, n_dropped = _symmetric_samples(any_frame, own, camera, frames, rotations, directions; kw...)
+    else
+        s = sample_frames(camera, frames, rotations, directions; saturated = own, kw...)
+        seen = s.seen; n_dropped = 0
     end
     ang = similar(seen, Float64)
     ang .= _AngleAt(field_angle).(seen, s.pixels)                          # the field angle once; NaN where unseen
