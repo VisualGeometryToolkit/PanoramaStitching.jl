@@ -90,12 +90,13 @@ end
     @test_throws ArgumentError refine_rotations(CAM, start, obs0; kw...,
                                                 optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0))
     @test res.metadata.loss_width == 1.5 && isnan(res.metadata.scale) && VgtkCore.scale_source(res) == VgtkCore.ScaleNone
-    # the termination record (§14): a step-size stop where the robust cost is not stationary is a stall, not a convergence.
-    # One step from the start (an xtol above any step) stops by the step size short of the minimum; the full run's stop
-    # holds the postcondition.
+    # the termination record (§14): a step-size stop is Core's convergence (0.11: a tolerance stop on a finite step is
+    # converged, with no stationarity test), even where the robust cost is not stationary. One step from the start (an
+    # xtol above any step) stops by the step size short of the minimum, and is converged all the same.
     stopped = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., xtol = 1.0e3)
     @test VgtkCore.stop_rule(stopped) == VgtkCore.IncrementSize && stopped.iterations == 1
-    @test VgtkCore.retcode(stopped) == VgtkCore.ReturnCode.Stalled && VgtkCore.retcode_symbol(stopped) === :stalled && !VgtkCore.converged(stopped)
+    @test VgtkCore.retcode(stopped) == VgtkCore.ReturnCode.Success && VgtkCore.converged(stopped)
+    @test err(VgtkCore.estimate(stopped)) > err(VgtkCore.estimate(res))          # converged, yet short of the minimum
     @test VgtkCore.converged(res) && VgtkCore.retcode(res) == VgtkCore.ReturnCode.Success
     good = [maximum(norm.(r)) < 5 for r in res.metadata.residuals]
     @test count(good) > 300
