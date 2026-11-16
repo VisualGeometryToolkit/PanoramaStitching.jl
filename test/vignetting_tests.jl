@@ -620,3 +620,29 @@ end
         @test_skip "no CUDA device"
     end
 end
+
+# PanoramaStitching 0.9.0: score_seams scores the fit's own observations. A direction any frame whose domain sees it has
+# saturated there is measured by NO frame (the sweep's symmetric test, `saturation_margin_px` as the fit's), so the seam score
+# no longer counts, at a clipped point, the frames where V dims it below white.
+@testitem "score_seams: the fit's observations — a direction some frame sees clipped is measured by no frame" setup = [VignettingSequence, BayerMaps] begin
+    using Test, StaticArrays
+    using PanoramaStitching: score_seams, sample_frames, panorama_view
+    import VisualGeometryToolkitCore as VgtkCore
+    c = SVector(430.0, 390.0)
+    radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
+    plain = vignetting_sequence(radial)
+    q = vignetting_sequence(radial; spikes = [R * SVector(0.0, 0.0, 1.0) for R in plain.R], amp = 5.0, width_deg = 0.3, white = 1.0)
+    view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.25)
+    nv, nλ = view.size
+    D = vec([view.rays(VgtkCore.pixel_centre(Float64, CartesianIndex(i, j))) for i in 1:nv, j in 1:nλ])   # score_seams' order
+    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, vignetting = (u, f) -> 1.0)
+    # the raster's directions some frame sees clipped: seen there with clear masks, not with its own
+    s0 = sample_frames(q.camera, q.frames, q.R, D; saturated = [falses(size(m)) for m in q.saturated], kw...)
+    s1 = sample_frames(q.camera, q.frames, q.R, D; saturated = q.saturated, kw...)
+    clipped = vec(any(s0.seen .& .!s1.seen; dims = 2))
+    # a 4 px margin (2 frame px): the dilated nearest-pixel test reaches every bilinear tap of the frame's own rule
+    sc = score_seams(q.camera, q.frames, q.R, view; saturated = q.saturated, saturation_margin_px = 4.0, kw..., plane = 2, chunk = 20_000)
+    @test count(clipped) > 50 && sc.n > 10_000
+    @test all(isnan, vec(Array(sc.ratio))[clipped])
+    @test_throws ArgumentError score_seams(q.camera, q.frames, q.R, view; saturated = q.saturated, saturation_margin_px = -1.0, kw..., plane = 2, chunk = 20_000)
+end
