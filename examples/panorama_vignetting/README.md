@@ -100,7 +100,8 @@ Under `$VGTK_DATA_ROOT`:
    outcome (`converged`, `not_run` or another retcode) and its count of observations dropped at its start (a start prediction
    off the camera model's valid domain: such an observation is left out, the rest solved); `summary.md` states it.
 3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the camera's
-   imaged region — the sensor ∩ its lens coverage ∩ its model's valid domain — less a rim margin at the coverage's edge; unsaturated; positive) is
+   imaged region — the sensor ∩ its lens coverage ∩ its model's valid domain — less a rim margin at the coverage's edge; positive; its direction saturated in no frame, each frame's mask dilated by
+   `[domain] saturation_margin_px` ≈ 3 × the bundle RMS) is
    one observation of
    `I_k(p) = L(R_k·f(p)) · V(u(p))`: the scene's radiance L in the pixel's direction times the vignetting V at its sensor
    point. The photo is read at its own pixel centres — no interpolation anywhere: the pixel's ray `f(p)` is the lens's
@@ -134,8 +135,10 @@ Under `$VGTK_DATA_ROOT`:
 4. **Score the seams** (`score_seams`, PanoramaStitching). At every pixel of an equirectangular raster seen by two or more
    frames: the median over the other frames of `log(I_k/V_k) − log(I_last/V_last)`, the frame shown last being the one the
    unblended render keeps. With the right V only noise, misregistration and parallax remain. Its rms and robust spread
-   (1.4826·MAD) are reported for no correction and for the fitted V. **Saturated pixels are excluded** (a clipped value is
-   no observation). `seams_*.png` map it: red where the other frames are brighter than the shown one, blue darker (±0.3 in
+   (1.4826·MAD) are reported for no correction and for the fitted V. **Saturated directions are excluded from every frame**
+   (a clipped value is no observation, and the score reads the fit's own observations: a direction any frame sees saturated,
+   its mask dilated by `[domain] saturation_margin_px`, is measured by no frame; PanoramaStitching 0.9, so the seam numbers
+   differ from 0.8's). `seams_*.png` map it: red where the other frames are brighter than the shown one, blue darker (±0.3 in
    log), grey where fewer than two frames measure the pixel.
 5. **Render** (`render_panorama`). Cylindrical, cylindrical equal-area and a rectilinear virtual camera, each corrected
    (divided by V) and uncorrected, unblended (the last frame that sees a pixel wins, so a wrong V shows as a step at every

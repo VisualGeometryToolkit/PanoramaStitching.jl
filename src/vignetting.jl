@@ -709,7 +709,7 @@ end
 
 """
     fit_vignetting(vignetting, camera::BoundedCamera, frames, rotations; free_directions, gain_correction, saturated, frame_map,
-                   rim_margin_px, fov_deg, plane, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg, penalty_order, penalty_weight,
+                   rim_margin_px, saturation_margin_px, fov_deg, plane, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg, penalty_order, penalty_weight,
                    vignetting_penalty_weight, solver, observation_noise)
         -> FitResult{<:VisualGeometryToolkitCore.AbstractVignetting, VignettingMetadata}
 

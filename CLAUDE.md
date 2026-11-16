@@ -42,6 +42,9 @@ from the registries (CauRegistry; General for those it holds).
   `difference_rows`, device CG (Core's `normal_cg`) or host
   Cholesky (SparseArrays).
 - `src/seams.jl` — `score_seams`: the seam ratio per raster pixel through `sample_frames`.
+- `src/pair_vignetting.jl` — the model-free vignetting of a sweep, the pair equation on rings of a field angle:
+  `ring_correspondences`, `ring_pair_vignetting`, `fit_additive_level`. The saturation test it reads, `fit_vignetting`'s and
+  `score_seams`' alike, is one (`_sweep_saturation` in vignetting.jl: the masks dilated and symmetric over the frames).
 - `examples/panorama_vignetting/` — the RAW-to-corrected-panorama driver (`run.jl`) and its configs of record; its own
   environment (`Project.toml`, not a workspace member: CUDA and LibRaw_jll).
 
