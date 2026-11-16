@@ -29,7 +29,8 @@ The correspondences of a sweep on rings of a field angle ([`ring_correspondences
 `frames[:, i] = (k, l)`, the rings `rings[:, i] = (a, b)` (a < b; frame `k` sees the direction in ring `a`), the values
 `values[:, i] = (I_k, I_l)` of the plane read, the field angles `angles[:, i] = (θ_k, θ_l)` (degrees), and the ring edges
 `edges` (degrees) with the field-angle cut `tmax`; `n_frames`
-the frames of the sweep, `n_directions` the directions sampled and `n_dropped` those dropped as saturated in some frame.
+the frames of the sweep, `n_directions` the directions sampled and `n_dropped` those the symmetric test dropped from every
+frame that the frames' own masks left seen in some frame.
 Host arrays.
 """
 struct PairCorrespondences
@@ -83,24 +84,23 @@ function ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVe
     length(edges) >= 3 && issorted(edges) && allunique(edges) ||
         throw(ArgumentError("ring_correspondences: edges must be increasing with at least two rings, got $edges"))
     K = length(frames)
+    length(rotations) == K && length(saturated) == K ||
+        throw(DimensionMismatch("ring_correspondences: $K frames, $(length(rotations)) rotations and $(length(saturated)) saturation masks"))
     kw = (; frame_map, rim_margin_px, fov_deg, vignetting = (u, f) -> 1.0, plane_maps)
-    # the masks dilated by `saturation_margin_px` (fit_vignetting's one helper, `_dilated_saturation`)
     be = KA.get_backend(frames[1])
     margin = _checked_saturation_margin("ring_correspondences", saturation_margin_px)
+    # each frame's own mask dilated by `saturation_margin_px` (fit_vignetting's one helper, `_dilated_saturation`), read by
+    # sample_frames' rule (no clipped pixel among a sample's bilinear taps) on either path
+    masks = _dilated_saturation(saturated, margin, frame_map, be)
+    s = sample_frames(camera, frames, rotations, directions; saturated = [masks[:, :, k] for k in 1:K], kw...)
     n_dropped = 0
+    seen = s.seen
     if symmetric                                                           # the directions some frame sees saturated: out of every frame
-        clear = fill(fill!(similar(saturated[1]), false), K)               # one all-clear mask, read by every frame
-        s = sample_frames(camera, frames, rotations, directions; saturated = clear, kw...)
         Hf, Wf = size(frames[1], 1), size(frames[1], 2)
         sees = _Sees(frame_region(camera, _covered_extent(frame_map, Wf, Hf)..., rim_margin_px), cosd(Float64(fov_deg)))
-        clipped = _saturated_directions(saturated, VgtkCore.model(camera), sees, frame_map, rotations, directions,
-                                        margin, be)                        # fit_vignetting's symmetric test
-        n_dropped = count(clipped .& vec(any(s.seen; dims = 2)))
-        seen = s.seen .& .!clipped
-    else                                                                   # each frame's own dilated mask (sample_frames' rule)
-        masks = _dilated_saturation(saturated, margin, frame_map, be)
-        s = sample_frames(camera, frames, rotations, directions; saturated = [masks[:, :, k] for k in 1:K], kw...)
-        seen = s.seen
+        clipped = _saturated_directions(masks, VgtkCore.model(camera), sees, frame_map, rotations, directions, be)   # fit_vignetting's symmetric test
+        n_dropped = count(clipped .& vec(any(seen; dims = 2)))
+        seen = seen .& .!clipped
     end
     ang = similar(seen, Float64)
     ang .= _AngleAt(field_angle).(seen, s.pixels)                          # the field angle once; NaN where unseen
@@ -190,7 +190,8 @@ The model-free vignetting of the correspondences `pc` (one deterministic computa
 weighted by its frames' `frame_weights`, a bootstrap's multiplicities), then the least squares of `ln V_a − ln V_b` = that
 median over the ring pairs, each row weighted by its summed weight, with `ln V₁ = 0` (the first ring the gauge, eliminated).
 The estimate is `ln V` per ring (`NaN` for a ring the ring pairs do not connect to the first); the termination record
-`(Success, ClosedForm)` (`(InitialFailure, NoRule)` when no ring pair has a correspondence), `rms` the weighted rms of the ring-pair rows, `n` the correspondences
+`(Success, ClosedForm)` (`(InitialFailure, NoRule)` when no ring pair has a correspondence or none connects a ring to the
+first), `rms` the weighted rms of the ring-pair rows, `n` the correspondences
 used, the metadata a [`PairVignettingMetadata`](@ref).
 """
 function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
@@ -215,6 +216,7 @@ function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame
     isempty(rows) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, 0, NaN, 0, meta(NaN, collect(2:R)))
     conn = _connected_to_first(R, rows)
     free = [q for q in 2:R if conn[q]]; col = Dict(q => c for (c, q) in enumerate(free))
+    isempty(free) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, 0, NaN, 0, meta(NaN, collect(2:R)))
     rows = [(i, j) for (i, j) in rows if conn[i] && conn[j]]
     M = zeros(length(rows), length(free)); m = zeros(length(rows)); s = zeros(length(rows))
     for (r, (i, j)) in enumerate(rows)

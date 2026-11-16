@@ -496,10 +496,10 @@ function _checked_saturation_margin(what, margin::Real)
     return Float64(margin)
 end
 
-# The one symmetric test of a sweep (`_SaturatedInAnyFrame`) on its frames' dilated masks, its rotations as SMatrix values.
-_any_frame_saturation(saturated, camera, sees, frame_map, rotations, margin::Float64, be) =
-    _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(SMatrix{3, 3, Float64, 9}.(rotations)),
-                         _dilated_saturation(saturated, margin, frame_map, be))
+# The one symmetric test of a sweep (`_SaturatedInAnyFrame`) on its frames' dilated masks (`_dilated_saturation`), its rotations
+# as SMatrix values.
+_any_frame_saturation(masks, camera, sees, frame_map, rotations) =
+    _SaturatedInAnyFrame(camera, sees, inv(frame_map), Tuple(SMatrix{3, 3, Float64, 9}.(rotations)), masks)
 
 # The frames' saturation masks made SYMMETRIC (PanoramaStitching 0.8.5; T. Harder's analysis of 2026-11-15): a scene direction
 # counts only where NO frame whose rows see it is saturated there. A frame's own mask alone drops a bright scene point where
@@ -507,8 +507,8 @@ _any_frame_saturation(saturated, camera, sees, frame_map, rotations, margin::Flo
 # out too flat there (on the paper's sweeps 5–15 % at the last ring). Returns one Hf × Wf mask per frame, `true` at every
 # domain pixel `lin` whose direction is saturated somewhere (its own dilated mask elsewhere), on the frames' backend.
 function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays, margin::Float64, be)
-    any_frame = _any_frame_saturation(saturated, camera, sees, frame_map, Rs, margin, be)
-    masks = any_frame.masks
+    masks = _dilated_saturation(saturated, margin, frame_map, be)
+    any_frame = _any_frame_saturation(masks, camera, sees, frame_map, Rs)
     return map(1:length(saturated)) do k
         E = masks[:, :, k]
         hit = VgtkCore.device_zeros(Bool, be, length(lin))
@@ -518,10 +518,10 @@ function _symmetric_saturation(saturated, camera, sees, frame_map, Rs, lin, rays
     end
 end
 
-# The world directions saturated in some frame whose domain sees them (`_SaturatedInAnyFrame` on the dilated masks): the
-# symmetric mask of `ring_correspondences`' sampled directions, one Bool per direction on the frames' backend.
-function _saturated_directions(saturated, camera, sees, frame_map, rotations, directions, margin::Float64, be)
-    any_frame = _any_frame_saturation(saturated, camera, sees, frame_map, rotations, margin, be)
+# The world directions saturated in some frame whose domain sees them (`_SaturatedInAnyFrame` on the dilated masks `masks`,
+# Hf × Wf × K): the symmetric mask of `ring_correspondences`' sampled directions, one Bool per direction on the frames' backend.
+function _saturated_directions(masks, camera, sees, frame_map, rotations, directions, be)
+    any_frame = _any_frame_saturation(masks, camera, sees, frame_map, rotations)
     hit = VgtkCore.device_zeros(Bool, be, length(directions))
     VgtkCore.pointwise!(any_frame, hit, vec(directions); exec = VgtkCore.OnBackend(be))
     return hit
