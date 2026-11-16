@@ -96,3 +96,37 @@ end
         @test isequal(isfinite.(xh), isfinite.(xd)) && maximum(abs, filter(isfinite, xh .- xd)) < 1e-4
     end
 end
+
+@testitem "ring_correspondences: one mask per frame; a clipped pixel never blended into a kept value. ring_pair_vignetting: the gauge's ring unconnected" setup = [VignettingSequence, BayerMaps] begin
+    using Test, StaticArrays
+    using PanoramaStitching: ring_correspondences, ring_pair_vignetting, fibonacci_directions, PairCorrespondences
+    import VisualGeometryToolkitCore as VgtkCore
+    c = SVector(400.0, 400.0)
+    radius(u) = hypot(u[1] - c[1], u[2] - c[2])
+    edges = collect(0.0:40.0:360.0)
+    q = vignetting_sequence(u -> -0.8 * (radius(u) / 400)^2)
+    D = fibonacci_directions(q.R, 40000; fov_deg = 120.0)
+    kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2, field_angle = radius, edges)
+    # one saturation mask per frame, on either path (too few: a frame's clipping silently untested; too many: a frame index past
+    # the rotations in the kernel)
+    for symmetric in (true, false), n in (5, 7)
+        sat = [falses(size(q.frames[1], 1), size(q.frames[1], 2)) for _ in 1:n]
+        @test_throws DimensionMismatch ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = sat, saturation_margin_px = 2.0, symmetric)
+    end
+    # frame 2's scattered clipped pixels (1 in 50) read 1000, the scene ≤ 0.2: with no dilation (0 px) a sample whose nearest
+    # pixel is clear but whose bilinear taps reach a clipped one is dropped by the symmetric test as by the frame's own mask
+    sat = [falses(size(F, 1), size(F, 2)) for F in q.frames]
+    sat[2] .= [(7i + 13j) % 50 == 0 for i in axes(sat[2], 1), j in axes(sat[2], 2)]
+    frames = [copy(F) for F in q.frames]
+    for p in 1:3
+        view(frames[2], :, :, p)[sat[2]] .= 1.0f3
+    end
+    for symmetric in (true, false)
+        pc = ring_correspondences(q.camera, frames, q.R, D; kw..., saturated = sat, saturation_margin_px = 0.0, symmetric)
+        @test length(pc) > 1000 && maximum(pc.values) < 1.0
+    end
+    # three rings, the only ring pair (2, 3): nothing is connected to the gauge's ring, so nothing is identified — not a success
+    pc1 = PairCorrespondences([0.0, 1.0, 2.0, 3.0], 3.0, Int32[1 1; 2 2], Int32[2 2; 3 3], [1.0 2.0; 0.5 1.0], [1.5 1.5; 2.5 2.5], 2, 2, 0)
+    r1 = ring_pair_vignetting(pc1)
+    @test VgtkCore.retcode_symbol(r1) === :degenerate && all(isnan, VgtkCore.estimate(r1)[2:end])
+end
