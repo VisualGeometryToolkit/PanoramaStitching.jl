@@ -365,10 +365,8 @@ result's `n` is the number of observations kept; its metadata's
 
 A refine ends in the local minimum its start leads to; the result's termination
 record (Core's `retcode` and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `converged(result)` its success) says how
-the bundle ended, as Core's LM reports it: a stop on the relative cost decrease (`ftol`, `CostDecrease`) or on the step
-size (`xtol`, `IncrementSize`) is `Success`, with no stationarity test (Core 0.11: a tolerance stop is converged; a too
-loose `ftol`/`xtol` ends a converged bundle short of the minimum); a step-size stop at a non-finite trial (a NaN wall)
-is `Stalled` with `NonFinite`, the iteration cap `MaxIters`; `max_iter = 0` (no
+the bundle ended: Core's `lmsolve_chart!` verdict, passed through (an `ftol` or `xtol` stop is `Success`, so a loose
+tolerance converges short of the minimum); `max_iter = 0` (no
 solve: the start's rotations are the result) `MaxIters` with `IterationCap`. A track observed in fewer than two frames, or naming a frame
 without a start rotation, some observations with a covariance and some
 without, a covariance that is not finite and positive definite, and a start
@@ -553,10 +551,9 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
                           for (i, o) in enumerate(t)] for (j, t) in enumerate(tracks)]
     sol = nothing
     if max_iter > 0                                                          # ONE LM run at the given width
-        # Core's one multi-block LM (`LmProblem` + `lmsolve_chart!`, its one success rule: a tolerance stop on a finite
-        # step is converged), on the FREE variables only: the held ones (the gauge frame, the
-        # tracks left out, the unconstrained frames) are no variables, and a block of the held gauge frame carries its
-        # rotation (`_HeldFrame`)
+        # Core's one multi-block LM (`LmProblem` + `lmsolve_chart!`), on the FREE variables only: the held ones (the gauge
+        # frame, the tracks left out, the unconstrained frames) are no variables, and a block of the held gauge frame carries
+        # its rotation (`_HeldFrame`)
         kernel = robustifier()
         newidx = cumsum(unfixed) .* unfixed                                 # a free variable's index in the solve, 0 held
         blocks = NLLSsolver.AbstractResidual[]
@@ -576,8 +573,7 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
             unfixed[v] && (vars[v] = lp.variables[newidx[v]])
         end
     end
-    # The termination record (§14): Core's adapter's (a tolerance stop on a finite step a success, a NaN wall a stall, the
-    # cap `MaxIters`); `max_iter = 0` runs no solve: the iteration cap.
+    # The termination record (§14): Core's adapter's verdict; `max_iter = 0` runs no solve: the iteration cap.
     rc, rule = sol === nothing ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (sol.code, sol.rule)
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]

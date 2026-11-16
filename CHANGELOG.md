@@ -17,10 +17,9 @@ moves to Core 0.11. The compat floors are the registry latest: VisualGeometryToo
   **Migrate:** a caller that read `Stalled` (or `!converged(result)`) as "the bundle stopped short of a minimum" tightens
   `ftol` / `xtol` (`bundle_ftol` / `bundle_xtol` in `register_rotations`) or tests the result itself.
 
-Why a minor and not a patch: the bundle's termination record is public and documented, and its meaning changes. Nothing in
-the package branches on it — `register_rotations` neither accepts, rejects nor retries a bundle by its verdict (it prints it,
-and the track check's re-solves run on residuals alone) — so the new verdict moves no rotation, track or reported number:
-Core 0.11 changed the LM's verdict, not its stops or its iterates.
+Why a minor and not a patch: the public, documented termination record changes meaning. No rotation, track or reported
+number moves: `register_rotations` neither accepts, rejects nor retries a bundle by its verdict (it prints it), and Core 0.11
+changed the LM's verdict, not its stops or its iterates.
 
 ## 0.9.0
 

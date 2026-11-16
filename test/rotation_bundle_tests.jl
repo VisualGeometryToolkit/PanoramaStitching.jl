@@ -90,9 +90,8 @@ end
     @test_throws ArgumentError refine_rotations(CAM, start, obs0; kw...,
                                                 optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0))
     @test res.metadata.loss_width == 1.5 && isnan(res.metadata.scale) && VgtkCore.scale_source(res) == VgtkCore.ScaleNone
-    # the termination record (§14): a step-size stop is Core's convergence (0.11: a tolerance stop on a finite step is
-    # converged, with no stationarity test), even where the robust cost is not stationary. One step from the start (an
-    # xtol above any step) stops by the step size short of the minimum, and is converged all the same.
+    # the termination record (§14): Core's verdict, passed through. One step from the start (an xtol above any step) stops
+    # by the step size short of the minimum, and is converged (Core: a tolerance stop is converged).
     stopped = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., xtol = 1.0e3)
     @test VgtkCore.stop_rule(stopped) == VgtkCore.IncrementSize && stopped.iterations == 1
     @test VgtkCore.retcode(stopped) == VgtkCore.ReturnCode.Success && VgtkCore.converged(stopped)
