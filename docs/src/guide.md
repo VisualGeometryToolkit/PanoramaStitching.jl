@@ -237,10 +237,10 @@ g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per
 A sweep about one axis does not observe a 2-D V's tilt across it (a field that varies only with the ray's height is unchanged
 by a pure yaw, so L absorbs it): fit the tensor space only to frames with pitch and roll diversity. [`score_seams`](@ref)
 measures the result where it matters, at the seams of the unblended panorama: per raster pixel measured by two frames or more,
-the median log ratio of the other frames to the shown one (saturated pixels excluded), and its rms and 1.4826·MAD:
+the median log ratio of the other frames to the shown one (on the fit's observations: a direction any frame sees saturated is excluded from every frame), and its rms and 1.4826·MAD:
 
 ```julia
-seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, frame_map,
+seams = score_seams(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, saturated, saturation_margin_px = 4.0, frame_map,
                     rim_margin_px = 12.0, fov_deg = 89.0, plane = 2, chunk = 200_000)
 seams.rms, seams.mad              # the spread of the log ratio over the n pixels two frames or more measure
 corrected = render_panorama(camera, frames, reg.rotations, cyl; vignetting = V, gains = g, frame_map,

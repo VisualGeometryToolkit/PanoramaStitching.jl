@@ -114,7 +114,7 @@ end
 
     # the seam score: the true V leaves (almost) nothing, no correction leaves the vignetting's steps
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+    sk = (; saturated = q.saturated, saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           chunk = 20_000)
     fitted = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(cg), sk...)
     none = score_seams(q.camera, q.frames, q.R, view; vignetting = (u, f) -> 1.0, sk...)
@@ -166,7 +166,7 @@ end
         @test maximum(abs.(control_points(VgtkCore.estimate(dsf)) .- control_points(VgtkCore.estimate(hs)))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-        sk = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+        sk = (; saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
               chunk = 20_000, vignetting = VgtkCore.estimate(h))
         sh = score_seams(q.camera, q.frames, q.R, view; saturated = q.saturated, sk...)
         sd = score_seams(q.camera, df, q.R, view; saturated = ds, sk...)
@@ -283,7 +283,7 @@ end
 
     # the seams: the fitted V with its gains leaves (almost) nothing; the same V with the frames taken at one exposure does not
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
+    sk = (; saturated = q.saturated, saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, plane = 2,
           chunk = 20_000, vignetting = VgtkCore.estimate(with))
     sg = score_seams(q.camera, q.frames, q.R, view; gains = G, sk...)
     s1 = score_seams(q.camera, q.frames, q.R, view; sk...)
@@ -350,7 +350,7 @@ end
     ch = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = ChannelGains(), kw...)
     fr = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0), gain_correction = IntensityGains(), kw...)
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
-    sk = (; saturated = q.saturated, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, chunk = 20_000)
+    sk = (; saturated = q.saturated, saturation_margin_px = 2.0, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, chunk = 20_000)
     for p in (1, 3)
         sc = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(ch), gains = ch.metadata.gains, plane = p, sk...)
         sf = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(fr), gains = fr.metadata.gains, plane = p, sk...)

@@ -33,7 +33,7 @@
         view = panorama_view(VgtkCore.Equirectangular(), (-60.0, 90.0, -40.0, 40.0), 5.0)
         render_panorama(camera, frames, rotations, view; vignetting = v, kw...)
         render_cube_map(camera, frames, rotations, 8; vignetting = v, kw...)
-        score_seams(camera, frames, rotations, view; vignetting = v, saturated, kw..., plane = 2, chunk = 1000)
+        score_seams(camera, frames, rotations, view; vignetting = v, saturated, saturation_margin_px = 2.0, kw..., plane = 2, chunk = 1000)
         sample_frames(camera, frames, rotations, fibonacci_directions(rotations, 50; fov_deg = 100.0); saturated, vignetting = v, kw...)
         # (not refine_rotations: an NLLSsolver solve evaluates into NLLSsolver, which a precompiling package may not do)
     end

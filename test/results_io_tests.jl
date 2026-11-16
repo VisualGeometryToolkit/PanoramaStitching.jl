@@ -45,7 +45,7 @@
         Rq = [b.rotations[k].R for k in 1:length(b.rotations)]                          # the loaded QuatRotations, as the guide hands them over
         l = render_panorama(b.camera, q.frames, Rq, view; vignetting = b.vignetting, gains = b.gains, rk...)
         @test a.owner == l.owner && isapprox(a.image, l.image; nans = true, rtol = 1.0e-12)
-        sk = (; saturated = q.saturated, chunk = 20_000, plane = 2, rk...)
+        sk = (; saturated = q.saturated, saturation_margin_px = 2.0, chunk = 20_000, plane = 2, rk...)
         sa = score_seams(q.camera, q.frames, q.R, view; vignetting = VgtkCore.estimate(r), gains = r.metadata.gains, sk...)
         sl = score_seams(b.camera, q.frames, Rq, view; vignetting = b.vignetting, gains = b.gains, sk...)
         @test sa.n == sl.n && isapprox(sa.rms, sl.rms; rtol = 1.0e-10)

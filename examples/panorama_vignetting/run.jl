@@ -676,14 +676,14 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
     sc = C.cfg["seams"]; d = C.cfg["domain"]
     ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])
     sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
-    skw = (; saturated = dev.saturated, frame_map = dev.frame_map, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
-           plane = d["plane"], plane_maps = dev.plane_maps, chunk = sc["chunk"])
+    skw = (; saturated = dev.saturated, saturation_margin_px = d["saturation_margin_px"], frame_map = dev.frame_map,
+           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_maps = dev.plane_maps, chunk = sc["chunk"])
     t = time()
     before = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
     after = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
     T["score_seams (two)"] = time() - t
     save_ratio(joinpath(C.run, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.run, "seams_corrected.png"), Array(after.ratio))
-    say(log, "seams (saturated pixels excluded): uncorrected rms $(round(before.rms; digits = 4)) MAD $(round(before.mad; digits = 4)); " *
+    say(log, "seams (saturated directions excluded from every frame, the fit's symmetric masks): uncorrected rms $(round(before.rms; digits = 4)) MAD $(round(before.mad; digits = 4)); " *
              "corrected rms $(round(after.rms; digits = 4)) MAD $(round(after.mad; digits = 4)); $(after.n) pixels")
 
     # the renders: the real images (no saturation mask), corrected and uncorrected at one exposure

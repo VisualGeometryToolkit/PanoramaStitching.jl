@@ -70,8 +70,8 @@ function compare_set(A, order, C, inp, lens, reg, dir, key, arms_path, set_path)
     sc = C.cfg["seams"]; d = C.cfg["domain"]
     ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])
     sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
-    skw = (; saturated = dev.saturated, frame_map = dev.frame_map, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"],
-           plane_maps = dev.plane_maps, chunk = sc["chunk"])
+    skw = (; saturated = dev.saturated, saturation_margin_px = d["saturation_margin_px"], frame_map = dev.frame_map,
+           rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_maps = dev.plane_maps, chunk = sc["chunk"])
     rim = Float64(d["rim_margin_px"])
     domain = PanoramaStitching.frame_region(lens, W, H, rim)
     in_domain(u) = VgtkCore.Point2(u[1], u[2]) ∈ domain
