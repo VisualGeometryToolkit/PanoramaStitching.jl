@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.10.0
+
+A breaking minor: the rotation bundle's termination record follows VisualGeometryToolkitCore 0.11's LM verdict, and the stack
+moves to Core 0.11. The compat floors are the registry latest: VisualGeometryToolkitCore 0.11, VisualGeometryToolkitEstimation
+0.12, VisualGeometryToolkitFeatures 0.9.7 (test and example: VisualGeometryToolkitIO 0.10.6, VisualGeometryToolkitEval 0.9.2).
+
+### Breaking
+
+- **`refine_rotations` and `refine_camera_and_rotations` report a tolerance stop as converged.** The bundle runs Core's
+  `LmProblem` / `lmsolve_chart!` and returns its verdict as the result's `retcode` / `stop_rule`. Core 0.11 maps a stop on
+  the relative cost decrease (`ftol`, `CostDecrease`) or on the step size (`xtol`, `IncrementSize`) to `ReturnCode.Success`
+  with no stationarity test; until 0.9 such a stop where the robust cost was not stationary was `Stalled`, and
+  `converged(result)` false. A step-size stop at a non-finite trial (a NaN wall) is `(Stalled, NonFinite)`. The same result
+  is `register_rotations`' `bundle`, so a `Registration`'s `retcode(reg.bundle)` can read `Success` where 0.9 read `Stalled`.
+  **Migrate:** a caller that read `Stalled` (or `!converged(result)`) as "the bundle stopped short of a minimum" tightens
+  `ftol` / `xtol` (`bundle_ftol` / `bundle_xtol` in `register_rotations`) or tests the result itself.
+
+Why a minor and not a patch: the bundle's termination record is public and documented, and its meaning changes. Nothing in
+the package branches on it — `register_rotations` neither accepts, rejects nor retries a bundle by its verdict (it prints it,
+and the track check's re-solves run on residuals alone) — so the new verdict moves no rotation, track or reported number:
+Core 0.11 changed the LM's verdict, not its stops or its iterates.
+
 ## 0.9.0
 
 A breaking minor: the saturation masks are symmetric over the frames (the fit and the seam score read one test), and the
