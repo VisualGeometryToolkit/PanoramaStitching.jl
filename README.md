@@ -84,7 +84,10 @@ size(pano.image)                                                 # (458, 1220, 3
 - [API reference](https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/dev/api/).
 
 The features come from VisualGeometryToolkitFeatures, the pairwise rotations and the rotation averaging from
-VisualGeometryToolkitEstimation, and the cameras, panorama projections and warping from VisualGeometryToolkitCore. The
+VisualGeometryToolkitEstimation, the cameras, panorama projections and warping from VisualGeometryToolkitCore, and the
+vignetting models from VisualRadiometryToolkitCore. The results — the camera, the frames' rotations, the vignetting and
+the frames' gains — are saved and loaded as a `vgio/panorama/v2.0` file (`save_panorama`, `load_panorama`), each part
+written by the kind that owns it (VisualGeometryToolkitIO, VisualRadiometryToolkitIO). The
 [portal](https://visualgeometrytoolkit.github.io) links every package of the stack. The repository's
 `examples/panorama_vignetting/` runs the whole chain on RAW sweeps from configs of record.
 

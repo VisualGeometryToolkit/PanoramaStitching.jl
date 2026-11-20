@@ -9,7 +9,7 @@
 # `f(p)` the pixel's ray (the camera's back-projection of its sensor point u(p), computed once:
 # the pixel geometry is the same in every frame), `R_k` the frame's rotation (`d = R_k·f`), `L` the
 # scene's radiance on the sphere, `V` the vignetting on the sensor and `g_k` the frame's exposure gain
-# (`gain_correction`; g₁ = 1). V is a VisualGeometryToolkitCore `LogVignetting` (V = exp(s), `s` a
+# (`gain_correction`; g₁ = 1). V is a VisualRadiometryToolkitCore `LogVignetting` (V = exp(s), `s` a
 # `RadialVignetting` or `TensorProductVignetting` spline of log V, linear in its control points); log L a
 # uniform cubic B-spline over an azimuthal-equidistant chart of the covered sphere (`AzimuthalChart`).
 # The photo is read at the pixel centres only — no interpolation of the frames at all: the scene
@@ -290,12 +290,12 @@ _elapsed(be, t0) = (KA.synchronize(be); (time_ns() - t0) / 1.0e9)
 # spline of log V, else the log of any vignetting held fixed (any vignetting the render takes, `v(u, f)`; a Core model reads u
 # only). And a LogVignetting's row ∂log V/∂P at its active control points (the spline's basis, Core's `active_coefficients`);
 # none for a V held fixed.
-@inline _log_vignetting(v::VgtkCore.LogVignetting, u, f) = VgtkCore.log_spline(v)(u)
+@inline _log_vignetting(v::VrtkCore.LogVignetting, u, f) = VrtkCore.log_spline(v)(u)
 @inline function _log_vignetting(v, u, f)
     V = v(u, f)
     return log(ifelse(V > 0, V, zero(V)))        # V ≤ 0: −Inf, refused by name afterwards (not Base's DomainError on the host)
 end
-@inline _active_log_rows(v::VgtkCore.LogVignetting, u) = SVector(VgtkCore.active_coefficients(VgtkCore.log_spline(v), u)[2])
+@inline _active_log_rows(v::VrtkCore.LogVignetting, u) = SVector(VrtkCore.active_coefficients(VrtkCore.log_spline(v), u)[2])
 @inline _active_log_rows(v, u) = SVector{0, Float64}()
 
 # The per-point functors of Core's `pointwise!` over the domain pixels (moved to the frames' backend with `OnBackend`, so a V
@@ -303,7 +303,7 @@ end
 struct _ActiveIndices{V}
     v::V
 end
-@inline (a::_ActiveIndices)(u) = SVector(VgtkCore.active_coefficients(VgtkCore.log_spline(a.v), u)[1])
+@inline (a::_ActiveIndices)(u) = SVector(VrtkCore.active_coefficients(VrtkCore.log_spline(a.v), u)[1])
 struct _LogRows{V}
     v::V
 end
@@ -711,7 +711,7 @@ end
     fit_vignetting(vignetting, camera::BoundedCamera, frames, rotations; free_directions, gain_correction, saturated, frame_map,
                    rim_margin_px, saturation_margin_px, fov_deg, plane, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg, penalty_order, penalty_weight,
                    vignetting_penalty_weight, solver, observation_noise)
-        -> FitResult{<:VisualGeometryToolkitCore.AbstractVignetting, VignettingMetadata}
+        -> FitResult{<:VisualRadiometryToolkitCore.AbstractVignetting, VignettingMetadata}
 
 The vignetting V and the exposure gains of a camera that only rotated, from
 its frames alone (no flat field): every pixel of every frame is the scene's
@@ -800,7 +800,7 @@ Every stage runs on the backend that owns `frames` (GPU arrays: KernelAbstractio
 kernels and atomic scatter-add; host arrays, the same kernels on the CPU). The
 `saturated` masks live on the same backend.
 
-Returns a `FitResult` whose estimate is the fitted Core vignetting model
+Returns a `FitResult` whose estimate is the fitted VisualRadiometryToolkitCore vignetting model
 (isbits: the `vignetting` keyword of [`render_panorama`](@ref),
 [`sample_frames`](@ref) and [`score_seams`](@ref), on the host or a device;
 the given model when V is held fixed), its termination record
@@ -863,11 +863,11 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         throw(ArgumentError("fit_vignetting: PositionNoise needs the frames' value variances (an uncertain image: Core's LinearRaw " *
                             "under a sensor model whose noise feeds them); a plain image has none"))
     Zp = Matrix{Float64}(free_directions); fits_v = size(Zp, 2) > 0
-    fits_v && !(vignetting isa VgtkCore.LogVignetting) &&
-        throw(ArgumentError("fit_vignetting: free directions move a VisualGeometryToolkitCore LogVignetting's control points (the " *
+    fits_v && !(vignetting isa VrtkCore.LogVignetting) &&
+        throw(ArgumentError("fit_vignetting: free directions move a VisualRadiometryToolkitCore LogVignetting's control points (the " *
                             "fit is linear in log V); a $(typeof(vignetting).name.name) can only be held fixed (free_directions with no column)"))
     # a V held fixed is read as log V at the domain's pixels only: its block of the system is one zero column
-    nV = fits_v ? VgtkCore.n_control_points(vignetting) : 1
+    nV = fits_v ? VrtkCore.n_control_points(vignetting) : 1
     fits_v && size(Zp, 1) != nV &&
         throw(DimensionMismatch("fit_vignetting: free_directions has $(size(Zp, 1)) rows for $nV control points"))
     Hf, Wf, C = size(frames[1])
@@ -934,9 +934,9 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     nG = gains ? K - 1 : 0
     # the second differences of V's control points along each axis of their lattice (Core's `difference_rows`): DᵀD, the weak
     # penalty that fixes the control points the domain does not reach
-    D2 = fits_v ? (D = VgtkCore.difference_rows(size(VgtkCore.control_points(vignetting)), 2); Matrix(D' * D)) : zeros(1, 1)
+    D2 = fits_v ? (D = VgtkCore.difference_rows(size(VrtkCore.control_points(vignetting)), 2); Matrix(D' * D)) : zeros(1, 1)
     v = vignetting
-    MA = fits_v ? length(VgtkCore.active_coefficients(VgtkCore.log_spline(v), Array(upix[1:1])[1])[1]) : 1
+    MA = fits_v ? length(VrtkCore.active_coefficients(VrtkCore.log_spline(v), Array(upix[1:1])[1])[1]) : 1
     VI = similar(frames[1], SVector{MA, Int}, P); VW = similar(frames[1], SVector{MA, Float64}, P); LV = similar(frames[1], Float64, P)
     exec = VgtkCore.OnBackend(be)
     if fits_v
@@ -981,7 +981,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         _vblock_kernel!(be, 256)(AVVd, bVd, gd, Wp, Yp, VI, VW; ndrange = P)
         AVV = Array(AVVd); bV = Array(bVd); g = Array(gd) ./ P
         # the weak penalty on the control points P₀ + Z y: λ DᵀD on the increment, −λ DᵀD P₀ on the right-hand side
-        P0 = fits_v ? vec(Matrix{Float64}(VgtkCore.control_points(v))) : zeros(1)
+        P0 = fits_v ? vec(Matrix{Float64}(VrtkCore.control_points(v))) : zeros(1)
         λV = vignetting_penalty_weight * Statistics.mean(LinearAlgebra.diag(AVV))
         fits_v && (AVV .+= λV .* D2; bV .-= λV .* (D2 * P0))
         seconds[:vignetting_block] += _elapsed(be, t0)
@@ -1040,7 +1040,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             vn = VgtkCore.retract(VgtkCore.restrict(VgtkCore.ParameterManifold(v), Z), xh[(nL + 1):(nL + mV)])
             VgtkCore.pointwise!(_LogV(vn), LV, upix, rays; exec)
             c = Statistics.mean(Array(LV))
-            v = VgtkCore.with_control_points(vn, vec(Matrix{Float64}(VgtkCore.control_points(vn))) .- c)
+            v = VrtkCore.with_control_points(vn, vec(Matrix{Float64}(VrtkCore.control_points(vn))) .- c)
             cL .+= c; LV .-= c
         end
         position_noise || break

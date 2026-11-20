@@ -150,7 +150,7 @@ The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the R
 `BoundedCamera`, through its model's `imaging_transform`) to a sensor point between pixels, and sampled there bilinearly — one fused map
 `camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
 (camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
-ray's direction (a field angle) reads `f`; a Core `AbstractVignetting` reads `u` — and by the frame's exposure gain
+ray's direction (a field angle) reads `f`; a VisualRadiometryToolkitCore `AbstractVignetting` reads `u` — and by the frame's exposure gain
 `gains[k, c]` of each colour plane c when `gains` is given (`K × 3`, per frame and plane: [`fit_vignetting`](@ref)'s
 `metadata.gains`; `nothing`, the frames taken as one exposure). No seam, no blend, and
 each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.

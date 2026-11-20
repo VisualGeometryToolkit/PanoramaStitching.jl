@@ -55,7 +55,8 @@ end
     using LinearAlgebra: I
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, panorama_view, ConjugateGradient, SparseCholesky
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, TensorProductVignetting, LogVignetting, pole_regular_basis, n_control_points,
+    import VisualRadiometryToolkitCore as VrtkCore
+    using VisualRadiometryToolkitCore: RadialVignetting, TensorProductVignetting, LogVignetting, pole_regular_basis, n_control_points,
         control_points, with_control_points
     logv(s) = LogVignetting(with_control_points(s, zeros(n_control_points(s))))      # log V ≡ 0: the start
     # the domain's pixel centres (camera pixels) and the error of a fit against the truth, both in the gauge mean log V = 0
@@ -77,7 +78,7 @@ end
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     q = vignetting_sequence(radial)
     v0 = logv(RadialVignetting(12, c, 420.0))                # the domain reaches ρ ≈ 413 px from c
-    @test_throws ArgumentError fit_vignetting(VgtkCore.log_spline(v0), q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0),
+    @test_throws ArgumentError fit_vignetting(VrtkCore.log_spline(v0), q.camera, q.frames, q.R; free_directions = pole_regular_basis(v0),
                                               saturated = q.saturated, solver = cgs, kw...)      # a V-form spline is only held fixed
     Z = pole_regular_basis(v0)
     cg = fit_vignetting(v0, q.camera, q.frames, q.R; free_directions = Z, saturated = q.saturated, solver = cgs, kw...)
@@ -127,7 +128,7 @@ end
     using Test, StaticArrays, CUDA
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
+    using VisualRadiometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
     using PanoramaStitching: PositionNoise, ChannelGains
     import Adapt
     # a calibration's V as a table over the radius (a host Vector inside: it needs its Adapt rule to reach a device)
@@ -195,7 +196,7 @@ end
     using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, render_panorama, panorama_view, ConjugateGradient,
         SparseCholesky, PositionNoise, IntensityGains
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, n_control_points, with_control_points
+    using VisualRadiometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, n_control_points, with_control_points
     c = SVector(430.0, 390.0)
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     g = [1.0, 1.12, 0.9, 1.2, 0.95, 1.07]
@@ -310,7 +311,7 @@ end
     using PanoramaStitching: fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, ConjugateGradient,
         IntensityGains, ChannelGains, GAIN_CORRECTIONS
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
+    using VisualRadiometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
     c = SVector(430.0, 390.0)
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     G = [1.0 1.0 1.0; 1.10 1.12 1.15; 0.93 0.90 0.86; 1.25 1.20 1.12; 0.97 0.95 0.99; 1.02 1.07 1.11]   # g_1c = 1: the gauge
@@ -404,6 +405,7 @@ end
     using Test, TOML
     using PanoramaStitching: PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualRadiometryToolkitCore as VrtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
     dir =joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     code = Meta.parseall(read(joinpath(dir, "run.jl"), String))
@@ -496,12 +498,12 @@ end
         v = TOML.parsefile(joinpath(dir, f))["vignetting"]
         @test refuse(v) === v && G[v["gain_correction"]] isa Any && (N[v["observation_noise"]]; true)
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
-        @test all(k -> VgtkCore.VIGNETTING_TAGS[k] in (VgtkCore.RadialVignetting, VgtkCore.TensorProductVignetting),
+        @test all(k -> VrtkCore.VIGNETTING_TAGS[k] in (VrtkCore.RadialVignetting, VrtkCore.TensorProductVignetting),
                   vcat(v["model"], v["compare_models"]))
     end
-    @test_throws ArgumentError VgtkCore.VIGNETTING_TAGS["tensor"]
+    @test_throws ArgumentError VrtkCore.VIGNETTING_TAGS["tensor"]
     arms = TOML.parsefile(joinpath(dir, "arms.toml"))
-    @test VgtkCore.VIGNETTING_TAGS[arms["kind"]] === VgtkCore.RadialVignetting
+    @test VrtkCore.VIGNETTING_TAGS[arms["kind"]] === VrtkCore.RadialVignetting
     @test refuse(arms) === arms && length(arms["arms"]) == 12 && allunique(a["name"] for a in arms["arms"])
     for a in arms["arms"]
         @test refuse(a) === a && (N[a["observation_noise"]]; true) && (G[a["gain_correction"]]; true)
@@ -547,7 +549,7 @@ end
     using Test, Statistics, StaticArrays
     using PanoramaStitching: PanoramaStitching, fit_vignetting, SparseCholesky
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
+    using VisualRadiometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
     c = SVector(430.0, 390.0)
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2
     q = vignetting_sequence(radial)
@@ -579,7 +581,7 @@ end
     using Test, Statistics, StaticArrays, CUDA
     using PanoramaStitching: fit_vignetting, SparseCholesky
     import VisualGeometryToolkitCore as VgtkCore
-    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points, control_points
+    using VisualRadiometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points, control_points
     c = SVector(430.0, 390.0)
     radial(u) = -1.2 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^2 - 0.3 * (hypot(u[1] - c[1], u[2] - c[2]) / 400)^4
     plain = vignetting_sequence(radial)

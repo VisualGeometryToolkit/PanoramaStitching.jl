@@ -1,3 +1,25 @@
+# PanoramaStitching (unreleased, branch vrtk/port): the vignetting models from VisualRadiometryToolkitCore; the panorama record moved here from VisualGeometryToolkitIO (owner ruling 2026-11-20)
+
+- [x] the panorama kind (`vgio/panorama/v2.0`: `save_panorama`, `load_panorama`, the table, its cross-field check, the v1 step)
+  MOVED from VisualGeometryToolkitIO (src/panorama_schema.jl at 374584b4, deleted there in 0.11) to src/panorama_record.jl; its
+  items (test/panorama_schema_tests.jl) to test/panorama_record_tests.jl and its JSON Schema to docs/src/schemas. No copy stays
+  upstream: VisualGeometryToolkitIO refuses both names (`MOVED_NAMES`)
+- [x] the record serializes no part itself: the camera through `VgtkIO.camera_json` / `camera_from_json` (table
+  `body_spec(BoundedCamera)`), the rotations through `JSON.lower` / `JSON.lift` of a `Trajectory` on `VgioStyle`
+  (`body_spec(Trajectory)`), the vignetting through VisualRadiometryToolkitIO's `JSON.lower` / `JSON.lift` (`VIGNETTING_BODY`),
+  the fit through `VgtkIO.fit_record_json` / `fit_record_from_json` (`body_spec(FitResult)`); the envelope, validation, the file
+  boundary and the JSON Schema through `KindSpec`, `write_kind`, `read_kind`, `json_schema`
+- [x] the gains' matrix as rows through `VgtkIO.matrix_rows` / `rows_matrix`, the v1 step's key rename through
+  `VgtkIO.renamed_key`, the file's length unit through `VgtkIO.length_unit(style)`: each made public at its owner for this record
+  (VisualGeometryToolkitIO, vrtk/retire-radiometric) instead of a copy here
+- [x] the v1 → v2.0 step composed of the owners' steps: `VgtkIO.migrate_envelope`, `VgtkIO.migrate_body(BoundedCamera, ·)`,
+  `VgtkIO.migrate_body(Trajectory, ·)`, `VisualRadiometryToolkitIO.migrate_vignetting_body`
+- [x] the allow-list row is not restated upstream: configs/stack_dependencies.toml holds PanoramaStitching's row alone, merged in
+  the quality item with VisualRadiometryToolkitCore's rows file (the Visual Geometry Toolkit's table dropped its row)
+- [x] no DUPLICATION.toml entry (the repository has no DUPLICATION.toml); check_duplication: the gate's job, see the release record
+
+---
+
 # PanoramaStitching 0.8.4: the imaged region's frame mask through Core's pixel_mask (coordinator ruling 2026-11-15)
 
 - [x] `_in_frame` (the imaged region mapped into a frame's pixels part by part: `Ellipse`, `Rect`, their `∩`) → Core's

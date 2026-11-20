@@ -5,12 +5,20 @@
     using Test, Aqua, ExplicitImports, JET
     import VisualGeometryToolkitCore as VgtkCore
     using PanoramaStitching
-    # Atomix, Adapt and ForwardDiff declare no public names: `Atomix.@atomic` (the vignetting fit's scatter-add),
+    import VisualRadiometryToolkitCore as VrtkCore
+    using TOML: TOML
+    # Atomix, Adapt, ForwardDiff and JSON declare no public names: `Atomix.@atomic` (the vignetting fit's scatter-add),
     # `Adapt.@adapt_structure` (the kernels' functors moved to a device), `ForwardDiff.gradient` (the
-    # PositionNoise weights' observation gradient) and `ForwardDiff.jacobian` (the autocalibration bundle's camera
-    # block) are their documented API
+    # PositionNoise weights' observation gradient), `ForwardDiff.jacobian` (the autocalibration bundle's camera
+    # block) and `JSON.lower`/`JSON.lift` (the panorama record's bodies on VisualGeometryToolkitIO's style) are their
+    # documented API
+    #
+    # The allow-list: this package's row (configs/stack_dependencies.toml) with the Visual Radiometry Toolkit's own
+    # rows, which make its packages stack packages (VisualGeometryToolkitCore's table names none of them).
+    rows(dir) = TOML.parsefile(joinpath(dir, "configs", "stack_dependencies.toml"))
     VgtkCore.test_quality_gates(PanoramaStitching; jet_bound = 0,
-                                qualified_ignore = (Symbol("@atomic"), Symbol("@adapt_structure"), :gradient, :jacobian))
+                                qualified_ignore = (Symbol("@atomic"), Symbol("@adapt_structure"), :gradient, :jacobian, :lower, :lift),
+                                stack_extra = merge(rows(pkgdir(VrtkCore)), rows(pkgdir(PanoramaStitching))))
 end
 
 @testitem "agent docs and the conventions pointer" begin

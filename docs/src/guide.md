@@ -220,9 +220,11 @@ The normal equations are accumulated by atomic scatter-add on the frames' backen
 conjugate gradients there, or by a host Cholesky factorization:
 
 ```julia
-s = VgtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
-v0 = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
-res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VgtkCore.pole_regular_basis(v0),
+import VisualRadiometryToolkitCore as VrtkCore   # the vignetting models (pkg> add VisualRadiometryToolkitCore)
+
+s = VrtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
+v0 = VrtkCore.LogVignetting(VrtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
+res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VrtkCore.pole_regular_basis(v0),
                      gain_correction = ChannelGains(), saturated, frame_map, rim_margin_px = 12.0, saturation_margin_px = 4.0, fov_deg = 89.0, plane = 2,
                      chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                      vignetting_penalty_weight = 1.0e-6,
@@ -251,20 +253,20 @@ The example's frames carry no vignetting and one exposure, so here V comes back 
 
 ## 5. Saving the results
 
-The results — the camera, the frames' rotations, the vignetting and the frames' gains — are saved and loaded through
-VisualGeometryToolkitIO's `vgio/panorama/v2.0` kind (`save_panorama`, `load_panorama`; IO 0.10 or later). Its rotations are a
+The results — the camera, the frames' rotations, the vignetting and the frames' gains — are saved and loaded as a
+`vgio/panorama/v2.0` file by [`save_panorama`](@ref) and [`load_panorama`](@ref). The record is this package's; each of its parts is
+written by the kind that owns it (VisualGeometryToolkitIO's camera, trajectory and fit records, VisualRadiometryToolkitIO's vignetting
+body), so a file written by VisualGeometryToolkitIO 0.10, the kind's owner until then, loads the same. Its rotations are a
 VisualGeometryToolkitCore `Trajectory` from the camera's frame to the world, `d = R_k·f_k` with the world the first frame's
 camera frame, and a zero translation (a length: the camera only rotates):
 
 ```julia
-# Illustrative: VisualGeometryToolkitIO, one more package (pkg> add VisualGeometryToolkitIO)
-import VisualGeometryToolkitIO as VgtkIO
 using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, EuclideanMap, m
 using StaticArrays: SVector
 # each R an SMatrix{3, 3}: its translation a static zero length
 rotations = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(R, zero(SVector{3, Float64}) .* m) for (k, R) in enumerate(reg.rotations)))
-VgtkIO.save_panorama("panorama.json", camera, rotations, V, g, reg.bundle)   # g = nothing: no gains; the bundle's termination record (optional)
-p = VgtkIO.load_panorama("panorama.json")         # (; camera, rotations, vignetting, gains, fit)
+save_panorama("panorama.json", camera, rotations, V, g, reg.bundle)   # g = nothing: no gains; the bundle's termination record (optional)
+p = load_panorama("panorama.json")                # (; camera, rotations, vignetting, gains, fit)
 Rs = [p.rotations[k].R for k in 1:length(p.rotations)]   # the rotations render_panorama and score_seams take
 ```
 

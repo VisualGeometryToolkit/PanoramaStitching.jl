@@ -1,14 +1,14 @@
-# PanoramaStitching's results through VisualGeometryToolkitIO's vgio/panorama/v2.0: the camera, the frames' rotations, the fitted
+# PanoramaStitching's results through its vgio/panorama/v2.0 record (src/panorama_record.jl): the camera, the frames' rotations, the fitted
 # V and the frames' gains saved and loaded, and the loaded values render and score the panorama as the fit's own do.
 
 @testitem "results: saved and loaded through vgio/panorama/v2.0, they render and score as the fit's" setup = [VignettingSequence, BayerMaps] begin
     using Test, StaticArrays
     import JSON
-    using PanoramaStitching: PanoramaStitching, fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, ChannelGains
+    using PanoramaStitching: PanoramaStitching, save_panorama, load_panorama, fit_vignetting, score_seams, render_panorama, panorama_view, SparseCholesky, ChannelGains
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitIO as VgtkIO
-    using VisualGeometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points, Trajectory, CameraFrame,
-        WorldFrame, EuclideanMap, control_points, m
+    using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, EuclideanMap, m
+    using VisualRadiometryToolkitCore: RadialVignetting, LogVignetting, pole_regular_basis, with_control_points, control_points
     using Rotations: RotMatrix
     c = SVector(430.0, 390.0)
     falloff(u) = -sum(abs2, u - c) / 400^2                                # log V: a quadratic fall-off about c
@@ -24,12 +24,10 @@
                     images = Dict(k => "frame_$(k).ARW" for k in eachindex(q.R)))
     mktempdir() do dir
         p = joinpath(dir, "panorama.json")
-        VgtkIO.with_caller(PanoramaStitching) do                       # the generator names the calling package (the example's)
-            VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r), r.metadata.gains, r)   # the fit's termination record
-        end
+        save_panorama(p, q.camera, tr, VgtkCore.estimate(r), r.metadata.gains, r)   # the fit's termination record; the generator names this package
         rec = JSON.parsefile(p)
         @test rec["schema"] == "vgio/panorama/v2.0" && rec["generator"]["caller"]["name"] == "PanoramaStitching"
-        b = VgtkIO.load_panorama(p)
+        b = load_panorama(p)
         @test VgtkIO.camera_json(b.camera) == VgtkIO.camera_json(q.camera) && VgtkCore.lens_coverage(b.camera) == VgtkCore.lens_coverage(q.camera)
         @test typeof(b.vignetting) == typeof(VgtkCore.estimate(r)) && control_points(b.vignetting) == control_points(VgtkCore.estimate(r))
         @test b.gains == r.metadata.gains
@@ -50,7 +48,7 @@
         sl = score_seams(b.camera, q.frames, Rq, view; vignetting = b.vignetting, gains = b.gains, sk...)
         @test sa.n == sl.n && isapprox(sa.rms, sl.rms; rtol = 1.0e-10)
         # no gains fitted: the file states none, and reads back `nothing`
-        VgtkIO.save_panorama(p, q.camera, tr, VgtkCore.estimate(r), nothing)
-        @test VgtkIO.load_panorama(p).gains === nothing
+        save_panorama(p, q.camera, tr, VgtkCore.estimate(r), nothing)
+        @test load_panorama(p).gains === nothing
     end
 end

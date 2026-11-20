@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+A breaking minor: the vignetting models are VisualRadiometryToolkitCore's, and the panorama record (`vgio/panorama/v2.0`) is
+this package's. The radiometric types left VisualGeometryToolkitCore (0.12) for the Visual Radiometry Toolkit, and the
+panorama kind left VisualGeometryToolkitIO (0.11) for its owner; both keep their names, behaviour and file format.
+
+### Breaking
+
+- **The vignetting models come from VisualRadiometryToolkitCore.** `fit_vignetting` takes and returns that package's
+  `LogVignetting` (of a `RadialVignetting` or a `TensorProductVignetting`), and `render_panorama`, `sample_frames` and
+  `score_seams` take its `AbstractVignetting`; the same types, moved. **Migrate:** add VisualRadiometryToolkitCore and
+  replace `VisualGeometryToolkitCore.X` by `VisualRadiometryToolkitCore.X` for `AbstractVignetting`, `RadialVignetting`,
+  `TensorProductVignetting`, `LogVignetting`, `with_control_points`, `control_points`, `n_control_points`,
+  `pole_regular_basis`, `log_spline` and `VIGNETTING_TAGS` (VisualGeometryToolkitCore 0.12 refuses each by name).
+- **`save_panorama` and `load_panorama` are PanoramaStitching's** (exported), with the signatures and results
+  VisualGeometryToolkitIO 0.10's had. **Migrate:** `VgtkIO.save_panorama(…)` → `save_panorama(…)`, `VgtkIO.load_panorama(path)`
+  → `load_panorama(path)` (VisualGeometryToolkitIO 0.11 refuses both by name); the `VgtkIO.with_caller(PanoramaStitching)`
+  wrapper is no longer needed, `save_panorama` names this package in the file's `generator`.
+
+### Added
+
+- The panorama record, `vgio/panorama/v2.0` (src/panorama_record.jl): `PANORAMA_KIND` (a `VisualGeometryToolkitIO.KindSpec`)
+  and `panorama_json_schema()`, both public. The record states only what is its own — which parts a panorama's results are,
+  the frames' gains and the rules that tie the parts together; each part is written and read by the kind that owns it
+  (VisualGeometryToolkitIO's bounded camera body, trajectory body and fit termination record, VisualRadiometryToolkitIO's
+  vignetting body). The schema name is unchanged: every file VisualGeometryToolkitIO 0.10 wrote loads, a
+  `vgio/panorama/v1` file through its version step, and `VisualGeometryToolkitIO.validate` and a calibration manifest reach
+  the kind while PanoramaStitching is loaded.
+- The published JSON Schema, docs/src/schemas/vgio/panorama/v2.0.json, its `$id`
+  `https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/schemas/vgio/panorama/v2.0.json`; a test holds the file to
+  the generator's output.
+
+### Changed
+
+- Dependencies: VisualGeometryToolkitIO, VisualRadiometryToolkitCore, VisualRadiometryToolkitIO and JSON join `[deps]`.
+  The package's row of the stack's dependency allow-list is its own (configs/stack_dependencies.toml), handed to
+  VisualGeometryToolkitCore's gate with the Visual Radiometry Toolkit's rows.
+
 ## 0.10.0
 
 A breaking minor: the rotation bundle's termination record follows VisualGeometryToolkitCore 0.11's LM verdict, and the stack

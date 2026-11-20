@@ -17,10 +17,10 @@ julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vign
 ```
 
 `<env>` is a Julia environment with PanoramaStitching, VisualGeometryToolkitCore, VisualGeometryToolkitEstimation,
-VisualGeometryToolkitFeatures, VisualGeometryToolkitIO, CUDA, CUDA_Runtime_jll, CUDNN_jll, LibRaw_jll, PNGFiles, JSON, SHA
+VisualGeometryToolkitFeatures, VisualGeometryToolkitIO, VisualRadiometryToolkitCore, CUDA, CUDA_Runtime_jll, CUDNN_jll, LibRaw_jll, PNGFiles, JSON, SHA
 and TOML; `Project.toml` in this folder is that environment (`julia --project=examples/panorama_vignetting -e 'using Pkg; Pkg.instantiate()'`).
-It needs VisualGeometryToolkitIO 0.10 or later (the `vgio/panorama/v2.0` kind its results are written in) with the
-VisualGeometryToolkit stack the folder's `Project.toml` names, all registered in General.
+It needs the VisualGeometryToolkit stack and VisualRadiometryToolkitCore (the vignetting models) as the folder's `Project.toml`
+names them.
 
 Every setting is in the config — nothing in `run.jl` has a default — and every input path is relative to `$VGTK_DATA_ROOT`.
 Everything the run writes goes under VisualGeometryToolkitEval's results root (`$VGTK_RESULTS_ROOT`):
@@ -107,7 +107,7 @@ Under `$VGTK_DATA_ROOT`:
    point. The photo is read at its own pixel centres — no interpolation anywhere: the pixel's ray `f(p)` is the lens's
    back-projection, and the scene is a B-spline on the sphere (an azimuthal-equidistant chart, 1° controls, a Δ³ smoothness
    penalty) fitted together with V. log V is a cubic B-spline, RADIAL in the distance from a centre or a 2-D TENSOR spline
-   over the sensor (VisualGeometryToolkitCore's `LogVignetting`). The model is linear in log L, log V and the log gains: one
+   over the sensor (VisualRadiometryToolkitCore's `LogVignetting`). The model is linear in log L, log V and the log gains: one
    linear least squares, each row the constraint of its observation — sensor point and log I — weighted by its whitening by
    its noise: the value's — each frame's own variance when its image carries one (a LinearRaw under a sensor model whose
    noise feeds it), else the read-noise fallback, weight I² (these configs: plain images, so the fits of 0.6 bit for bit) —
@@ -173,7 +173,7 @@ the warm fit time. A produced comparison is reused. The configs of record keep t
 | `verified_pairs/<key>/verified_pairs.jld2` | the verified pairs (the frames' detections and covariances; per pair its rotation, counts and inlier matches): an Eval `Product`, keyed by the matching and verification settings, LoMa's provider, the inputs, the decode settings, the content of the RAW files, of the decode's sensor record and of the lens, and the code trees |
 | `registration/<key>/registration.jld2` | the registration (`d = R_k·f_k`, the first frame's camera frame), keyed the same way by every `[registration]` setting and by the verified pairs' output (their content hash: pairs produced again with other outputs are registered again) |
 | `run/<key>/` | the run's outputs below, keyed by the whole config, `run.jl` and the registration's output, with the product's records (`_config.toml`, the config of record; `_provenance.toml`, the key, the driver, the inputs read, the outputs' content hash) |
-| `panorama.json`, `panorama_map.json` (+ `.tiff`) | the results of record, a `vgio/panorama/v2.0` file (VisualGeometryToolkitIO's `save_panorama`; read it with `VgtkIO.load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`) and the bundle's termination record (`fit`); V over the frame's pixels, a Float32 `vgio/raster` (`VgtkIO.load_raster`), a data result |
+| `panorama.json`, `panorama_map.json` (+ `.tiff`) | the results of record, a `vgio/panorama/v2.0` file (PanoramaStitching's `save_panorama`; read it with `load_panorama`): the camera, the frames' rotations camera → world (`d = R_k·f_k`, the world the first frame's camera frame, each frame's RAW file its image), the fitted V and the frames' gains (none with `gain_correction = "none"`) and the bundle's termination record (`fit`); V over the frame's pixels, a Float32 `vgio/raster` (`VgtkIO.load_raster`), a data result |
 | `panorama_compare_<model>.json`, `panorama_compare_<model>_map.json` (+ `.tiff`) | the comparison fits (`compare_models`), the same record |
 | `seams_uncorrected.png`, `seams_corrected.png` | the seam-ratio maps — display figures (8-bit PNG), not data |
 | `cylindrical_*.png`, `equal_area_*.png`, `rectilinear_*.png` | the renders, `_corrected` and `_uncorrected` at the same exposure — display figures (sRGB PNG), not data: the results of record are `panorama.json` and its V raster |

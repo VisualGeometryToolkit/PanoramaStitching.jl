@@ -9,7 +9,7 @@ averaging, the tracks and the rotation and direction bundle), the frames sampled
 (KernelAbstractions: GPU arrays or the host, one code path; no per-pixel or per-direction host loops), and the camera's
 vignetting from the frames alone (`fit_vignetting`, interpolation free: every pixel at its centre, the scene a spline on the
 sphere fitted with V) with the seams it leaves (`score_seams`). A package of the VisualGeometryToolkit stack; its only
-radiometry is that vignetting fit. Saturation masks observations (`sample_frames`, `fit_vignetting`, `score_seams`), never a
+radiometry is that vignetting fit, on VisualRadiometryToolkitCore's vignetting models. Saturation masks observations (`sample_frames`, `fit_vignetting`, `score_seams`), never a
 render.
 
 ## Commands
@@ -37,7 +37,7 @@ from the registries (CauRegistry; General for those it holds).
 - `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
   render shares.
 - `src/panorama.jl` — `panorama_view`, `render_panorama`, `render_cube_map`.
-- `src/vignetting.jl` — `fit_vignetting`: the spline spaces (`RadialVignetting`, `TensorProductVignetting`), the scene's
+- `src/vignetting.jl` — `fit_vignetting`: the spline spaces (VisualRadiometryToolkitCore's `RadialVignetting`, `TensorProductVignetting`), the scene's
   `AzimuthalChart`, the scatter-add kernels of the normal equations (KernelAbstractions + Atomix), the scene penalty Core's
   `difference_rows`, device CG (Core's `normal_cg`) or host
   Cholesky (SparseArrays).
@@ -45,6 +45,11 @@ from the registries (CauRegistry; General for those it holds).
 - `src/pair_vignetting.jl` — the model-free vignetting of a sweep, the pair equation on rings of a field angle:
   `ring_correspondences`, `ring_pair_vignetting`, `fit_additive_level`. The saturation test it reads, `fit_vignetting`'s and
   `score_seams`' alike, is one (`_sweep_saturation` in vignetting.jl: the masks dilated and symmetric over the frames).
+- `src/panorama_record.jl` — `save_panorama`, `load_panorama`: the results as a `vgio/panorama/v2.0` file. The record is this
+  package's (`PANORAMA_KIND`, a VisualGeometryToolkitIO `KindSpec`) and holds only the parts' list, the frames' gains and the
+  rules that tie them; every part is written by its owner's kind (VisualGeometryToolkitIO's camera, trajectory and fit records,
+  VisualRadiometryToolkitIO's vignetting body). Its JSON Schema is docs/src/schemas/vgio/panorama/v2.0.json, held to the
+  generator's output by a test.
 - `examples/panorama_vignetting/` — the RAW-to-corrected-panorama driver (`run.jl`) and its configs of record; its own
   environment (`Project.toml`, not a workspace member: CUDA and LibRaw_jll).
 

@@ -72,3 +72,12 @@ PairVignettingMetadata
 fit_additive_level
 additive_level_slope
 ```
+
+## The results of record
+
+```@docs
+save_panorama
+load_panorama
+PanoramaStitching.PANORAMA_KIND
+PanoramaStitching.panorama_json_schema
+```

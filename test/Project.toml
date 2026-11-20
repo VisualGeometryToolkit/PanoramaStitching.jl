@@ -21,10 +21,22 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 VisualGeometryToolkitCore = "96820d6b-1dad-4e77-ad4a-8276f2ec1ce7"
 VisualGeometryToolkitEstimation = "9a478df9-9a37-4dc7-9070-58617efe7573"
 VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
-VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"   # the results through vgio/panorama/v2.0 (results_io_tests.jl)
+VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
+VisualRadiometryToolkitCore = "544ea8c7-2427-4873-ab3e-33acc9dfb29a"
+VisualRadiometryToolkitIO = "c447a127-8502-41e7-ac3e-ce2a12d00bd3"
 
 [sources]
 PanoramaStitching = {path = ".."}
+# TEMPORARY (the migration of the radiometric types; removed before any registration): the Visual Geometry Toolkit packages from the
+# branch that retires them and the Visual Radiometry Toolkit packages from their migration branch, until VisualGeometryToolkitCore
+# 0.12.0, VisualGeometryToolkitIO 0.11.0 and VisualRadiometryToolkitCore/IO 0.1.0 are in General (a workspace root's url source does
+# not reach its members: every project file states them).
+VisualGeometryToolkitCore = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitCore"}
+VisualGeometryToolkitIO = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitIO"}
+VisualGeometryToolkitEstimation = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitFeatures = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitFeatures"}
+VisualRadiometryToolkitCore = {url = "https://github.com/VisualRadiometryToolkit/visualradiometrytoolkit.github.io", rev = "migration", subdir = "VisualRadiometryToolkitCore"}
+VisualRadiometryToolkitIO = {url = "https://github.com/VisualRadiometryToolkit/visualradiometrytoolkit.github.io", rev = "migration", subdir = "VisualRadiometryToolkitIO"}
 [compat]
 Adapt = "4.8"
 Aqua = "0.8.18"
@@ -32,7 +44,7 @@ CUDA = "5.11"
 ExplicitImports = "1.15"
 ForwardDiff = "1.4"
 JET = "0.12"
-JSON = "1.13"
+JSON = "1.13.4"
 LinearAlgebra = "1"
 NLLSsolver = "5.3.4"
 Random = "1"
@@ -43,8 +55,10 @@ StaticArrays = "1.9"
 Statistics = "1.11"
 TOML = "1"
 Test = "1"
-VisualGeometryToolkitCore = "0.11"
+VisualGeometryToolkitCore = "0.11.1"
 VisualGeometryToolkitEstimation = "0.12"
 VisualGeometryToolkitFeatures = "0.9.7"
 VisualGeometryToolkitIO = "0.10.6"
+VisualRadiometryToolkitCore = "0.0.1"
+VisualRadiometryToolkitIO = "0.0.1"
 julia = "1.13"

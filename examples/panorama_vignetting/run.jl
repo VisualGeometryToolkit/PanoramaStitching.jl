@@ -18,6 +18,7 @@ using CUDA                                         # the [compute] device's kern
 # whatever runtime CUDA.jl uses); "auto" runs on the CPU, warning why, where they or a device are missing.
 using PanoramaStitching
 import VisualGeometryToolkitCore as VgtkCore
+import VisualRadiometryToolkitCore as VrtkCore
 import VisualGeometryToolkitEstimation as VgtkEstimation
 import VisualGeometryToolkitFeatures as VgtkFeatures
 import VisualGeometryToolkitIO as VgtkIO
@@ -504,26 +505,26 @@ function domain_radius(lens, center, W, H, rim)
     return maximum(norm(SVector(x, y) - center) for x in (o[1], o[1] + e[1]), y in (o[2], o[2] + e[2]))
 end
 
-# V's model and start (VisualGeometryToolkitCore's LogVignetting: a spline of log V, log V ≡ 0 at the start) and its free directions:
+# V's model and start (VisualRadiometryToolkitCore's LogVignetting: a spline of log V, log V ≡ 0 at the start) and its free directions:
 # a radial profile's pole-regular subspace, every control point of a tensor surface. `kind` is a tag of Core's VIGNETTING_TAGS
 # ("radial", "tensor_product"; the retired "tensor" is refused by name), the field log V is a spline of.
 function vignetting_space(kind, C, lens, W, H)
     v = C.cfg["vignetting"]; rim = Float64(C.cfg["domain"]["rim_margin_px"])
-    T = VgtkCore.VIGNETTING_TAGS[kind]
-    if T === VgtkCore.RadialVignetting
+    T = VrtkCore.VIGNETTING_TAGS[kind]
+    if T === VrtkCore.RadialVignetting
         rc = v["radial_center"]
         center = rc == "principal_point" ? SVector{2, Float64}(VgtkCore.principal_point(VgtkCore.model(lens).intrinsics)) :
                  rc == "circle_center" ? coverage_center(lens) : SVector{2, Float64}(rc...)
         radius = v["radial_radius"] == "domain" ? domain_radius(lens, center, W, H, rim) + 1.0 : Float64(v["radial_radius"])
-        s = VgtkCore.RadialVignetting(v["radial_controls"], center, radius; degree = 3)
-        m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(VgtkCore.n_control_points(s))))
-        return m, VgtkCore.pole_regular_basis(m)
-    elseif T === VgtkCore.TensorProductVignetting
+        s = VrtkCore.RadialVignetting(v["radial_controls"], center, radius; degree = 3)
+        m = VrtkCore.LogVignetting(VrtkCore.with_control_points(s, zeros(VrtkCore.n_control_points(s))))
+        return m, VrtkCore.pole_regular_basis(m)
+    elseif T === VrtkCore.TensorProductVignetting
         v["tensor_box"] == "domain" || error("vignetting.tensor_box = $(v["tensor_box"]) is not \"domain\"")
         o, e = domain_box(lens, W, H, rim)
-        s = VgtkCore.TensorProductVignetting(Tuple(v["tensor_controls"]), VgtkCore.Rect(o[1], o[2], e[1], e[2]); degree = 3)
-        n = VgtkCore.n_control_points(s)
-        m = VgtkCore.LogVignetting(VgtkCore.with_control_points(s, zeros(n)))
+        s = VrtkCore.TensorProductVignetting(Tuple(v["tensor_controls"]), VgtkCore.Rect(o[1], o[2], e[1], e[2]); degree = 3)
+        n = VrtkCore.n_control_points(s)
+        m = VrtkCore.LogVignetting(VrtkCore.with_control_points(s, zeros(n)))
         return m, Matrix{Float64}(LinearAlgebra.I, n, n)
     end
     error("vignetting model \"$kind\" is not \"radial\" or \"tensor_product\" (log V is the spline of one)")
@@ -578,10 +579,10 @@ end
 
 # ----------------------------------------------------------------------------- the results of record
 
-# A run's results of record (a fit's): VisualGeometryToolkitIO's vgio/panorama/v2.0 — the camera, the frames' rotations camera → world
+# A run's results of record (a fit's): PanoramaStitching's vgio/panorama/v2.0 record (`save_panorama`) — the camera, the frames' rotations camera → world
 # (d = R_k·f_k, the world the first frame's camera frame; zero translations: the camera only rotates; each frame's RAW file
 # its image), the fitted V, the frames' gains (none when vignetting.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
-# `VgtkIO.load_panorama`; and V over the frame's pixels (one value per frame pixel, at its centre in the camera's pixels: the
+# `load_panorama`; and V over the frame's pixels (one value per frame pixel, at its centre in the camera's pixels: the
 # frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`. The panorama record's provenance states the sensor record
 # the frames were decoded under (`sensor_characterisation_sha256`, `nothing` for "none": `decoded_frames`).
 function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf); sensor_characterisation_sha256)
@@ -589,11 +590,9 @@ function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_m
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
                              Dict(k => VgtkCore.EuclideanMap(R, zero(SVector{3, Float64}) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
-    # the file's generator names PanoramaStitching beside IO (IO 0.10's envelope)
-    VgtkIO.with_caller(PanoramaStitching) do
-        VgtkIO.save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit;
-                             provenance = (; sensor_characterisation_sha256 = something(sensor_characterisation_sha256, "none")))
-    end
+    # (the file's generator names PanoramaStitching beside IO: `save_panorama` states it)
+    save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit;
+                  provenance = (; sensor_characterisation_sha256 = something(sensor_characterisation_sha256, "none")))
     # V over the frame's pixel grid (each frame pixel's centre through the frames' map): a DATA result, IO's Float32
     # `vgio/raster` (owner ruling "RAW + results only"), `values[r, c]` the frame's pixel at row r, column c
     M = Float32[v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]

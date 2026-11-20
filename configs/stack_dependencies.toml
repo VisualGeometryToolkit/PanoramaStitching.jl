@@ -1,0 +1,15 @@
+# PanoramaStitching's row of the stack's dependency allow-list: the stack
+# packages its Project.toml may name ([deps], [weakdeps], [extras] and the test
+# target alike). The table itself is the Visual Geometry Toolkit's
+# (VisualGeometryToolkitCore/configs/stack_dependencies.toml), which names no
+# Visual Radiometry Toolkit package; this row is handed to
+# `VisualGeometryToolkitCore.stack_dependency_violations` through its `extra`
+# keyword, with the Visual Radiometry Toolkit's own rows
+# (VisualRadiometryToolkitCore/configs/stack_dependencies.toml), the form that
+# function defines for a project kept elsewhere (test/quality_tests.jl).
+#
+# The panorama stitching of a pure-rotation sequence (the register chain, the
+# world cells, the panorama), its vignetting fit on the Visual Radiometry
+# Toolkit's models and its results as a vgio/panorama file.
+
+PanoramaStitching = ["VisualGeometryToolkitCore", "VisualGeometryToolkitIO", "VisualGeometryToolkitFeatures", "VisualGeometryToolkitEstimation", "VisualRadiometryToolkitCore", "VisualRadiometryToolkitIO"]

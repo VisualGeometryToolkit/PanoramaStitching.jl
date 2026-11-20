@@ -12,7 +12,7 @@ function write_results_check()
     model = VgtkCore.CameraModel(260.0VgtkCore.px, SA[400.0VgtkCore.px, 400.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02))
     lens = VgtkCore.BoundedCamera(model, VgtkCore.Size2(800, 800); lens_coverage = VgtkCore.Circle(VgtkCore.Point2(400.0, 400.0), 390.0))
     rotations = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(y), 0.0))) for y in (0.0, 30.0, 60.0)]
-    v = VgtkCore.LogVignetting(VgtkCore.with_control_points(VgtkCore.RadialVignetting(4, SVector(400.0, 400.0), 420.0),
+    v = VrtkCore.LogVignetting(VrtkCore.with_control_points(VrtkCore.RadialVignetting(4, SVector(400.0, 400.0), 420.0),
                                                             [0.0, -0.1, -0.2, -0.3]))
     G = [1.0 1.0 1.0; 1.1 1.05 0.95; 0.9 0.92 1.02]
     res = VgtkCore.FitResult(v, VgtkCore.ReturnCode.Success, VgtkCore.IterationCap, 1, 0.0, 0, (; gains = G))
@@ -26,11 +26,11 @@ function write_results_check()
         sha = "0"^64                                                  # the sensor record the frames were decoded under
         @test write_results(C, "panorama", lens, names, rotations, bundle_fit, res, frame_map, (400, 400);
                             sensor_characterisation_sha256 = sha) === nothing
-        b = VgtkIO.load_panorama(joinpath(C.run, "panorama.json"))
+        b = load_panorama(joinpath(C.run, "panorama.json"))
         @test all(maximum(abs, SMatrix{3, 3, Float64, 9}(b.rotations[k].R) - rotations[k]) < 1.0e-15 for k in 1:3)
         @test all(iszero, b.rotations[k].t for k in 1:3)
         @test b.rotations.images == Dict(enumerate(names))
-        @test VgtkCore.control_points(b.vignetting) == VgtkCore.control_points(v)
+        @test VrtkCore.control_points(b.vignetting) == VrtkCore.control_points(v)
         @test b.gains == G
         @test (VgtkCore.retcode(b.fit), VgtkCore.stop_rule(b.fit), b.fit.iterations, b.fit.rms, b.fit.n) ==   # the fixture's record, read back
               (VgtkCore.retcode(bundle_fit), VgtkCore.stop_rule(bundle_fit), bundle_fit.iterations, bundle_fit.rms, bundle_fit.n)
