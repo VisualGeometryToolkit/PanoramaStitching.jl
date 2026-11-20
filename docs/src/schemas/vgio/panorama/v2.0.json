@@ -1,0 +1,1066 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/schemas/vgio/panorama/v2.0.json",
+    "title": "vgio/panorama/v2.0",
+    "description": "A vgio/panorama/v2.0 file, as PanoramaStitching writes and reads it; generated from its validator (VisualGeometryToolkitIO.json_schema). The validator is the authority: a check stated only in a `description` is the reader's. A file of a higher minor version of this major may hold keys this version does not declare: validate it against its own version's schema. the rotations map `camera` to `world`, each translation zero; `gains`, where stated, one record per frame of the rotations (frame indices 1:K), each with the same number (> 0) of positive gains",
+    "type": "object",
+    "properties": {
+        "schema": {
+            "type": "string",
+            "description": "vgio/panorama/v2.0, or the same major version at any minor",
+            "pattern": "^vgio/panorama/v2(\\.[0-9]+)?$"
+        },
+        "generator": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "type": "string",
+                    "description": "a version number"
+                },
+                "caller": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": "a version number"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "version"
+                    ],
+                    "additionalProperties": false
+                }
+            },
+            "required": [
+                "name",
+                "version"
+            ],
+            "additionalProperties": false
+        },
+        "units": {
+            "type": "object",
+            "properties": {
+                "length": {
+                    "type": "string",
+                    "description": "a registered length unit (mm, cm, m, um, inch)",
+                    "enum": [
+                        "cm",
+                        "ft",
+                        "in",
+                        "inch",
+                        "km",
+                        "m",
+                        "mm",
+                        "pt",
+                        "um",
+                        "μm"
+                    ]
+                },
+                "time": {
+                    "const": "s"
+                },
+                "angle": {
+                    "const": "rad"
+                },
+                "pixel": {
+                    "type": "string",
+                    "description": "a registered pixel frame (colmap, opencv, julia)",
+                    "enum": [
+                        "colmap",
+                        "julia",
+                        "opencv"
+                    ]
+                },
+                "density": {
+                    "type": "string",
+                    "description": "a registered density unit (dpi)",
+                    "enum": [
+                        "dpi"
+                    ]
+                },
+                "radiance": {
+                    "const": "relative"
+                },
+                "length_roles": {
+                    "type": "object",
+                    "description": "length role → its length unit, for the fields whose lengths are not in `length`; \"chart\": a chart role, its numbers a chart's (plain)",
+                    "propertyNames": {
+                        "pattern": "^[a-z][a-z0-9_]*$",
+                        "not": {
+                            "enum": [
+                                "length",
+                                "world",
+                                "density"
+                            ]
+                        }
+                    },
+                    "additionalProperties": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "description": "a registered length unit (mm, cm, m, um, inch)",
+                                "enum": [
+                                    "cm",
+                                    "ft",
+                                    "in",
+                                    "inch",
+                                    "km",
+                                    "m",
+                                    "mm",
+                                    "pt",
+                                    "um",
+                                    "μm"
+                                ]
+                            },
+                            {
+                                "const": "chart"
+                            }
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "length",
+                "time",
+                "angle",
+                "pixel",
+                "density",
+                "radiance",
+                "length_roles"
+            ],
+            "additionalProperties": false
+        },
+        "conventions": {
+            "type": "object",
+            "properties": {
+                "rotation_encoding": {
+                    "const": "quaternion_wxyz_hamilton"
+                },
+                "transform_convention": {
+                    "const": "x_to = R * x_from + t"
+                },
+                "matrix_layout": {
+                    "const": "rows"
+                },
+                "grid_layout": {
+                    "const": "row_major"
+                },
+                "index_base": {
+                    "const": 1
+                }
+            },
+            "required": [
+                "rotation_encoding",
+                "transform_convention",
+                "matrix_layout",
+                "grid_layout",
+                "index_base"
+            ],
+            "additionalProperties": false
+        },
+        "camera": {
+            "type": "object",
+            "oneOf": [
+                {
+                    "required": [
+                        "lens"
+                    ]
+                },
+                {
+                    "required": [
+                        "type"
+                    ]
+                }
+            ],
+            "allOf": [
+                {
+                    "if": {
+                        "required": [
+                            "lens"
+                        ]
+                    },
+                    "then": {
+                        "type": "object",
+                        "properties": {
+                            "image_size": {
+                                "type": "object",
+                                "properties": {
+                                    "width": {
+                                        "type": "integer",
+                                        "minimum": 1
+                                    },
+                                    "height": {
+                                        "type": "integer",
+                                        "minimum": 1
+                                    }
+                                },
+                                "required": [
+                                    "width",
+                                    "height"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "K": {
+                                "type": "object",
+                                "properties": {
+                                    "fx": {
+                                        "type": "number"
+                                    },
+                                    "fy": {
+                                        "type": "number"
+                                    },
+                                    "cx": {
+                                        "type": "number"
+                                    },
+                                    "cy": {
+                                        "type": "number"
+                                    },
+                                    "skew": {
+                                        "type": "number"
+                                    }
+                                },
+                                "required": [
+                                    "fx",
+                                    "fy",
+                                    "cx",
+                                    "cy",
+                                    "skew"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "lens": {
+                                "type": "object",
+                                "description": "VisualGeometryToolkitCore's lens record (`lens_record`): every key a lens leaf's tag or a combinator (`add`, `lift`, `spline`), every value its coefficient array of the leaf's arity, as `lens_from_record` reads it"
+                            },
+                            "pitch": {
+                                "type": "object",
+                                "properties": {
+                                    "width": {
+                                        "type": "number"
+                                    },
+                                    "height": {
+                                        "type": "number"
+                                    }
+                                },
+                                "required": [
+                                    "width",
+                                    "height"
+                                ],
+                                "additionalProperties": false,
+                                "description": "a pixel pitch is two positive lengths per pixel, in units.length",
+                                "allOf": [
+                                    {
+                                        "properties": {
+                                            "height": {
+                                                "exclusiveMinimum": 0
+                                            },
+                                            "width": {
+                                                "exclusiveMinimum": 0
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            "lens_coverage": {
+                                "$ref": "#/$defs/region_leaf"
+                            }
+                        },
+                        "required": [
+                            "image_size",
+                            "K",
+                            "lens"
+                        ],
+                        "additionalProperties": false
+                    }
+                },
+                {
+                    "if": {
+                        "required": [
+                            "type"
+                        ]
+                    },
+                    "then": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "description": "\"noncentral_spline\" — a central grid camera is a camera with a spline lens (its `lens` the spline record)",
+                                "const": "noncentral_spline"
+                            },
+                            "image_size": {
+                                "type": "object",
+                                "properties": {
+                                    "width": {
+                                        "type": "integer",
+                                        "minimum": 1
+                                    },
+                                    "height": {
+                                        "type": "integer",
+                                        "minimum": 1
+                                    }
+                                },
+                                "required": [
+                                    "width",
+                                    "height"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "K": {
+                                "type": "object",
+                                "properties": {
+                                    "fx": {
+                                        "type": "number"
+                                    },
+                                    "fy": {
+                                        "type": "number"
+                                    },
+                                    "cx": {
+                                        "type": "number"
+                                    },
+                                    "cy": {
+                                        "type": "number"
+                                    },
+                                    "skew": {
+                                        "type": "number"
+                                    }
+                                },
+                                "required": [
+                                    "fx",
+                                    "fy",
+                                    "cx",
+                                    "cy",
+                                    "skew"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "spline": {
+                                "type": "object",
+                                "properties": {
+                                    "area": {
+                                        "type": "array",
+                                        "description": "[x, y, width, height]",
+                                        "prefixItems": [
+                                            {
+                                                "title": "x",
+                                                "description": "the origin's x (the smallest x)",
+                                                "type": "number"
+                                            },
+                                            {
+                                                "title": "y",
+                                                "description": "the origin's y (the smallest y)",
+                                                "type": "number"
+                                            },
+                                            {
+                                                "title": "width",
+                                                "description": "the extent along x, > 0",
+                                                "type": "number"
+                                            },
+                                            {
+                                                "title": "height",
+                                                "description": "the extent along y, > 0",
+                                                "type": "number"
+                                            }
+                                        ],
+                                        "items": false,
+                                        "minItems": 4
+                                    },
+                                    "grid_size": {
+                                        "type": "object",
+                                        "properties": {
+                                            "width": {
+                                                "type": "integer",
+                                                "minimum": 1
+                                            },
+                                            "height": {
+                                                "type": "integer",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": [
+                                            "width",
+                                            "height"
+                                        ],
+                                        "additionalProperties": false
+                                    },
+                                    "controls": {
+                                        "type": "object",
+                                        "properties": {
+                                            "direction": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "number"
+                                                    },
+                                                    "minItems": 3,
+                                                    "maxItems": 3
+                                                }
+                                            },
+                                            "point": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "number"
+                                                    },
+                                                    "minItems": 3,
+                                                    "maxItems": 3
+                                                }
+                                            }
+                                        },
+                                        "required": [
+                                            "direction",
+                                            "point"
+                                        ],
+                                        "additionalProperties": false
+                                    },
+                                    "present": {
+                                        "type": "array",
+                                        "description": "the present nodes as runs per row, [[row, [[col_lo, col_hi], …]], …], 1-based: each row once, rows increasing; a row's runs nonempty, col_lo ≤ col_hi, increasing and apart (a gap of at least one node)",
+                                        "items": {
+                                            "type": "array",
+                                            "prefixItems": [
+                                                {
+                                                    "type": "integer",
+                                                    "minimum": 1
+                                                },
+                                                {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "array",
+                                                        "prefixItems": [
+                                                            {
+                                                                "type": "integer",
+                                                                "minimum": 1
+                                                            },
+                                                            {
+                                                                "type": "integer",
+                                                                "minimum": 1
+                                                            }
+                                                        ],
+                                                        "items": false,
+                                                        "minItems": 2
+                                                    },
+                                                    "minItems": 1
+                                                }
+                                            ],
+                                            "items": false,
+                                            "minItems": 2
+                                        }
+                                    }
+                                },
+                                "required": [
+                                    "area",
+                                    "grid_size",
+                                    "controls"
+                                ],
+                                "additionalProperties": false,
+                                "description": "the area's width and height are > 0; the lattice has at least 4 × 4 nodes; `present` names rows ≤ grid_size.height and columns ≤ grid_size.width; every control array has one entry per held node (grid_size.width × grid_size.height without `present`)",
+                                "allOf": [
+                                    {
+                                        "properties": {
+                                            "area": {
+                                                "prefixItems": [
+                                                    {},
+                                                    {},
+                                                    {
+                                                        "exclusiveMinimum": 0
+                                                    },
+                                                    {
+                                                        "exclusiveMinimum": 0
+                                                    }
+                                                ]
+                                            },
+                                            "grid_size": {
+                                                "properties": {
+                                                    "height": {
+                                                        "minimum": 4
+                                                    },
+                                                    "width": {
+                                                        "minimum": 4
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            "pitch": {
+                                "type": "object",
+                                "properties": {
+                                    "width": {
+                                        "type": "number"
+                                    },
+                                    "height": {
+                                        "type": "number"
+                                    }
+                                },
+                                "required": [
+                                    "width",
+                                    "height"
+                                ],
+                                "additionalProperties": false,
+                                "description": "a pixel pitch is two positive lengths per pixel, in units.length",
+                                "allOf": [
+                                    {
+                                        "properties": {
+                                            "height": {
+                                                "exclusiveMinimum": 0
+                                            },
+                                            "width": {
+                                                "exclusiveMinimum": 0
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            "lens_coverage": {
+                                "$ref": "#/$defs/region_leaf"
+                            }
+                        },
+                        "required": [
+                            "type",
+                            "image_size",
+                            "K",
+                            "spline"
+                        ],
+                        "additionalProperties": false
+                    }
+                }
+            ]
+        },
+        "rotations": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string",
+                    "description": "a frame name (\"world\", \"camera\", \"view:<id>\", \"target:<id>\", \"body:<id>\")",
+                    "pattern": "^(world|camera|(view:|target:|body:).+)$"
+                },
+                "to": {
+                    "type": "string",
+                    "description": "a frame name (\"world\", \"camera\", \"view:<id>\", \"target:<id>\", \"body:<id>\")",
+                    "pattern": "^(world|camera|(view:|target:|body:).+)$"
+                },
+                "frames": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "frame_index": {
+                                "type": "integer"
+                            },
+                            "pose": {
+                                "type": "object",
+                                "properties": {
+                                    "rotation": {
+                                        "type": "array",
+                                        "description": "[w, x, y, z]",
+                                        "prefixItems": [
+                                            {
+                                                "title": "w",
+                                                "description": "the scalar part, w ≥ 0",
+                                                "type": "number"
+                                            },
+                                            {
+                                                "title": "x",
+                                                "description": "the vector part's x",
+                                                "type": "number"
+                                            },
+                                            {
+                                                "title": "y",
+                                                "description": "the vector part's y",
+                                                "type": "number"
+                                            },
+                                            {
+                                                "title": "z",
+                                                "description": "the vector part's z",
+                                                "type": "number"
+                                            }
+                                        ],
+                                        "items": false,
+                                        "minItems": 4
+                                    },
+                                    "translation": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "number"
+                                        },
+                                        "minItems": 3,
+                                        "maxItems": 3
+                                    },
+                                    "covariance": {
+                                        "description": "a covariance in the storage it holds: 6 × 6 rows (symmetric), {\"diagonal\": [its diagonal]} or {\"isotropic\": λ} (λ·I); in the value's tangent order and the file's units",
+                                        "oneOf": [
+                                            {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "number"
+                                                    },
+                                                    "minItems": 6,
+                                                    "maxItems": 6
+                                                },
+                                                "minItems": 6,
+                                                "maxItems": 6
+                                            },
+                                            {
+                                                "type": "object",
+                                                "properties": {
+                                                    "diagonal": {
+                                                        "type": "array",
+                                                        "items": {
+                                                            "type": "number"
+                                                        },
+                                                        "minItems": 6,
+                                                        "maxItems": 6
+                                                    }
+                                                },
+                                                "required": [
+                                                    "diagonal"
+                                                ],
+                                                "additionalProperties": false
+                                            },
+                                            {
+                                                "type": "object",
+                                                "properties": {
+                                                    "isotropic": {
+                                                        "type": "number"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "isotropic"
+                                                ],
+                                                "additionalProperties": false
+                                            }
+                                        ]
+                                    }
+                                },
+                                "required": [
+                                    "rotation",
+                                    "translation"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "image": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "time": {
+                                "type": "number"
+                            },
+                            "recovered": {
+                                "const": true
+                            }
+                        },
+                        "required": [
+                            "frame_index",
+                            "pose"
+                        ],
+                        "additionalProperties": false
+                    }
+                },
+                "time_origin": {
+                    "type": "string",
+                    "description": "an ISO 8601 date-time with its UTC offset (2026-05-27T09:30:00+02:00, or …Z)",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})$"
+                }
+            },
+            "required": [
+                "from",
+                "to",
+                "frames"
+            ],
+            "additionalProperties": false
+        },
+        "vignetting": {
+            "$ref": "#/$defs/vignetting"
+        },
+        "gains": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "frame_index": {
+                        "type": "integer"
+                    },
+                    "gain": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    }
+                },
+                "required": [
+                    "frame_index",
+                    "gain"
+                ],
+                "additionalProperties": false
+            }
+        },
+        "fit": {
+            "type": "object",
+            "properties": {
+                "retcode": {
+                    "type": "string",
+                    "description": "a ReturnCode name",
+                    "enum": [
+                        "Default",
+                        "Success",
+                        "Terminated",
+                        "MaxIters",
+                        "InitialFailure",
+                        "Failure",
+                        "MaxTime",
+                        "Stalled",
+                        "InternalLinearSolveFailed"
+                    ]
+                },
+                "stop_rule": {
+                    "type": "string",
+                    "description": "a StopRule name",
+                    "enum": [
+                        "NoRule",
+                        "ClosedForm",
+                        "CostDecrease",
+                        "IncrementSize",
+                        "RejectionCap",
+                        "ParameterChange",
+                        "NoImprovement",
+                        "ExactFit",
+                        "ToleranceMet",
+                        "LadderConverged",
+                        "LeftBasin",
+                        "ShapeGate",
+                        "IterationCap",
+                        "TimeCap",
+                        "NonFinite",
+                        "Callback",
+                        "TrialBudget",
+                        "AdaptiveCount",
+                        "SeedKept"
+                    ]
+                },
+                "iterations": {
+                    "type": "integer"
+                },
+                "rms": {
+                    "type": "number"
+                },
+                "n": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "retcode",
+                "stop_rule",
+                "iterations",
+                "rms",
+                "n"
+            ],
+            "additionalProperties": false,
+            "description": "iterations, rms and n are ≥ 0",
+            "allOf": [
+                {
+                    "properties": {
+                        "iterations": {
+                            "minimum": 0
+                        },
+                        "n": {
+                            "minimum": 0
+                        },
+                        "rms": {
+                            "minimum": 0
+                        }
+                    }
+                }
+            ]
+        },
+        "provenance": {
+            "type": "object"
+        }
+    },
+    "required": [
+        "schema",
+        "generator",
+        "units",
+        "conventions",
+        "camera",
+        "rotations"
+    ],
+    "additionalProperties": false,
+    "allOf": [
+        {
+            "properties": {
+                "gains": {
+                    "items": {
+                        "properties": {
+                            "gain": {
+                                "items": {
+                                    "exclusiveMinimum": 0
+                                },
+                                "minItems": 1
+                            }
+                        }
+                    },
+                    "minItems": 1
+                },
+                "rotations": {
+                    "properties": {
+                        "from": {
+                            "const": "camera"
+                        },
+                        "to": {
+                            "const": "world"
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "$defs": {
+        "region_leaf": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "rect": {
+                            "type": "array",
+                            "description": "[x, y, width, height]",
+                            "prefixItems": [
+                                {
+                                    "title": "x",
+                                    "description": "the origin's x (the smallest x)",
+                                    "type": "number"
+                                },
+                                {
+                                    "title": "y",
+                                    "description": "the origin's y (the smallest y)",
+                                    "type": "number"
+                                },
+                                {
+                                    "title": "width",
+                                    "description": "the extent along x, > 0",
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                },
+                                {
+                                    "title": "height",
+                                    "description": "the extent along y, > 0",
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                }
+                            ],
+                            "items": false,
+                            "minItems": 4
+                        }
+                    },
+                    "required": [
+                        "rect"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "ellipse": {
+                            "type": "array",
+                            "description": "[cx, cy, a, b, theta] (a ≥ b: the major semi-axis first)",
+                            "prefixItems": [
+                                {
+                                    "title": "cx",
+                                    "description": "the centre's x",
+                                    "type": "number"
+                                },
+                                {
+                                    "title": "cy",
+                                    "description": "the centre's y",
+                                    "type": "number"
+                                },
+                                {
+                                    "title": "a",
+                                    "description": "the major semi-axis, > 0",
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                },
+                                {
+                                    "title": "b",
+                                    "description": "the minor semi-axis, 0 < b ≤ a",
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                },
+                                {
+                                    "title": "theta",
+                                    "description": "the major axis's angle from +x, rad",
+                                    "type": "number"
+                                }
+                            ],
+                            "items": false,
+                            "minItems": 5
+                        }
+                    },
+                    "required": [
+                        "ellipse"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "circle": {
+                            "type": "array",
+                            "description": "[cx, cy, r]",
+                            "prefixItems": [
+                                {
+                                    "title": "cx",
+                                    "description": "the centre's x",
+                                    "type": "number"
+                                },
+                                {
+                                    "title": "cy",
+                                    "description": "the centre's y",
+                                    "type": "number"
+                                },
+                                {
+                                    "title": "r",
+                                    "description": "the radius, > 0",
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                }
+                            ],
+                            "items": false,
+                            "minItems": 3
+                        }
+                    },
+                    "required": [
+                        "circle"
+                    ],
+                    "additionalProperties": false
+                }
+            ]
+        },
+        "vignetting": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "tensor_product"
+                        },
+                        "degree": {
+                            "type": "array",
+                            "items": {
+                                "type": "integer",
+                                "minimum": 1
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                        },
+                        "knots_x": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        },
+                        "knots_y": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        },
+                        "control_points": {
+                            "type": "array",
+                            "items": {
+                                "type": "array",
+                                "items": {
+                                    "type": "number"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "type",
+                        "degree",
+                        "knots_x",
+                        "knots_y",
+                        "control_points"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "radial"
+                        },
+                        "degree": {
+                            "type": "integer",
+                            "minimum": 1
+                        },
+                        "center": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                        },
+                        "radius": {
+                            "type": "number"
+                        },
+                        "chart": {
+                            "type": "string",
+                            "description": "a radial chart (linear, projective, equisolid)",
+                            "enum": [
+                                "linear",
+                                "projective",
+                                "equisolid"
+                            ]
+                        },
+                        "control_points": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        }
+                    },
+                    "required": [
+                        "type",
+                        "degree",
+                        "center",
+                        "radius",
+                        "chart",
+                        "control_points"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "log"
+                        },
+                        "spline": {
+                            "$ref": "#/$defs/vignetting"
+                        }
+                    },
+                    "required": [
+                        "type",
+                        "spline"
+                    ],
+                    "additionalProperties": false
+                }
+            ]
+        }
+    }
+}

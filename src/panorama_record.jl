@@ -41,7 +41,7 @@
 
 const _PANORAMA_SCHEMA = "vgio/panorama/v2.0"
 # Where the published JSON Schema of the kind lives (docs/src/schemas, at the path of the schema string).
-const _SCHEMA_SITE = "https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/schemas/"
+const _PANORAMA_SCHEMA_SITE = "https://visualgeometrytoolkit.github.io/PanoramaStitching.jl/schemas/"
 
 const _GAIN_RECORD = VgtkIO.object_spec(:frame_index => VgtkIO.integer_spec(), :gain => VgtkIO.array_spec(VgtkIO.real_spec()))
 
@@ -104,7 +104,7 @@ table (`VisualGeometryToolkitIO.json_schema`); its `\$id` is
 `JSON.json(panorama_json_schema(); pretty = 4)` is the published file
 (docs/src/schemas/vgio/panorama/v2.0.json).
 """
-panorama_json_schema() = VgtkIO.json_schema(PANORAMA_KIND; id_base = _SCHEMA_SITE)
+panorama_json_schema() = VgtkIO.json_schema(PANORAMA_KIND; id_base = _PANORAMA_SCHEMA_SITE)
 
 """
     save_panorama(path, camera::BoundedCamera, rotations::Trajectory, vignetting, gains, fit = nothing;
