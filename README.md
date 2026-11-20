@@ -16,7 +16,7 @@ PanoramaStitching and the packages it is built on are registered in General. Jul
 the packages the example also loads:
 
 ```julia-repl
-pkg> add PanoramaStitching VisualGeometryToolkitCore StaticArrays
+pkg> add PanoramaStitching VisualGeometryToolkitCore VisualRadiometryToolkitCore StaticArrays
 ```
 
 ## Example

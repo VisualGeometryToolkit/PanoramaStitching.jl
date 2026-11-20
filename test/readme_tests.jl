@@ -22,7 +22,7 @@
     guide = filter(!illustrative, guide_all)
     @test length(example) == 1 && !illustrative(only(example))   # pin the counts
     @test landing == example                                    # one example, shown twice
-    @test length(guide) == 6 && count(illustrative, guide_all) == 3
+    @test length(guide) == 7 && count(illustrative, guide_all) == 2
 
     # The install line adds exactly the packages the examples load, and no registry line precedes it.
     install = [m[1] for m in eachmatch(r"^pkg> add (.+)$"m, readme)]
@@ -84,6 +84,9 @@
         @test all(r -> isapprox(readme.V(readme.SA[500.0 + r, 500.0], nothing), 1; atol = 0.01), 0:50:400)
         @test readme.seams.rms < 0.05
         @test size(readme.corrected.image) == size(readme.pano.image) && size(readme.pano.image, 3) == 3
+        # the results saved and loaded (section 5): the record reads back the fit's values
+        @test readme.p.gains == readme.g && length(readme.Rs) == 4 && readme.p.fit !== nothing
+        @test readme.p.vignetting(readme.SA[500.0, 500.0], nothing) == readme.V(readme.SA[500.0, 500.0], nothing)
     end
     """)
     # Base.julia_cmd() carries the test run's flags (--depwarn=error, coverage). The load path is the project and the

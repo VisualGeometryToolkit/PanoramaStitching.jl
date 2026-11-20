@@ -220,7 +220,7 @@ The normal equations are accumulated by atomic scatter-add on the frames' backen
 conjugate gradients there, or by a host Cholesky factorization:
 
 ```julia
-import VisualRadiometryToolkitCore as VrtkCore   # the vignetting models (pkg> add VisualRadiometryToolkitCore)
+import VisualRadiometryToolkitCore as VrtkCore   # the vignetting models
 
 s = VrtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
 v0 = VrtkCore.LogVignetting(VrtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
@@ -232,7 +232,7 @@ res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VrtkCo
                      observation_noise = nothing)
 # or observation_noise = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)), on frames with variances: σ_u the registration's
 # pooled noise scale reg.bundle_sigma (the bundle's width over its efficiency constant), px
-V = VgtkCore.estimate(res)        # the fitted Core model: the vignetting keyword of render_panorama
+V = VgtkCore.estimate(res)        # the fitted model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)
 ```
 
@@ -265,8 +265,9 @@ using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, EuclideanM
 using StaticArrays: SVector
 # each R an SMatrix{3, 3}: its translation a static zero length
 rotations = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(R, zero(SVector{3, Float64}) .* m) for (k, R) in enumerate(reg.rotations)))
-save_panorama("panorama.json", camera, rotations, V, g, reg.bundle)   # g = nothing: no gains; the bundle's termination record (optional)
-p = load_panorama("panorama.json")                # (; camera, rotations, vignetting, gains, fit)
+path = joinpath(mktempdir(), "panorama.json")
+save_panorama(path, camera, rotations, V, g, reg.bundle)   # g = nothing: no gains; the bundle's termination record (optional)
+p = load_panorama(path)                           # (; camera, rotations, vignetting, gains, fit)
 Rs = [p.rotations[k].R for k in 1:length(p.rotations)]   # the rotations render_panorama and score_seams take
 ```
 
