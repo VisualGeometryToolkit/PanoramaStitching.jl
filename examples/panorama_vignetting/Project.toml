@@ -24,20 +24,9 @@ VisualGeometryToolkitEval = "86c88899-11c8-4b8e-8d7a-f01a8ab99b28"
 VisualGeometryToolkitFeatures = "9487290e-790c-4faa-aa87-bc3b5f18b9f7"
 VisualGeometryToolkitIO = "0a7ae7e7-e931-45f8-9bba-03d07899cebc"
 VisualRadiometryToolkitCore = "544ea8c7-2427-4873-ab3e-33acc9dfb29a"   # the vignetting models (run.jl)
-VisualRadiometryToolkitIO = "c447a127-8502-41e7-ac3e-ce2a12d00bd3"     # TEMPORARY, with its [sources] entry (a source is stated for a dependency)
 
 [sources]
 PanoramaStitching = {path = "../.."}
-# TEMPORARY (the migration of the radiometric types; removed before any registration): the Visual Geometry Toolkit packages from the
-# branch that retires them and the Visual Radiometry Toolkit packages from their migration branch, until VisualGeometryToolkitCore
-# 0.12.0, VisualGeometryToolkitIO 0.11.0 and VisualRadiometryToolkitCore/IO 0.1.0 are in General (a workspace root's url source does
-# not reach its members: every project file states them).
-VisualGeometryToolkitCore = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitCore"}
-VisualGeometryToolkitIO = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitIO"}
-VisualGeometryToolkitEstimation = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitEstimation"}
-VisualGeometryToolkitFeatures = {url = "https://github.com/VisualGeometryToolkit/VisualGeometryToolkit.jl", rev = "vrtk/retire-radiometric", subdir = "VisualGeometryToolkitFeatures"}
-VisualRadiometryToolkitCore = {url = "https://github.com/VisualRadiometryToolkit/visualradiometrytoolkit.github.io", rev = "migration", subdir = "VisualRadiometryToolkitCore"}
-VisualRadiometryToolkitIO = {url = "https://github.com/VisualRadiometryToolkit/visualradiometrytoolkit.github.io", rev = "migration", subdir = "VisualRadiometryToolkitIO"}
 
 [compat]
 CUDA = "5"
@@ -53,6 +42,5 @@ VisualGeometryToolkitEstimation = "0.12"
 VisualGeometryToolkitEval = "0.9.2"
 VisualGeometryToolkitFeatures = "0.9.7"
 VisualGeometryToolkitIO = "0.11"
-VisualRadiometryToolkitCore = "0.0.1"
-VisualRadiometryToolkitIO = "0.0.1"
+VisualRadiometryToolkitCore = "0.1"
 julia = "1.13"

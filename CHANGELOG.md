@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 A breaking minor: the vignetting models are VisualRadiometryToolkitCore's, and the panorama record (`vgio/panorama/v2.0`) is
 this package's. The radiometric types left VisualGeometryToolkitCore (0.12) for the Visual Radiometry Toolkit, and the
