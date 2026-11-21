@@ -6,6 +6,10 @@ A breaking minor: the vignetting models are VisualRadiometryToolkitCore's, and t
 this package's. The radiometric types left VisualGeometryToolkitCore (0.12) for the Visual Radiometry Toolkit, and the
 panorama kind left VisualGeometryToolkitIO (0.11) for its owner; both keep their names, behaviour and file format.
 
+It is built on VisualGeometryToolkitCore 0.13 (`[compat]` `"0.13"`: the artifact store; the spherical spline and the
+dilogarithm, which this package never used, removed), VisualGeometryToolkitIO 0.11.2, VisualGeometryToolkitEstimation
+0.12.2, VisualGeometryToolkitFeatures 0.9.10 and VisualRadiometryToolkitCore/IO 0.1.1.
+
 ### Breaking
 
 - **The vignetting models come from VisualRadiometryToolkitCore.** `fit_vignetting` takes and returns that package's
