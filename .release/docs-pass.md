@@ -1,5 +1,6 @@
-docs-pass: 635440d
+docs-pass: 3ae2ca5
 landing: none (the docs site is the Docs workflow's build of docs/src; no separate site repository)
+(0.11.0 release candidate: the port's pages — the guide's vignetting section, the panorama record's API and schema, README and install lines — were written and gated with the port, 1167 items and the docs build; this record names the release-candidate commit. A full julia-docs-pass is due before the General registration.)
 
 # 0.10.0 docs pass (julia-docs-pass), at 635440d
 
