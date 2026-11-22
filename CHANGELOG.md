@@ -89,7 +89,7 @@ VisualGeometryToolkitEstimation 0.11.7.
 
 - **`fit_vignetting`'s saturation masks are symmetric over the frames** (T. Harder's analysis, 2026-11-15). A row counted
   when its OWN frame's mask was clear, so a bright scene point was dropped where V is high (it clips there) and kept where V
-  dims it below white: the rows left saw it only towards the rim, and V came out too flat there (on the paper's sweeps the
+  dims it below white: the rows left saw it only towards the rim, and V came out too flat there (on RC's panorama sweeps the
   last ring relative to the first: Tamron 0.394 against ≈ 0.345, 14 mm 0.842 against ≈ 0.800, fisheye 0.595 against
   ≈ 0.557, T. Harder's dilation diagnostic). A scene direction now counts only where NO frame whose domain sees it is
   saturated there: each frame's mask is dilated by `saturation_margin_px` camera pixels (a disc), and a row is dropped from
@@ -286,7 +286,7 @@ estimate beside Core's).
   `pair_bearings` are): the ONE list of the retired registration settings, refused by name with each one's successor, for
   a config's `[registration]` table (`String` keys) and keywords (`Symbol` keys) alike. `register_rotations` and
   `verify_pairs` refuse their retired keywords through it, and the example's config loader calls it (its own list,
-  `RETIRED_REGISTRATION_KEYS`, and function are deleted); a downstream loader (RC's cvpr2027 configs) calls it on the table
+  `RETIRED_REGISTRATION_KEYS`, and function are deleted); a downstream loader (RC's experiments configs) calls it on the table
   it reads.
 
 ## 0.7.0 (2026-11-13)
@@ -329,7 +329,7 @@ model entity an **observation** (Core's `conventions/naming.md`).
   resolves each frame's model (`frame_models`: the RAW files' capture settings, the body's `[registration]
   sensor_characterisation` — a `vgio/sensor_characterisation` file or `"none"` — and Core's `sensor_model`), decodes the
   LinearRaw with it, and refuses the 0.6 keys `electrons_per_dn` and `read_noise_dn` by name.
-- New public API, hoisted from the example (RC's cvpr2027 called them from run.jl): `sweep_up(rotations) -> (; up, eigenvalues)`
+- New public API, hoisted from the example (RC's experiments called them from run.jl): `sweep_up(rotations) -> (; up, eigenvalues)`
   (the up of a roll-free sweep: the least eigenvector of Σ x_k x_kᵀ over the frames' image x axes, signed against their down
   axes; the eigenvalues its roll-free diagnostic), `up_frame(up::AbstractVector)` (the true-up frame of an up direction,
   VisualGeometryToolkitCore's `lookat_pose` frame; `up_frame(pitch, roll) = up_frame(true_up(pitch, roll))`, the one frame
@@ -340,7 +340,7 @@ model entity an **observation** (Core's `conventions/naming.md`).
   `up_frame` now goes through Core's look-at frame: equal to 0.6's to rounding (≤ 4 eps), not bit for bit.
 - The example's decoded-RAW cache is opt-in, `[decode] cache = true | false` (the configs of record set `true`), and the example
   loads no JLD2 itself: VisualGeometryToolkitEval brings it, and with it Features' FileCache extension. A caller that includes
-  run.jl (RC's cvpr2027) needs no JLD2 of its own; the example's environment drops its direct JLD2 entry.
+  run.jl (RC's experiments) needs no JLD2 of its own; the example's environment drops its direct JLD2 entry.
 - `fit_vignetting`'s value noise is the frames' own (owner ruling D10), by dispatch on the image type: an uncertain image —
   VisualGeometryToolkitCore's `LinearRaw` under a sensor model whose noise feeds each value's variance (a `PoissonGaussian`, or a
   specified `RelativeNoise`), a `StructArray` of `Uncertain` values — weights a row by I²/var(I); a plain image keeps the
