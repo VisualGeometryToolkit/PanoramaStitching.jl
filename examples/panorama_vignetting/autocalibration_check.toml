@@ -4,13 +4,13 @@
 # bootstrap. Every input is declared; every value is a literal of the comparison's protocol.
 
 [inputs.equivalence_tracks]
-tier = "rc-cvpr2027"
+tier = "rc-panorama-2026"
 path = "panorama_good/derived/fx3-14mm-autocal-equivalence-tracks.json"
 sha256 = "11dd5ddcb4e028f9ec7edaf25cc5f9eceeccd0c100be225217622183d05b951c"
 provenance = "one round of PanoramaStitching 7bbbea03 (stack VisualGeometryToolkit c7a4f30f) from the 14 mm record's camera on panorama_good/14mm (11 frames, bin2), the desktop's selfcal_driver.jl selfcal_verify + selfcal_register (camera_free = f, cx, cy, k1..k4), LoMa on the CPU; dgx01 Slurm job 8131 (2026-11-12): the tracks, the held bundle's rotations, 7bbbea03's camera-free result on them (the reference) and the record's sigmas"
 
 [inputs.start_camera]
-tier = "rc-cvpr2027"
+tier = "rc-panorama-2026"
 path = "panorama_good/derived/fx3-14mm-kb_fit.cameras-v4.json"
 sha256 = "77e88ab9a65f5a287d1bc77b846191bcde082f20b9715e1aaa29b844ab7ae0c9"
 provenance = "the night-star KB of the 14 mm lens (Ties; geometric_accuracy/results/logs/night_stars/fx3-14mm/kb_fit/lens.json), the record's start"
