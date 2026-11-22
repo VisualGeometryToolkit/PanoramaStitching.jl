@@ -1,5 +1,5 @@
 # Config of record: the Sigma 14 mm on the Sony FX3, an indoor sweep (11 frames in two rows: pitch ≈ 0° and ≈ +14°, yaw over
-# 360°), 2026-10-29. Every input path is relative to the data root $VGTK_DATA_ROOT (the author's: ~/data/rc-cvpr2027).
+# 360°), 2026-10-29. Every input path is relative to the data root $VGTK_DATA_ROOT (the author's: ~/data/rc-panorama-2026).
 # Run: julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_14mm.toml
 
 name = "fx3_14mm_indoor"

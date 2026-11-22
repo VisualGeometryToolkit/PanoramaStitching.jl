@@ -1,6 +1,6 @@
 # Config of record: the 8 mm fisheye on the Sony FX3, the rooftop sweep (10 frames, 1/1600 s, f/5.6, ISO 100, every frame the
 # same exposure; yaw −54° … +47°, pitch −5° … +27°). Every input path is relative to the data root $VGTK_DATA_ROOT (the
-# author's: ~/data/rc-cvpr2027).
+# author's: ~/data/rc-panorama-2026).
 # Run: julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_8mm_rooftop.toml
 
 name = "fx3_8mm_rooftop"

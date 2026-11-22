@@ -12,7 +12,7 @@ without the correction. Two configs of record come with it:
 ## Running it
 
 ```bash
-export VGTK_DATA_ROOT=~/data/rc-cvpr2027            # the data root that holds the inputs (below)
+export VGTK_DATA_ROOT=~/data/rc-panorama-2026            # the data root that holds the inputs (below)
 julia --project=<env> examples/panorama_vignetting/run.jl examples/panorama_vignetting/config_fx3_14mm.toml
 ```
 
