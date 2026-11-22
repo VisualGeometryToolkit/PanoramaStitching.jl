@@ -10,5 +10,5 @@ path = ".."
 [compat]
 Documenter = "1.20"
 StaticArrays = "1.9"
-VisualGeometryToolkitCore = "0.11, 0.12"
+VisualGeometryToolkitCore = "0.11, 0.12, 0.13"
 julia = "1.13"
