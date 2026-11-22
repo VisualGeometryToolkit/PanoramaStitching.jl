@@ -499,7 +499,7 @@ end
 # The sweep's one symmetric saturation test (T. Harder's analysis of 2026-11-15): a scene direction counts only where NO frame
 # whose domain sees it is saturated there. A frame's own mask alone drops a bright scene point where V is high (it clips) and
 # keeps it where V dims it below white, so the observations that remain see it only at the rim and V comes out too flat there
-# (on the paper's sweeps 5–15 % at the last ring). Each frame's mask dilated by `margin` camera pixels (`_dilated_saturation`)
+# (on RC's panorama sweeps 5–15 % at the last ring). Each frame's mask dilated by `margin` camera pixels (`_dilated_saturation`)
 # and the any-frame test over the frames' domains (`_SaturatedInAnyFrame`: `frame_region` less `rim_margin_px`, within
 # `fov_deg`), its rotations as SMatrix values. `fit_vignetting`'s rows (`_saturated_rows`) and the sampled directions
 # (`_symmetric_samples`) read this one value.
