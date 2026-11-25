@@ -15,7 +15,7 @@ const PLANE_MAPS = ntuple(c -> VgtkCore.bayer_plane_map(BGGR, c), 3)
 const IDENTITY_MAP = VgtkCore.SimilarityMap(1.0, one(RotMatrix{2, Float64}), SVector(0.0, 0.0))            # a frame at the camera's own pixels
 # A frame's detections' centres (its described features; Core's `center` of the frame, the FeatureFrame interface) in the
 # camera's pixels, through the frame's map.
-detection_pixels(features, frame_map = FRAME_MAP) = [frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(d)))) for d in features]
+detection_pixels(features, frame_map = FRAME_MAP) = [frame_map(SVector{2, Float64}(VgtkCore.centroid(VgtkCore.feature_frame(d)))) for d in features]
 # An H × W × 3 linear frame as a 2H × 2W RGGB mosaic (black 512, white 16383): each photosite its plane's value (G twice), so
 # the mosaic's :bin2 LinearRaw is the frame, to the 14-bit codes' rounding.
 function rggb_mosaic(F; black = 512.0, white = 16383.0)

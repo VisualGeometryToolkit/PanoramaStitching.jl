@@ -1,4 +1,4 @@
-# The 14 mm BUNDLE-EQUIVALENCE check (autocalibration_check.jl): PanoramaStitching's refine_camera_and_rotations against
+# The 14 mm BUNDLE-EQUIVALENCE check (autocalibration_check.jl): PanoramaStitching's autocalibration (RotationBundleProblem) against
 # PanoramaStitching 7bbbea03's camera-free rotation bundle (the code of the 14 mm autocalibration record) on the SAME tracks.
 # It is not a reproduction of the record: the tracks are one 7bbbea03 round, and the record came from its six-round
 # bootstrap. Every input is declared; every value is a literal of the comparison's protocol.

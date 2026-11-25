@@ -63,12 +63,13 @@ end
     @test dropped == 0
 end
 
-@testitem "refine_rotations: a fisheye sweep past 90°, outliers; Jacobian; two starts, one minimum" setup = [SweepScene, BundleReference] begin
+@testitem "the rotation bundle: a fisheye sweep past 90°, outliers; Jacobian; two starts, one minimum" setup = [SweepScene, BundleReference] begin
     using Test, Random, LinearAlgebra, StaticArrays, Statistics
     import Rotations, ForwardDiff, NLLSsolver
-    using PanoramaStitching: refine_rotations
+    using PanoramaStitching: RotationBundleProblem
     import PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: solve, RefineProblem, LevenbergMarquardt, LmStops, successful_retcode
 
     rng = Xoshiro(31)
     K = 5
@@ -79,24 +80,26 @@ end
     start[1] = R[1]
     err(Rs) = maximum(k -> rad2deg(Rotations.rotation_angle(Rotations.RotMatrix{3}(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
     @test err(start) > 0.5
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
-    res = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw...)
-    @test err(VgtkCore.estimate(res)) < 0.05                       # the noise floor: 0.5 px at f = 300 px (0.19°/px), ~400 tracks
-    @test VgtkCore.estimate(res)[1] ≈ R[1]
-    # the bundle's keywords are Estimation's bundle_loss: an Irls strategy is refused there (a refine runs one LM), a width
-    # beside a stated constant too, and a width records no scale
+    lm = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}())
+    kw = (; width = 1.5, stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10))
+    bundle(start, tracks, alg = lm; eliminate = VgtkCore.nlls_features().schur, kws...) =
+        solve(RefineProblem(RotationBundleProblem(CAM, tracks; eliminate), start), alg; kw..., kws...)
     obs0 = [[k => x for (k, x) in t] for t in ts]
-    @test_throws r"runs ONE robustified LM" refine_rotations(CAM, start, obs0; kw..., optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 10))
-    @test_throws ArgumentError refine_rotations(CAM, start, obs0; kw...,
-                                                optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0))
-    @test res.metadata.loss_width == 1.5 && isnan(res.metadata.scale) && VgtkCore.scale_source(res) == VgtkCore.ScaleNone
+    res = bundle(start, obs0)
+    @test err(res.u) < 0.05                       # the noise floor: 0.5 px at f = 300 px (0.19°/px), ~400 tracks
+    @test res.u[1] ≈ R[1]
+    # the bundle's scale input is Core's bundle_loss: an Irls strategy is refused there (a refine runs one LM), a width
+    # beside a stated constant too, and a width records no scale
+    @test_throws r"runs ONE robustified LM" bundle(start, obs0, LevenbergMarquardt(; optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 10)))
+    @test_throws ArgumentError bundle(start, obs0, LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 1.0)))
+    @test res.metadata.loss_width == 1.5 && VgtkCore.scale_source(res) == VgtkCore.ScaleNone
     # the termination record (§14): Core's verdict, returned as it is. One step from the start (an xtol above any step) stops
     # by the step size short of the minimum, and is converged (Core: a tolerance stop is converged).
-    stopped = refine_rotations(CAM, start, [[k => x for (k, x) in t] for t in ts]; kw..., xtol = 1.0e3)
-    @test VgtkCore.stop_rule(stopped) == VgtkCore.IncrementSize && stopped.iterations == 1
-    @test VgtkCore.retcode(stopped) == VgtkCore.ReturnCode.Success && VgtkCore.converged(stopped)
-    @test err(VgtkCore.estimate(stopped)) > err(VgtkCore.estimate(res))          # converged, yet short of the minimum
-    @test VgtkCore.converged(res) && VgtkCore.retcode(res) == VgtkCore.ReturnCode.Success
+    stopped = bundle(start, obs0; stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e3))
+    @test stopped.stop_rule == VgtkCore.IncrementSize && stopped.stats.nsteps == 1
+    @test stopped.retcode == VgtkCore.ReturnCode.Success && successful_retcode(stopped)
+    @test err(stopped.u) > err(res.u)          # converged, yet short of the minimum
+    @test successful_retcode(res) && res.retcode == VgtkCore.ReturnCode.Success
     good = [maximum(norm.(r)) < 5 for r in res.metadata.residuals]
     @test count(good) > 300
     derr = [rad2deg(acos(clamp(dot(res.metadata.directions[j], dirs[j]), -1, 1))) for j in findall(good)]
@@ -110,25 +113,25 @@ end
     tin = filter(t -> length(unique(first.(t))) >= 2, tin)
     start2 = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.02 .* randn(Xoshiro(99 + k), 3))...))) * R[k] for k in 1:K)
     start2[1] = R[1]
-    a = refine_rotations(CAM, start, tin; kw...); b = refine_rotations(CAM, start2, tin; kw...)
-    @test VgtkCore.converged(a) && VgtkCore.converged(b)
+    a = bundle(start, tin); b = bundle(start2, tin)
+    @test successful_retcode(a) && successful_retcode(b)
     free = collect(2:K)
-    ma = bundle_model(CAM, VgtkCore.estimate(a), a.metadata.directions, tin, free)
+    ma = bundle_model(CAM, a.u, a.metadata.directions, tin, free)
     sa = stationarity_radius(ma, 1.5)
     # b's Newton step in a's metric (the two at one minimum: one quadratic model), so the triangle inequality holds in one metric
-    sb = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(b), b.metadata.directions, tin, free), 1.5; H = sa.H)
-    Δ = coordinates_between(VgtkCore.estimate(a), a.metadata.directions, VgtkCore.estimate(b), b.metadata.directions, free)
-    @info "two starts: $(a.iterations) and $(b.iterations) LM iterations; their distance $(sqrt(dot(Δ, sa.H * Δ))), radii $(sa.radius) + $(sb.radius)"
+    sb = stationarity_radius(bundle_model(CAM, b.u, b.metadata.directions, tin, free), 1.5; H = sa.H)
+    Δ = coordinates_between(a.u, a.metadata.directions, b.u, b.metadata.directions, free)
+    @info "two starts: $(a.stats.nsteps) and $(b.stats.nsteps) LM iterations; their distance $(sqrt(dot(Δ, sa.H * Δ))), radii $(sa.radius) + $(sb.radius)"
     @test sqrt(dot(Δ, sa.H * Δ)) <= sa.radius + sb.radius
     # `eliminate = true` needs NLLSsolver's Schur system (MultiVariateLSschur): without it, it is refused by name (no inert
     # setting); left out, the default solves every unknown together
     if !VgtkCore.nlls_features().schur
-        @test_throws r"eliminate = true.*MultiVariateLSschur" refine_rotations(CAM, start, obs0; kw..., eliminate = true)
-        @test_throws r"eliminate = true.*MultiVariateLSschur" PanoramaStitching.refine_camera_and_rotations(CAM, start, obs0; kw..., eliminate = true)
+        @test_throws r"eliminate = true.*MultiVariateLSschur" bundle(start, obs0; eliminate = true)
+        @test_throws r"eliminate = true.*MultiVariateLSschur" solve(RefineProblem(RotationBundleProblem(obs0; eliminate = true), (; camera = CAM, rotations = start)), lm; kw...)
     else   # with the Schur system the eliminated and the joint solve are two paths to one minimum: within their radii
-        j = refine_rotations(CAM, start, tin; kw..., eliminate = false)
-        sj = stationarity_radius(bundle_model(CAM, VgtkCore.estimate(j), j.metadata.directions, tin, free), 1.5; H = sa.H)
-        Δj = coordinates_between(VgtkCore.estimate(a), a.metadata.directions, VgtkCore.estimate(j), j.metadata.directions, free)
+        j = bundle(start, tin; eliminate = false)
+        sj = stationarity_radius(bundle_model(CAM, j.u, j.metadata.directions, tin, free), 1.5; H = sa.H)
+        Δj = coordinates_between(a.u, a.metadata.directions, j.u, j.metadata.directions, free)
         @test sqrt(dot(Δj, sa.H * Δj)) <= sa.radius + sj.radius
     end
     # the closed-form Jacobian blocks against ForwardDiff through the variables' updates
@@ -147,18 +150,19 @@ end
 # direction images past the sensor's right edge (recorded at the edge: a detection at the border of a frame the direction
 # leaves). The bundle drops exactly those 5, converges, and its rotations are those of the same bundle without them to 1e-9;
 # when every track is left with fewer than two frames it is an ArgumentError.
-@testitem "refine_rotations drops and counts the observations whose start prediction is not imaged" begin
+@testitem "the rotation bundle drops and counts the observations whose start prediction is not imaged" begin
     using Test, Random, LinearAlgebra, StaticArrays
     import PanoramaStitching
-    using PanoramaStitching: refine_rotations
+    using PanoramaStitching: RotationBundleProblem
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
+    using VisualGeometryToolkitCore: solve, EstimationProblem, RefineProblem, LevenbergMarquardt, LmStops, successful_retcode
     rot(v) = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector{3, Float64}(v)))
     W, H = 1000, 800
     pinhole = VgtkCore.CameraModel(800.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px])
     bounded = VgtkCore.BoundedCamera(pinhole, VgtkCore.Size2(W, H))
-    grid = VgtkCore.with_model(bounded, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bounded, VgtkCore.imaged_region(bounded);
-                                                                                    tolerance = 0.01, grid_size = (20, 16))))
+    grid = VgtkCore.with_model(bounded, solve(EstimationProblem(VgtkEstimation.CameraRegressionProblem(VgtkCore.SplineLens, bounded, VgtkCore.imaged_region(bounded))),
+                                              VgtkEstimation.CameraRegression(; tolerance = 0.01, grid_size = (20, 16))).u)
     rng = Xoshiro(11); K = 4
     R = Dict(k => rot(SVector(0.02randn(rng), 0.25 * (k - 1), 0.02randn(rng))) for k in 1:K)
     inside(x) = 20 < x[1] < W - 20 && 20 < x[2] < H - 20
@@ -185,14 +189,16 @@ end
     tracks = [gaining; others]
     with_extra = [j <= 5 ? [tracks[j]; extra[j]] : tracks[j] for j in eachindex(tracks)]   # the first 5 tracks gain one each
     start = Dict(k => (k == 1 ? R[1] : rot(0.003 .* randn(rng, 3)) * R[k]) for k in 1:K)
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
-    res = refine_rotations(grid, start, with_extra; kw...)
-    ref = refine_rotations(grid, start, tracks; kw...)
-    @test VgtkCore.converged(res) && res.metadata.n_dropped_start == 5
-    @test VgtkCore.converged(ref) && ref.metadata.n_dropped_start == 0
+    lm = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}())
+    kw = (; width = 1.5, stops = LmStops(; max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10))
+    bundle(camera, start, tracks; kws...) = solve(RefineProblem(RotationBundleProblem(camera, tracks), start), lm; kw..., kws...)
+    res = bundle(grid, start, with_extra)
+    ref = bundle(grid, start, tracks)
+    @test successful_retcode(res) && res.metadata.n_dropped_start == 5
+    @test successful_retcode(ref) && ref.metadata.n_dropped_start == 0
     @test all(j -> isnan(res.metadata.residuals[j][end]), 1:5)                         # a dropped observation has no residual
-    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
-    @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(VgtkCore.estimate(res)[k])' * R[k]))), 1:K) < 0.05
+    @test maximum(k -> norm(SMatrix{3, 3}(res.u[k]) - SMatrix{3, 3}(ref.u[k])), 1:K) <= 1.0e-9
+    @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(res.u[k])' * R[k]))), 1:K) < 0.05
     # A track left out entirely keeps its START direction (the mean bearing of all its observations), its residuals NaN, every
     # observation counted: here tracks that lose one observation in a first round, restart from the kept bearings, and lose a
     # second at that restart (left in one frame: out). Found by search with the bundle's rule as the oracle; the bundle with
@@ -229,23 +235,23 @@ end
         n >= 2 && !any(keep) && push!(twice, t)
     end
     @test length(twice) == 2
-    res2 = refine_rotations(grid, start, [tracks; twice]; kw...)
-    @test VgtkCore.converged(res2) && res2.metadata.n_dropped_start == sum(length, twice)
+    res2 = bundle(grid, start, [tracks; twice])
+    @test successful_retcode(res2) && res2.metadata.n_dropped_start == sum(length, twice)
     @test all(j -> res2.metadata.directions[length(tracks) + j] ≈ mean_bearing(twice[j]), eachindex(twice))
     @test all(j -> all(isnan, res2.metadata.residuals[length(tracks) + j]), eachindex(twice))
-    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res2)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
+    @test maximum(k -> norm(SMatrix{3, 3}(res2.u[k]) - SMatrix{3, 3}(ref.u[k])), 1:K) <= 1.0e-9
     @test isempty(res2.metadata.frames_unconstrained)
     # a frame that keeps no observation is held at its start rotation and listed: frame 5, started 90° off, is seen by one track
     # whose start prediction there is off the lattice
     start5 = merge(start, Dict(5 => rot(SVector(0.0, π / 2, 0.0)) * start[4]))
-    res5 = refine_rotations(grid, start5, [tracks; [[first(tracks[6]), 5 => SVector(500.0, 400.0)]]]; kw...)
-    @test VgtkCore.converged(res5) && res5.metadata.frames_unconstrained == [5]
-    @test SMatrix{3, 3}(VgtkCore.estimate(res5)[5]) == start5[5]
-    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(res5)[k]) - SMatrix{3, 3}(VgtkCore.estimate(ref)[k])), 1:K) <= 1.0e-9
+    res5 = bundle(grid, start5, [tracks; [[first(tracks[6]), 5 => SVector(500.0, 400.0)]]])
+    @test successful_retcode(res5) && res5.metadata.frames_unconstrained == [5]
+    @test SMatrix{3, 3}(res5.u[5]) == start5[5]
+    @test maximum(k -> norm(SMatrix{3, 3}(res5.u[k]) - SMatrix{3, 3}(ref.u[k])), 1:K) <= 1.0e-9
     # every track a pair whose second observation is not imaged at the start: nothing is left to solve
     lone = [[first(t), extra[j]] for (j, t) in enumerate(tracks[1:5]) if first(first(t)) != first(extra[j])]
     @test !isempty(lone)
-    @test_throws ArgumentError refine_rotations(grid, start, lone; kw...)
+    @test_throws ArgumentError bundle(grid, start, lone)
 end
 
 # How the bundle ends: the Tamron 20 mm sequence's mechanism on a synthetic sequence — a rectilinear grid lens calibrated over
@@ -255,19 +261,20 @@ end
 # ("nonfinite_start", the rotations the start's). Now those observations are dropped and counted, and the bundle converges.
 # Controls: the same data and start through the parametric camera converge with none dropped, as does the grid from the true
 # rotations; a run with no iteration (max_iter = 0) reads the iteration cap.
-@testitem "refine_rotations' termination: a grid lens's border observations from an imperfect start converge (their misses dropped)" begin
+@testitem "the rotation bundle's termination: a grid lens's border observations from an imperfect start converge (their misses dropped)" begin
     using Test, Random, LinearAlgebra, StaticArrays
     import NLLSsolver, PanoramaStitching
-    using PanoramaStitching: refine_rotations
+    using PanoramaStitching: RotationBundleProblem
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
+    using VisualGeometryToolkitCore: solve, EstimationProblem, RefineProblem, LevenbergMarquardt, LmStops, successful_retcode
     rot(v) = SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector{3, Float64}(v)))
     W, H = 1000, 800
     pinhole = VgtkCore.CameraModel(800.0VgtkCore.px, SA[500.0VgtkCore.px, 400.0VgtkCore.px])
     # the grid: a 20 × 16 SplineLens fitted to the pinhole over the sensor, with its forward spline; bounded by the sensor
     bounded = VgtkCore.BoundedCamera(pinhole, VgtkCore.Size2(W, H))
-    grid = VgtkCore.with_model(bounded, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bounded, VgtkCore.imaged_region(bounded);
-                                                                                    tolerance = 0.01, grid_size = (20, 16))))
+    grid = VgtkCore.with_model(bounded, solve(EstimationProblem(VgtkEstimation.CameraRegressionProblem(VgtkCore.SplineLens, bounded, VgtkCore.imaged_region(bounded))),
+                                              VgtkEstimation.CameraRegression(; tolerance = 0.01, grid_size = (20, 16))).u)
     sp = PanoramaStitching._forward_map(grid)
     rng = Xoshiro(7); K = 5
     R = Dict(k => rot(SVector(0.02randn(rng), 0.3 * (k - 1), 0.02randn(rng))) for k in 1:K)
@@ -283,20 +290,22 @@ end
         length(t) >= 2 && push!(tracks, t)
     end
     start = Dict(k => (k == 1 ? R[1] : rot(0.01 .* randn(rng, 3)) * R[k]) for k in 1:K)
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 1.5, max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10)
+    lm = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}())
+    kw = (; width = 1.5, stops = LmStops(; max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10))
+    bundle(camera, start, tracks; kws...) = solve(RefineProblem(RotationBundleProblem(camera, tracks), start), lm; kw..., kws...)
     err(Rs) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(Rs[k])' * R[k]))), 1:K)
 
-    res = refine_rotations(grid, start, tracks; kw...)
+    res = bundle(grid, start, tracks)
     @info "the grid from an imperfect start: $(res.metadata.n_dropped_start) of $(res.metadata.n_observations) observations dropped"
-    @test VgtkCore.converged(res) && res.metadata.n_dropped_start > 0 && err(VgtkCore.estimate(res)) < 0.05
-    resp = refine_rotations(pinhole, start, tracks; kw...)
-    @test VgtkCore.converged(resp) && resp.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(resp)) < 0.05
+    @test successful_retcode(res) && res.metadata.n_dropped_start > 0 && err(res.u) < 0.05
+    resp = bundle(pinhole, start, tracks)
+    @test successful_retcode(resp) && resp.metadata.n_dropped_start == 0 && err(resp.u) < 0.05
     # The grid from the TRUE rotations (a finite start) converges. Until 2026-11-04 it never returned: the grid's forward map
     # (then a separate spline) extrapolated past the grid's imaged region, so an iterate there had a finite residual but a NaN Jacobian, NLLSsolver
     # accepted it and its Levenberg–Marquardt trial loop spun on the NaN system. The residual is now NaN off the imaged region
     # too (`_project`): such a step is a rejected one.
-    rest = refine_rotations(grid, R, tracks; kw...)
-    @test VgtkCore.converged(rest) && rest.metadata.n_dropped_start == 0 && err(VgtkCore.estimate(rest)) < 0.05
+    rest = bundle(grid, R, tracks)
+    @test successful_retcode(rest) && rest.metadata.n_dropped_start == 0 && err(rest.u) < 0.05
     # the residual and its Jacobian are defined on the same set: off the imaged region both are NaN
     fwd = sp
     bc = PanoramaStitching._BundleCamera(grid)
@@ -305,6 +314,6 @@ end
     e, J = NLLSsolver.computeresjac(NLLSsolver.static(3), o, ch, far)
     @test all(isnan, e) && all(isnan, J) && all(isnan, NLLSsolver.computeresidual(o, ch, far))
     @test all(isnan, sp(SVector(0.9, 0.0, 0.3)))                      # (the forward spline is NaN off its fitted chart too)
-    unrun = refine_rotations(pinhole, start, tracks; kw..., max_iter = 0)   # no solve: the iteration cap, the start returned
-    @test VgtkCore.retcode(unrun) == VgtkCore.ReturnCode.MaxIters && VgtkCore.stop_rule(unrun) == VgtkCore.IterationCap && unrun.iterations == 0
+    unrun = bundle(pinhole, start, tracks; stops = LmStops(; max_iter = 0, ftol = 1.0e-10, xtol = 1.0e-10))   # no solve: the iteration cap, the start returned
+    @test unrun.retcode == VgtkCore.ReturnCode.MaxIters && unrun.stop_rule == VgtkCore.IterationCap && unrun.stats.nsteps == 0
 end

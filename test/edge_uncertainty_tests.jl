@@ -19,18 +19,19 @@
         push!(u2, VgtkCore.project(CAM, g) + 0.7 * randn(rng, SVector{2, Float64}))
     end
     fa = described(u1); fb = described(u2)                         # plain detections (no detection covariance in this release)
-    ms = [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)]
+    ms = [VgtkCore.Attributed(VgtkCore.Correspondence{Int, Int}(i, i), VgtkFeatures.NNMatchMeta(1.0f0, 0.5f0)) for i in eachindex(u1)]
     cs, kept = pair_bearings(bcam, fa, fb, ms; frame_map = IDENTITY_MAP)
     # plain endpoints: no covariance columns (unit isotropic pixel noise)
     @test !VgtkCore.hasattr(cs, :Σ₁) && !VgtkCore.hasattr(cs, :Σ₂) && kept[1] == (1, 1)
     @test VgtkCore.hasattr(cs, :score) && cs.score[1] == 1.0                       # Features' correspondences' score column
-    res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
-                                       scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0))
+    res = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkEstimation.RotationProblem(cs)),
+                         VgtkEstimation.Ransac(; scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0),
+                                               config = VgtkEstimation.RansacConfig(; max_trials = 2000, min_trials = 100)); rng = MersenneTwister(1))
     Σ = PanoramaStitching._verified_rotation_covariance(cs, res)
     @test Σ == SMatrix{3, 3, Float64, 9}(Statistics.cov(VgtkEstimation.uncertain_rotation(VgtkEstimation.RotationProblem(cs), res)))
     @test Σ ≈ Σ' && all(>(0), eigvals(Symmetric(Matrix(Σ))))
     # the edge: the pair's rotation with that covariance, weighted by its inliers
-    verified = Dict((1, 2) => (rotation = SMatrix{3, 3, Float64, 9}(VgtkCore.estimate(res)), inliers = 100, covariance = Σ))
+    verified = Dict((1, 2) => (rotation = SMatrix{3, 3, Float64, 9}(res.u), inliers = 100, covariance = Σ))
     e = PanoramaStitching._view_graph(2, verified).edges[(1, 2)]
     @test VgtkCore.weight_of(e) == 100.0 && Statistics.cov(VgtkCore.value_of(e)) == Σ
 end
@@ -48,7 +49,7 @@ end
     verified = Dict((1, 2) => edge(1, 2), (2, 3) => edge(2, 3), (3, 4) => edge(3, 4), (1, 4) => edge(1, 4; cov = nothing))
     vg = PanoramaStitching._view_graph(4, verified)
     @test !haskey(vg.edges, (1, 4)) && length(vg.edges) == 3 && PanoramaStitching._no_covariance_pairs(verified) == [(1, 4)]
-    avg = VgtkEstimation.fit_rotation_averaging(vg)
+    avg = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkCore.AbsoluteRotations, vg), VgtkEstimation.RotationAveraging())
     @test VgtkCore.scale_source(avg) == VgtkCore.ScaleUpstream && VgtkCore.noise_scale(avg) == 1.0   # absolute edges: no second scale
     # the only edge to frame 4 undetermined: refused, naming it (no averaging of a partial graph)
     chain = Dict((1, 2) => edge(1, 2), (2, 3) => edge(2, 3), (3, 4) => edge(3, 4; cov = nothing))

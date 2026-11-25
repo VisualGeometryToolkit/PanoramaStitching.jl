@@ -8,8 +8,7 @@ Registration
 verify_pairs
 VerifiedPairs
 chain_tracks
-refine_rotations
-refine_camera_and_rotations
+RotationBundleProblem
 RotationBundleMetadata
 PanoramaStitching.refuse_retired_registration
 ```
@@ -36,7 +35,8 @@ PanoramaStitching.frame_region
 ```@docs
 true_up
 up_frame
-sweep_up
+SweepUp
+RollFreeUp
 PanoramaView
 panorama_view
 render_panorama
@@ -48,7 +48,7 @@ PanoramaStitching.CUBE_FACES
 ## The vignetting from the frames
 
 ```@docs
-fit_vignetting
+VignettingSelfCalibration
 AzimuthalChart
 VignettingMetadata
 ConjugateGradient
@@ -67,9 +67,11 @@ vignetting_summary
 ```@docs
 ring_correspondences
 PairCorrespondences
-ring_pair_vignetting
+RingVignetting
+RingPairMedians
 PairVignettingMetadata
-fit_additive_level
+AdditiveLevel
+LevelBisection
 additive_level_slope
 ```
 

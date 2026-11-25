@@ -21,7 +21,7 @@ world_direction(lat, lon) = VgtkCore.backproject(VgtkCore.Equirectangular(), SVe
 
 # The camera's forward map ray → camera pixel as a Transformation (a kernel-lawful value on a device): its model's
 # `imaging_transform` (a SplineLens camera's through its forward spline, given by VisualGeometryToolkitEstimation's
-# `fit_forward_spline(camera; tolerance)`, its frame kept).
+# `ForwardSpline(; tolerance)` on `CameraRegressionProblem(camera)`, its frame kept).
 _forward_map(m::VgtkCore.CameraModel) = VgtkCore.imaging_transform(m)
 _forward_map(b::VgtkCore.BoundedCamera) = _forward_map(VgtkCore.model(b))
 # The forward map on the frames' backend: the camera's model moved to the device first (Core's adapt_structure: a SplineLens's

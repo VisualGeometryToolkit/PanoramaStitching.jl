@@ -2,8 +2,8 @@
 #
 #   julia --project=examples/panorama_vignetting examples/panorama_vignetting/autocalibration_check.jl
 #
-# PanoramaStitching's `refine_camera_and_rotations` (the autocalibration of a rotating camera, under the robust-estimation
-# contract) against PanoramaStitching 7bbbea03's camera-free rotation bundle — the code of the 14 mm autocalibration record
+# PanoramaStitching's autocalibration of a rotating camera (`RotationBundleProblem(tracks; fixed)` refining the guess
+# `(; camera, rotations)` by Core's `LevenbergMarquardt`, under the robust-estimation contract) against PanoramaStitching 7bbbea03's camera-free rotation bundle — the code of the 14 mm autocalibration record
 # (fx3-14mm-selfcal.cameras-v5.json) — on the SAME tracks: one 7bbbea03 round, its tracks, start rotations and result
 # dumped as the declared input [inputs.equivalence_tracks] of autocalibration_check.toml. It checks that the two bundles
 # agree, |Δ| ≤ 3σ per parameter with σ the record's. It is NOT a reproduction of the record: those tracks are one round,
@@ -31,20 +31,21 @@ function autocalibration_check(config_path = joinpath(@__DIR__, "autocalibration
     tracks = [[Int(o[1]) => SVector{2, Float64}(o[2]...) for o in t] for t in fx["tracks"]]
     rotations = Dict(k => SMatrix{3, 3, Float64, 9}(reshape(Float64.(v), 3, 3)) for (k, v) in enumerate(fx["rotations"]))
     b = cfg["bundle"]
-    strategy = VgtkEstimation.optimization_strategy_from_toml(b["optimization_strategy"]; class = :refine_camera_and_rotations,
+    strategy = VgtkEstimation.optimization_strategy_from_toml(b["optimization_strategy"]; class = :rotation_bundle_problem,
                                                               section = "bundle.optimization_strategy")
+    lm = VgtkCore.LevenbergMarquardt(; optimization_strategy = strategy)
+    stops = VgtkCore.LmStops(; max_iter = b["max_iter"], ftol = b["ftol"], xtol = b["xtol"])
+    problem = RotationBundleProblem(tracks; fixed = Tuple(Symbol.(b["fixed"])))
     res = nothing; camera = start
     for run in 1:b["runs"]
-        res = refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = strategy, width = Float64(b["width"]),
-                                          fixed = Tuple(Symbol.(b["fixed"])), max_iter = b["max_iter"], ftol = b["ftol"],
-                                          xtol = b["xtol"])
-        println("run $run: $(res.retcode), $(res.iterations) iterations, rms $(round(res.rms; digits = 4)) px, $(res.n) observations")
-        camera = res.metadata.camera
-        rotations = Dict(k => SMatrix{3, 3, Float64, 9}(R) for (k, R) in VgtkCore.estimate(res))
+        res = VgtkCore.solve(VgtkCore.RefineProblem(problem, (; camera, rotations)), lm; width = Float64(b["width"]), stops)
+        println("run $run: $(res.retcode), $(res.stats.nsteps) iterations, rms $(round(res.rms; digits = 4)) px, $(res.n) observations")
+        camera = res.u.camera
+        rotations = Dict(k => SMatrix{3, 3, Float64, 9}(R) for (k, R) in res.u.rotations)
     end
     c = res.metadata.calibration
     k = cfg["check"]["tolerance_sigmas"]
-    println("| parameter | 7bbbea03 (reference) | refine_camera_and_rotations | Δ | σ (record) | Δ/σ |")
+    println("| parameter | 7bbbea03 (reference) | the autocalibration | Δ | σ (record) | Δ/σ |")
     println("|---|---|---|---|---|---|")
     bad = Symbol[]
     for p in c.free_parameters

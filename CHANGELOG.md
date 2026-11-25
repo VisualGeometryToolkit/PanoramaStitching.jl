@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.12.0
+
+A breaking minor on VisualGeometryToolkitCore 0.14's estimation interface: every estimator is `solve(problem, algorithm)`
+(CommonSolve's verb, Core's front end). This package's estimators become problems and algorithm types; the stack's
+estimators it calls are their new forms. Numerics are those of the stack's 0.14 branch (see "Changed").
+
+It is built on VisualGeometryToolkitCore 0.14, VisualGeometryToolkitEstimation 0.13, VisualGeometryToolkitFeatures 0.10,
+VisualGeometryToolkitIO 0.12 and VisualRadiometryToolkitCore/IO 0.1.2 (TEMPORARY `[sources]` on their solve-branch
+worktrees until they are registered).
+
+### Breaking (retired names, each with its replacement)
+
+- `refine_rotations(camera, rotations, tracks; optimization_strategy, scale | width, max_iter, ftol, xtol, eliminate)` →
+  `solve(RefineProblem(RotationBundleProblem(camera, tracks; eliminate), rotations), LevenbergMarquardt(; optimization_strategy);
+  scale | width, stops = LmStops(; max_iter, ftol, xtol))`. `RotationBundleProblem` is a block problem (Core's
+  `AbstractBlockProblem`); `ClassDefault()` is the bundle's strategy of record (Estimation's `[camera_poses_problem]`).
+- `refine_camera_and_rotations(camera, rotations, tracks; fixed, …)` → `solve(RefineProblem(RotationBundleProblem(tracks; fixed,
+  eliminate), (; camera, rotations)), LevenbergMarquardt(; optimization_strategy); scale | width, stops)`. The result's `u` is
+  `(; camera, rotations)`; `RotationBundleMetadata` loses its `camera` field (the held camera is the problem's, the refined one
+  the result's `u.camera`).
+- `fit_vignetting(vignetting, camera, frames, rotations; free_directions, saturated, frame_map, plane_maps, <settings>)` →
+  `solve(EstimationProblem(AbstractVignetting, frames, (; camera, rotations, saturated, frame_map[, plane_maps], vignetting,
+  free_directions)), VignettingSelfCalibration(; gain_correction, plane, rim_margin_px, saturation_margin_px, fov_deg,
+  chart_spacing_deg, penalty_order, penalty_weight, vignetting_penalty_weight, solver, observation_noise))` (a `FitKind`).
+- `ring_pair_vignetting(pc; offset, frame_weights)` → `solve(EstimationProblem(RingVignetting, pc[, (; offset,
+  frame_weights)]), RingPairMedians())` (a `ClosedFormKind`; `RingVignetting` a model tag).
+- `fit_additive_level(pc; bounds, tolerance, frame_weights, max_iter)` → `solve(EstimationProblem(AdditiveLevel, pc[, (;
+  frame_weights)]), LevelBisection(; bounds, tolerance, max_iter))` (a `FitKind`; `AdditiveLevel` a model tag).
+- `sweep_up(rotations) -> (; up, eigenvalues)` → `solve(EstimationProblem(SweepUp, rotations), RollFreeUp())`: `u` the up
+  direction, `metadata.eigenvalues` (a `ClosedFormKind`; `SweepUp` a model tag).
+- Results are read by field: `r.u`, `r.retcode`, `r.stop_rule`, `r.stats.nsteps` (was `iterations`), `successful_retcode(r)`.
+- A keyword the solve does not take is a `MethodError` (was an `ArgumentError` naming the refine): the bundles' retired
+  `camera_free`, `loss`, `loss_width`, `free`, `fix`, `fixed_params`, `hold` and `fit_vignetting`'s retired noise keyword.
+- `register_rotations`' and `verify_pairs`' `scoring`, `local_optimization_strategy`, `averaging_optimization_strategy` and
+  `bundle_optimization_strategy` default to `ClassDefault()` (was `nothing` or an internal sentinel for "the stack's
+  default"); `nothing` is the stack's "none" (no local optimization, the least squares).
+
+### Changed
+
+- The pairs are `Ransac` on each pair's `RotationProblem` (`config = RansacConfig(; max_trials, min_trials)`, `rng` the
+  pair's stream), the averaging `FilteredRotationAveraging` and `RotationAveraging`, the bundle's scale `PooledScale`, the
+  grid lens's forward spline `CameraRegression`; the panorama record's `fit` goes through VisualGeometryToolkitIO's style
+  (`JSON.lower`/`JSON.lift`), its keys unchanged. A detection's centre is Core's `centroid` of its frame.
+
 ## 0.11.0
 
 A breaking minor: the vignetting models are VisualRadiometryToolkitCore's, and the panorama record (`vgio/panorama/v2.0`) is

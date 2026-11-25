@@ -12,12 +12,12 @@ on unit bearings, and every residual is in the camera's pixels.
 | Step | Function | Result |
 |---|---|---|
 | the rotation of every frame | [`register_rotations`](@ref) | a [`Registration`](@ref): rotations, view graph, tracks, bundle |
-| the camera and the rotations together, no target (autocalibration) | [`refine_camera_and_rotations`](@ref) | a `FitResult`: the refined camera and rotations |
+| the camera and the rotations together, no target (autocalibration) | `solve(RefineProblem(`[`RotationBundleProblem`](@ref)`(tracks; fixed), (; camera, rotations)), LevenbergMarquardt(…); scale)` | a `FitResult`: the refined camera and rotations |
 | the frames sampled at directions | [`sample_frames`](@ref) | [`FrameSamples`](@ref) |
 | the panorama in a view | [`panorama_view`](@ref), [`render_panorama`](@ref), [`render_cube_map`](@ref) | `(; image, owner, coverage, extent)` |
-| the vignetting from the frames alone, or the gains under a given one | [`fit_vignetting`](@ref) | a `FitResult` of a VisualRadiometryToolkitCore vignetting model |
+| the vignetting from the frames alone, or the gains under a given one | `solve(EstimationProblem(AbstractVignetting, frames, p),` [`VignettingSelfCalibration`](@ref)`(…))` | a `FitResult` of a VisualRadiometryToolkitCore vignetting model |
 | the seams a vignetting leaves | [`score_seams`](@ref) | `(; ratio, rms, mad, n)` |
-| the model-free vignetting per ring of a field angle (the pair equation), the frames' additive level | [`ring_correspondences`](@ref), [`ring_pair_vignetting`](@ref), [`fit_additive_level`](@ref) | a `FitResult`: ln V per ring; the level |
+| the model-free vignetting per ring of a field angle (the pair equation), the frames' additive level | [`ring_correspondences`](@ref), then [`RingPairMedians`](@ref) on [`RingVignetting`](@ref), [`LevelBisection`](@ref) on [`AdditiveLevel`](@ref) | a `FitResult`: ln V per ring; the level |
 | the results saved and loaded | [`save_panorama`](@ref), [`load_panorama`](@ref) | a `vgio/panorama/v2.0` file ([JSON Schema](schemas/vgio/panorama/v2.0.json)); `(; camera, rotations, vignetting, gains, fit)` |
 
 The sampling, the render and the vignetting fit run as KernelAbstractions kernels (the first two through
@@ -100,7 +100,8 @@ size(pano.image)                                                 # (458, 1220, 3
 
 PanoramaStitching is part of the [VisualGeometryToolkit](https://visualgeometrytoolkit.github.io) stack. It composes
 VisualGeometryToolkitFeatures' ASIFT detector and LoMa descriptor and matcher, VisualGeometryToolkitEstimation's
-`find_rotation` and `fit_rotation_averaging`, and VisualGeometryToolkitCore's cameras, panorama projections and warping.
+`Ransac` on a `RotationProblem` and `RotationAveraging`, and VisualGeometryToolkitCore's estimation interface
+(`solve(problem, algorithm)`), cameras, panorama projections and warping.
 Its one radiometric estimate is the vignetting a rotating camera's own frames determine; exposure, response and colour are
 left to the caller.
 

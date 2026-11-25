@@ -1,4 +1,4 @@
-# The comparison of record of fit_vignetting's settings (run: compare_arms.jl, README.md "The comparison of the fit's settings").
+# The comparison of record of VignettingSelfCalibration's settings (run: compare_arms.jl, README.md "The comparison of the fit's settings").
 # Every arm runs on every set: the set's config of record (decode, registration, domain, the radial model and the solver) with the
 # arm's three settings in place of the config's:
 #   vignetting         "free" (self-calibration: V fitted with the gains) or "fixed" (V held at the V of record: the arm named by

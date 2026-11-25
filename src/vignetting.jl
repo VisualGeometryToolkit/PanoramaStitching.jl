@@ -707,7 +707,7 @@ end
     VignettingSelfCalibration(; gain_correction, plane, rim_margin_px, saturation_margin_px, fov_deg, chart_spacing_deg,
                               penalty_order, penalty_weight, vignetting_penalty_weight, solver, observation_noise)
 
-A [`FitKind`](@extref VisualGeometryToolkitCore.FitKind) (iterative: the position noise's reweighted solves, the CG's
+A VisualGeometryToolkitCore `FitKind` (iterative: the position noise's reweighted solves, the CG's
 tolerance and budget):
 
     solve(EstimationProblem(AbstractVignetting, frames, (; camera, rotations, saturated, frame_map[, plane_maps],

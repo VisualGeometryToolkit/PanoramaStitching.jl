@@ -1,4 +1,4 @@
-# The comparison of fit_vignetting's settings: every arm of arms.toml (V free or fixed × the gain correction × the observation noise) on
+# The comparison of VignettingSelfCalibration's settings: every arm of arms.toml (V free or fixed × the gain correction × the observation noise) on
 # every set of record, each run keyed by its configs (README.md, "The comparison of the fit's settings").
 #
 #     julia --project=<env> examples/panorama_vignetting/compare_arms.jl examples/panorama_vignetting/arms.toml
@@ -66,7 +66,7 @@ function compare_set(A, order, C, inp, lens, reg, dir, key, arms_path, set_path)
     device = get(ENV, "PANORAMA_VIGNETTING_DEVICE", C.cfg["compute"]["device"])
     move = device == "cuda" ? CuArray : identity
     dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps)
-    up = up_frame(sweep_up(reg.rotations).up)
+    up = up_frame(VgtkCore.solve(VgtkCore.EstimationProblem(SweepUp, reg.rotations), RollFreeUp()).u)
     sc = C.cfg["seams"]; d = C.cfg["domain"]
     ext = sc["extent"] == "coverage" ? coverage_extent(lens, dev.frames, reg.rotations, up, dev.frame_map) : Tuple(sc["extent"])
     sview = panorama_view(VgtkCore.Equirectangular(), ext, sc["deg_per_pixel"]; up)
@@ -89,7 +89,7 @@ function compare_set(A, order, C, inp, lens, reg, dir, key, arms_path, set_path)
         fkw = (; vignetting = a["vignetting"] == "fixed" ? Vref : nothing)
         fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...)                       # compile, warm
         t = time(); r = fit(A["kind"], Ca, lens, dev, reg.rotations, W, H; fkw...); dt = time() - t
-        V = VgtkCore.estimate(r); m = r.metadata
+        V = r.u; m = r.metadata
         a === first(order) && (Vref = V)                                  # the V of record: the first arm
         G = fit_gains(Ca, r)
         seams = [score_seams(lens, dev.frames, reg.rotations, sview; vignetting = V, gains = G, plane = p, skw...) for p in 1:3]
@@ -114,7 +114,7 @@ function compare_set(A, order, C, inp, lens, reg, dir, key, arms_path, set_path)
                "date" => string(Dates.now()), "arms" => rows)
     open(io -> JSON.print(io, rec, 2), joinpath(dir, "results.json"), "w")
     open(joinpath(dir, "results.md"), "w") do io
-        println(io, "# fit_vignetting settings: $(C.cfg["name"])\n")
+        println(io, "# VignettingSelfCalibration settings: $(C.cfg["name"])\n")
         println(io, "Key $key; the V of record (fixed arms): $(A["fixed_from"]); seams 1.4826·MAD of the log ratio.\n")
         println(io, "| arm | V | gains | observation noise | seam MAD R | G | B | all | seam rms all | V_min | V asym % | gain range (G) | s |")
         println(io, "|---|---|---|---|---|---|---|---|---|---|---|---|---|")

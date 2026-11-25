@@ -180,7 +180,7 @@ end
 end
 
 @testitem "panorama: no vignetting, and the bundle's termination record, round trip" setup = [PanoramaRecordFixtures] begin
-    using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, FitResult, ReturnCode, StopRule, retcode, stop_rule, iterations, rms
+    using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, FitResult, ReturnCode, StopRule, SolveStats
     cam = BoundedCamera(CameraModel(CameraCalibrationMat(SMatrix{3, 3, Float64}(800.0, 0, 0, 0, 800.0, 0, 320.5, 240.5, 1)); lens = KannalaBrandt(0.1, 0.0, 0.0, 0.0), pixel_frame = :colmap),
                         Size2(640, 480))
     rots = Trajectory(CameraFrame, WorldFrame, Dict(1 => EuclideanMap(QuatRotation(1.0, 0.0, 0.0, 0.0, false), [0.0, 0.0, 0.0] .* m),
@@ -189,15 +189,15 @@ end
     mktempdir() do dir
         p = joinpath(dir, "p.json")
         for rule in instances(StopRule), code in (ReturnCode.Success, ReturnCode.MaxIters, ReturnCode.Stalled)
-            fit = FitResult((; anything = 1), code, rule, 12, 0.4125, 31580, nothing)   # any estimate: only the record is written
+            fit = FitResult((; anything = 1), code, rule, SolveStats(; nsteps = 12), 0.4125, 31580, nothing)   # any estimate: only the record is written
             save_panorama(p, cam, rots, nothing, G, fit)                                 # no vignetting: a candidate with none
             @test validate(p) == "panorama"
             d = JSON.parsefile(p)
             @test !haskey(d, "vignetting") && haskey(d, "fit")
             b = load_panorama(p)
             @test b.vignetting === nothing && b.gains == G && b.rotations == rots
-            @test b.fit isa FitResult{Nothing, Nothing} && retcode(b.fit) == code && stop_rule(b.fit) == rule &&
-                iterations(b.fit) == 12 && rms(b.fit) === 0.4125 && b.fit.n == 31580
+            @test b.fit isa FitResult{Nothing, Nothing} && b.fit.retcode == code && b.fit.stop_rule == rule &&
+                b.fit.stats.nsteps == 12 && b.fit.rms === 0.4125 && b.fit.n == 31580
         end
         # neither vignetting nor gains nor a fit: camera and rotations alone
         save_panorama(p, cam, rots, nothing, nothing)
@@ -205,7 +205,7 @@ end
         @test b.vignetting === nothing && b.gains === nothing && b.fit === nothing
         # the record's own refusals: an unknown code or rule, a negative count
         for (k, v) in (("retcode", "Converged"), ("stop_rule", "nope"), ("iterations", -1), ("rms", -0.1))
-            save_panorama(p, cam, rots, nothing, nothing, FitResult(nothing, ReturnCode.Success, first(instances(StopRule)), 1, 0.1, 2, nothing))
+            save_panorama(p, cam, rots, nothing, nothing, FitResult(nothing, ReturnCode.Success, first(instances(StopRule)), SolveStats(; nsteps = 1), 0.1, 2, nothing))
             d = JSON.parsefile(p; dicttype = Dict{String, Any})
             d["fit"][k] = v
             write(p, JSON.json(d))

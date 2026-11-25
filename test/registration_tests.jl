@@ -8,7 +8,7 @@ using LinearAlgebra: I
 using StaticArrays: SVector, SMatrix, SA
 using StableRNGs: StableRNG
 using VisualGeometryToolkitCore: CameraModel, KannalaBrandt, px, SplineLens, BoundedCamera, Size2, backproject, bilinear_sample,
-    Equirectangular, project, exp_so3, angle_between, Circle, Point2, imaged_region, with_model, estimate
+    Equirectangular, project, exp_so3, angle_between, Circle, Point2, imaged_region, with_model, solve, EstimationProblem
 import VisualGeometryToolkitEstimation as VgtkEstimation
 export sequence
 
@@ -39,7 +39,8 @@ function sequence(; K = 4, yaw_deg = 35.0 .* (0:(K - 1)), lit = :circle)
     circle = Circle(Point2(500.0, 500.0), 480.0)
     model = BoundedCamera(kb, Size2(W, H); lens_coverage = circle)
     # the grid: a 40 × 40 SplineLens fitted to the lens over its imaged region, with its forward spline (a grid's projection)
-    grid = estimate(VgtkEstimation.fit_camera(SplineLens, model, imaged_region(model); tolerance = 1.0e-2, grid_size = (40, 40)))
+    grid = solve(EstimationProblem(VgtkEstimation.CameraRegressionProblem(SplineLens, model, imaged_region(model))),
+                 VgtkEstimation.CameraRegression(; tolerance = 1.0e-2, grid_size = (40, 40))).u
     cam = with_model(model, grid)                     # the same sensor and lens coverage, the grid's model
     axis = backproject(cam, SVector(500.0, 500.0))
     R = [k == 1 ? SMatrix{3, 3}(1.0I) : SMatrix{3, 3}(exp_so3(SVector(0.05randn(rng), deg2rad(yaw_deg[k]), 0.05randn(rng)))) for k in 1:K]
@@ -135,7 +136,7 @@ end
     @test reg.graph isa VgtkEstimation.ViewGraph && VgtkEstimation.nedges(reg.graph) == length(reg.pairs)
     @test all(p -> VgtkCore.weight_of(reg.graph[p...]) == reg.pairs[p].inliers, keys(reg.pairs))
     # the averaging's gauge is the first frame: its rotation is the identity
-    @test VgtkCore.estimate(reg.averaging)[1] ≈ one(SMatrix{3, 3, Float64, 9}) atol = 1e-12
+    @test reg.averaging.u[1] ≈ one(SMatrix{3, 3, Float64, 9}) atol = 1e-12
     # every kept feature lies in the camera's imaged region eroded by the detector margin (the image circle less 20 px)
     px = detection_pixels
     @test all(f -> all(p -> hypot(p[1] - 500.0, p[2] - 500.0) <= 480.0 - 20.0, px(f)), reg.features)
@@ -207,7 +208,7 @@ end
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
     pinhole(half_deg) = VgtkCore.BoundedCamera(VgtkCore.CameraModel((500.0 / tand(half_deg))VgtkCore.px, SA[500.0VgtkCore.px, 200.0VgtkCore.px];
-                                                                    lens = VgtkCore.Pinhole()), VgtkCore.Size2(1000, 400))
+                                                                    lens = VgtkCore.Lens(VgtkCore.Perspective())), VgtkCore.Size2(1000, 400))
     WIDE, NARROW = pinhole(40.0), pinhole(25.0)
     function tried_pairs(K, dropped; camera = WIDE)
         R = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:K]
@@ -232,8 +233,8 @@ end
     tried, verified = tried_pairs(4, [(2, 3), (1, 3), (2, 4), (1, 4)])
     @test tried == [(1, 3), (2, 4), (1, 4)]
     @test VgtkEstimation.components(PanoramaStitching._view_graph(4, verified)) == [[1, 2], [3, 4]]
-    @test_throws ArgumentError VgtkEstimation.fit_rotation_averaging(PanoramaStitching._view_graph(4, verified);
-                                                                 optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}())
+    @test_throws ArgumentError VgtkCore.solve(VgtkCore.EstimationProblem(VgtkCore.AbsoluteRotations, PanoramaStitching._view_graph(4, verified)),
+                                              VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}()))
     # a lag pair verified with NO determined covariance splits the edges' graph: the joining pair across it is tried (it was a
     # refusal "register_rotations: dropping … disconnects" before any pair past the lag was tried)
     R3 = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:3]
@@ -326,7 +327,7 @@ end
     # deterministic); the bundle converges, and its rotations are those of the bundle through the bare CameraModel — 0.5.1's
     # bundle, whose residual nothing masks — to 1e-9 (the lens coverage does not enter the bundle).
     using Test, LinearAlgebra, StaticArrays
-    using PanoramaStitching: PanoramaStitching, register_rotations, refine_rotations
+    using PanoramaStitching: PanoramaStitching, register_rotations, RotationBundleProblem
     import VisualGeometryToolkitCore as VgtkCore
     q = sequence(; K = 3, lit = :sensor)
     bare = VgtkCore.BoundedCamera(VgtkCore.model(q.model), VgtkCore.Size2(1000, 1000))
@@ -346,23 +347,25 @@ end
     @test [px(f) for f in a.features] == [px(f) for f in b.features]
     edge(p) = min(p[1], p[2], 1000 - p[1], 1000 - p[2])
     @test any(f -> any(p -> edge(p) < 30.0, px(f)), b.features)                 # kept within the margin of the sensor's edge
-    @test VgtkCore.converged(b.bundle) && b.bundle.metadata.n_dropped_start == 0
+    @test VgtkCore.successful_retcode(b.bundle) && b.bundle.metadata.n_dropped_start == 0
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(b.rotations[k])' * q.R[k]))), 1:3) < 0.05
     # 0.5.1's bundle: the same tracks and start through the bare model (this lens's projection is defined everywhere, so
     # nothing masks its residual, as in 0.5.1)
     @test VgtkCore.valid_domain(VgtkCore.model(bare)) isa VgtkCore.WholePlane
     obs = [[k => FRAME_MAP(SVector{2, Float64}(b.features[k][kp].center...)) for (k, kp) in t] for t in b.tracks]
-    ref = refine_rotations(VgtkCore.model(bare), VgtkCore.estimate(b.averaging), obs; merge(bkw, (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}()))..., width = b.bundle.metadata.loss_width)
-    @test VgtkCore.converged(ref)
-    @test maximum(k -> norm(SMatrix{3, 3}(VgtkCore.estimate(ref)[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
+    ref = VgtkCore.solve(VgtkCore.RefineProblem(RotationBundleProblem(VgtkCore.model(bare), obs), b.averaging.u),
+                         VgtkCore.LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}());
+                         width = b.bundle.metadata.loss_width, stops = VgtkCore.LmStops(; max_iter = bkw.max_iter, ftol = bkw.ftol, xtol = bkw.xtol))
+    @test VgtkCore.successful_retcode(ref)
+    @test maximum(k -> norm(SMatrix{3, 3}(ref.u[k]) - SMatrix{3, 3}(b.rotations[k])), 1:3) <= 1.0e-9
 end
 
 @testitem "the camera is the projection: no `projection` keyword" begin
     # a grid lens is a SplineLens camera that projects through its own forward spline, so the registration and the bundle take
     # the camera alone
     using Test
-    using PanoramaStitching: register_rotations, refine_rotations
-    for f in (register_rotations, refine_rotations)
+    using PanoramaStitching: register_rotations, RotationBundleProblem
+    for f in (register_rotations, RotationBundleProblem)
         @test all(m -> :projection ∉ Base.kwarg_decl(m), methods(f))
     end
 end
@@ -392,8 +395,8 @@ end
         end
         img
     end
-    grid = VgtkCore.with_model(bare, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, bare, VgtkCore.imaged_region(bare);
-                                                                                 tolerance = 1.0e-2, grid_size = (40, 32))))
+    grid = VgtkCore.with_model(bare, VgtkCore.solve(VgtkCore.EstimationProblem(VgtkEstimation.CameraRegressionProblem(VgtkCore.SplineLens, bare, VgtkCore.imaged_region(bare))),
+                                                    VgtkEstimation.CameraRegression(; tolerance = 1.0e-2, grid_size = (40, 32))).u)
     cyl = panorama_view(VgtkCore.Cylindrical(), (-100.0, 170.0, -85.0, 85.0), 0.5)
     rows(r) = count(i -> any(>(0), view(r.owner, i, :)), axes(r.owner, 1))
     kw(fov) = (; vignetting = (u, f) -> 1.0, frame_map = FRAME_MAP, rim_margin_px = 0.0, fov_deg = fov)
@@ -500,14 +503,15 @@ end
         scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior())
 end
 
-# The example's helpers, hoisted (0.7): the up frame of an up direction (Core's look-at frame), the up of a roll-free sweep, the
-# sweep's coverage box and a vignetting's summary. Against the example's own expressions of 0.6 (level_up, up_frame's body),
-# kept here verbatim as the reference.
-@testitem "up_frame(u), sweep_up, coverage_extent, vignetting_summary: the example's helpers hoisted" setup = [SyntheticSequence, BayerMaps] begin
+# The example's helpers, hoisted (0.7): the up frame of an up direction (Core's look-at frame), the up of a roll-free sweep
+# (RollFreeUp), the sweep's coverage box and a vignetting's summary. The up frame against the example's own expression of 0.6
+# (up_frame's body), kept here as the reference; the sweep's up by its defining properties (no restated copy of the algorithm).
+@testitem "up_frame(u), RollFreeUp, coverage_extent, vignetting_summary: the example's helpers hoisted" setup = [SyntheticSequence, BayerMaps] begin
     using Test, LinearAlgebra, StaticArrays
-    using PanoramaStitching: up_frame, true_up, sweep_up, coverage_extent, vignetting_summary
+    using PanoramaStitching: up_frame, true_up, SweepUp, RollFreeUp, coverage_extent, vignetting_summary
     import VisualGeometryToolkitCore as VgtkCore
-    # 0.6's frame of an up direction (up_frame's body and the example's level_up, identical): −y the up, z the forward projected
+    up_of(Rs) = VgtkCore.solve(VgtkCore.EstimationProblem(SweepUp, Rs), RollFreeUp())
+    # 0.6's frame of an up direction (up_frame's body): −y the up, z the forward projected
     frame06(u) = (z = SVector(0.0, 0.0, 1.0); zt = normalize(z - dot(z, u) * u); yt = -u; hcat(cross(yt, zt), yt, zt))
     for (p, r) in ((0, 0), (10, 0), (-25, 3), (40, -7))
         u = normalize(true_up(p, r))
@@ -516,29 +520,23 @@ end
         @test up_frame(u)' * up_frame(u) ≈ I && det(up_frame(u)) ≈ 1
     end
     @test up_frame(0, 0) ≈ I                                               # a level first frame is its own true-up frame
-    # sweep_up: 0.6's level_up verbatim (the eigen-decomposition, the sign, the eigenvalues)
-    function level_up06(rotations)
-        A = zeros(3, 3)
-        for R in rotations
-            x = SMatrix{3, 3, Float64, 9}(R)[:, 1]; A .+= x * x'
-        end
-        E = eigen(Symmetric(A)); a = SVector{3}(E.vectors[:, 1])
-        down = sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in rotations)
-        a = dot(a, down) > 0 ? -a : a
-        return frame06(a), E.values, a
-    end
+    # RollFreeUp: the unit eigenvector of the least eigenvalue of Σ_k x_k x_kᵀ (x_k the frames' image x axes), signed against
+    # the frames' summed image-down axes; the eigenvalues ascending; a closed form over the frames
     q = sequence(; K = 4)
     pitch = VgtkCore.exp_so3(SVector(deg2rad(12.0), 0.0, 0.0))             # a pitched roll-free sweep: up is not the yaw axis
     Rp = [SMatrix{3, 3, Float64, 9}(pitch * VgtkCore.exp_so3(SVector(0.0, deg2rad(40.0 * k), 0.0))) for k in 0:5]
     for Rs in (q.R, Rp)
-        s = sweep_up(Rs); F, λ, a = level_up06(Rs)
-        @test s.up == a && s.eigenvalues == λ                              # bit for bit
-        @test isapprox(up_frame(s.up), F; atol = 4eps())
+        s = up_of(Rs); X = sum(SMatrix{3, 3, Float64, 9}(R)[:, 1] * SMatrix{3, 3, Float64, 9}(R)[:, 1]' for R in Rs)
+        λ = s.metadata.eigenvalues
+        @test s.retcode == VgtkCore.ReturnCode.Success && s.n == length(Rs) && issorted(λ) && λ ≈ eigvals(Symmetric(Matrix(X)))
+        @test norm(s.u) ≈ 1 && isapprox(X * s.u, λ[1] * s.u; atol = 1.0e-12)
+        @test dot(s.u, sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in Rs)) < 0   # up is against the image-down axes
+        @test isapprox(up_frame(s.u), frame06(s.u); atol = 4eps())
     end
-    @test sweep_up(Rp).eigenvalues[1] < 1.0e-20                            # roll free: the x axes span a plane
-    @test isapprox(sweep_up(Rp).up, -(pitch * SVector(0.0, 1.0, 0.0)); atol = 1.0e-12)   # the true up (−y of the pitched frame)
+    @test up_of(Rp).metadata.eigenvalues[1] < 1.0e-20                       # roll free: the x axes span a plane
+    @test isapprox(up_of(Rp).u, -(pitch * SVector(0.0, 1.0, 0.0)); atol = 1.0e-12)   # the true up (−y of the pitched frame)
     # coverage_extent: the box of the frames' coverage in the up frame holds every frame's optical axis
-    up = up_frame(sweep_up(q.R).up)
+    up = up_frame(up_of(q.R).u)
     ext = coverage_extent(q.model, q.frames, q.R, up, FRAME_MAP; δ = 1.0)
     @test -180 <= ext[1] < ext[2] <= 180 && -89 <= ext[3] < ext[4] <= 89
     for R in q.R
@@ -566,7 +564,7 @@ end
                       "detection_noise" => "noise_sigmas", "bundle_iterations" => "bundle_optimization_strategy",
                       "bundle_scale_multiple" => "bundle_optimization_strategy", "bundle_efficiency_constant" => "bundle_optimization_strategy",
                       "bundle_loss" => "bundle_optimization_strategy", "averaging_loss" => "averaging_optimization_strategy",
-                      "local_optimization" => "local_optimization_strategy", "bundle_camera_free" => "refine_camera_and_rotations",
+                      "local_optimization" => "local_optimization_strategy", "bundle_camera_free" => "RotationBundleProblem(tracks; fixed)",
                       "bundle_" * "whitening" => "the detections' pixels", "scoring_threshold" * "_px" => "outlier_halfwidth_px",
                       "scoring_threshold" => "outlier_halfwidth_px", "overlap_deg" => "min_inliers",
                       "near_duplicate_deg" => "near_duplicate_overlap")

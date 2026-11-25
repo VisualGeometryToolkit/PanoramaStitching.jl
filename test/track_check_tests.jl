@@ -129,7 +129,7 @@ end
     using PanoramaStitching: PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
     cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel((500.0 / tand(40.0))VgtkCore.px, SA[500.0VgtkCore.px, 200.0VgtkCore.px];
-                                                      lens = VgtkCore.Pinhole()), VgtkCore.Size2(1000, 400))
+                                                      lens = VgtkCore.Lens(VgtkCore.Perspective())), VgtkCore.Size2(1000, 400))
     A = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(y), 0.0))) for y in (0.0, 2.0, 40.0, 41.5)]
     pairs = [(1, 2), (1, 3), (2, 4), (3, 4)]
     @test PanoramaStitching._near_duplicate_pairs(cam, A, pairs, 0.90) == [(1, 2), (3, 4)]

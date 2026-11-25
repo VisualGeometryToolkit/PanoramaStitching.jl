@@ -55,7 +55,7 @@ abstract type SweepUp end
 """
     RollFreeUp()
 
-A [`ClosedFormKind`](@extref VisualGeometryToolkitCore.ClosedFormKind): the up direction of a roll-free sweep from its
+A VisualGeometryToolkitCore `ClosedFormKind`: the up direction of a roll-free sweep from its
 frames' rotations alone,
 
     solve(EstimationProblem(SweepUp, rotations), RollFreeUp()) -> FitResult{SVector{3, Float64}}

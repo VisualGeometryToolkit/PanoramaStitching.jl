@@ -203,7 +203,7 @@ abstract type AdditiveLevel end
 """
     RingPairMedians()
 
-A [`ClosedFormKind`](@extref VisualGeometryToolkitCore.ClosedFormKind): the model-free vignetting of the
+A VisualGeometryToolkitCore `ClosedFormKind`: the model-free vignetting of the
 correspondences `pc` (one deterministic computation),
 
     solve(EstimationProblem(RingVignetting, pc::PairCorrespondences[, (; offset = 0.0, frame_weights = ones(pc.n_frames))]),
@@ -328,7 +328,7 @@ end
 """
     LevelBisection(; bounds, tolerance, max_iter = 100)
 
-A [`FitKind`](@extref VisualGeometryToolkitCore.FitKind) (iterative: a bisection to a tolerance, within a budget):
+A VisualGeometryToolkitCore `FitKind` (iterative: a bisection to a tolerance, within a budget):
 
     solve(EstimationProblem(AdditiveLevel, pc::PairCorrespondences[, (; frame_weights = ones(pc.n_frames))]),
           LevelBisection(; bounds, tolerance, max_iter)) -> FitResult{Float64}

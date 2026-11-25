@@ -1,6 +1,6 @@
 # =============================================================================
 # The bundle's scale: each verified pair's RANSAC scorer's own ŝ (no second estimate), pooled over the kept pairs by
-# VisualGeometryToolkitEstimation's `pooled_noise_scale` (degrees-of-freedom weighted variance, ScaleUpstream), the bundle's
+# VisualGeometryToolkitEstimation's `PooledScale` (degrees-of-freedom weighted variance, ScaleUpstream), the bundle's
 # robust width the bundle strategy's efficiency constant × σ̂, fixed for its one LM run.
 # =============================================================================
 
@@ -23,22 +23,24 @@
                                          VgtkCore.project(CAM, g) + σ * randn(rng, SVector{2, Float64}))
         end
         fa = described(u1); fb = described(u2)                     # plain detections: residuals in pixels
-        cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [VgtkFeatures.NNMatch(i, i, 1.0f0, 0.5f0) for i in eachindex(u1)];
+        cs, _ = PanoramaStitching.pair_bearings(bcam, fa, fb, [VgtkCore.Attributed(VgtkCore.Correspondence{Int, Int}(i, i), VgtkFeatures.NNMatchMeta(1.0f0, 0.5f0)) for i in eachindex(u1)];
                                                 frame_map = IDENTITY_MAP)
         lo = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)
-        res = VgtkEstimation.find_rotation(cs; max_trials = 2000, min_trials = 100, rng = MersenneTwister(1),
-                                           scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization_strategy = lo)
+        res = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkEstimation.RotationProblem(cs)),
+                             VgtkEstimation.Ransac(; scoring = VgtkCore.MsacScoring(VgtkEstimation.RotationProblem; threshold = 5.0), local_optimization_strategy = lo,
+                                                   config = VgtkEstimation.RansacConfig(; max_trials = 2000, min_trials = 100)); rng = MersenneTwister(1))
         s = VgtkCore.noise_scale(res)                              # the scorer's own scale: no second estimate
-        @info "a synthetic pair's RANSAC ŝ: true σ $σ px, ŝ $(round(s; digits = 3)) px ($(res.dof) dof)"
-        @test VgtkCore.scale_source(res) != VgtkCore.ScaleNone && res.dof > 0
+        @info "a synthetic pair's RANSAC ŝ: true σ $σ px, ŝ $(round(s; digits = 3)) px ($(VgtkCore.dof(res)) dof)"
+        @test VgtkCore.scale_source(res) != VgtkCore.ScaleNone && VgtkCore.dof(res) > 0
         @test isapprox(s, σ; rtol = 0.2)
     end
 end
 
 @testitem "register_rotations: the bundle's width is its strategy's efficiency constant × the pooled pair scale, one LM run" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: PanoramaStitching, register_rotations, refine_rotations, chain_tracks, VerifiedPairs
+    using PanoramaStitching: PanoramaStitching, register_rotations, RotationBundleProblem, chain_tracks, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: solve, RefineProblem, LevenbergMarquardt, LmStops, successful_retcode
     rng = MersenneTwister(3)
     R = sweep_rotations(rng, 4)
     ts, _, _ = sweep_tracks(rng, R, 400; σ = 0.4)
@@ -69,46 +71,50 @@ end
     @test isempty(reg.near_duplicates)          # the near-duplicate check ran: these frames share at most 0.88 of a footprint
     @test reg.bundle_sigma ≈ pooled
     @test reg.bundle.metadata.loss_width ≈ 2.5 * pooled
-    # the scale record of the robust-estimation contract: Estimation's pooled_noise_scale of the pairs, upstream
+    # the scale record of the robust-estimation contract: Estimation's PooledScale of the pairs, upstream
     @test VgtkCore.noise_scale(reg.bundle) == reg.bundle_sigma && VgtkCore.scale_source(reg.bundle) == VgtkCore.ScaleUpstream
-    @test VgtkCore.converged(reg.bundle) && reg.bundle.iterations < 1000
+    @test successful_retcode(reg.bundle) && reg.bundle.stats.nsteps < 1000
     # the same bundle with that width given explicitly: one LM run, the same result (its observations the detections with their
     # covariances, as register_rotations builds them)
     obs = [[k => IDENTITY_MAP(SVector{2, Float64}(feats[k][kp].center...)) for (k, kp) in t] for t in reg.tracks]
-    direct = refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 2.5 * pooled,
-                              max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
-    @test [VgtkCore.estimate(direct)[k] for k in 1:K] == reg.rotations
-    @test direct.iterations == reg.bundle.iterations
+    welsch = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}())
+    direct = solve(RefineProblem(RotationBundleProblem(bcam, obs), reg.averaging.u), welsch; width = 2.5 * pooled,
+                   stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6))
+    @test [direct.u[k] for k in 1:K] == reg.rotations
+    @test direct.stats.nsteps == reg.bundle.stats.nsteps
     # no pair with a scale: refused; a width that is not positive: refused
     none = VerifiedPairs(feats, verified, matches, stats, Dict(p => (sigma = NaN, dof = 0) for p in ps), vp.loma)
     @test_throws ArgumentError register_rotations(none, bcam; bkw...)
-    @test_throws ArgumentError refine_rotations(bcam, VgtkCore.estimate(reg.averaging), obs; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(), width = 0.0,
-                                                max_iter = 10, ftol = 1.0e-12, xtol = 1.0e-6)
+    @test_throws ArgumentError solve(RefineProblem(RotationBundleProblem(bcam, obs), reg.averaging.u), welsch; width = 0.0,
+                                     stops = LmStops(; max_iter = 10, ftol = 1.0e-12, xtol = 1.0e-6))
 end
 
-@testitem "the default bundle strategy is VisualGeometryToolkitEstimation's [refine_camera_and_poses]: Core's constant × scale" setup = [SweepScene] begin
+@testitem "the default bundle strategy is VisualGeometryToolkitEstimation's [camera_poses_problem]: Core's constant × scale" setup = [SweepScene] begin
     using Test, Random, StaticArrays
-    using PanoramaStitching: PanoramaStitching, refine_rotations
+    using PanoramaStitching: PanoramaStitching, RotationBundleProblem
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
+    using VisualGeometryToolkitCore: solve, RefineProblem, LevenbergMarquardt, LmStops
     import TOML
-    table = TOML.parsefile(VgtkEstimation.default_config_path())["refine_camera_and_poses"]["optimization_strategy"]
-    record = VgtkEstimation.optimization_strategy_from_toml(table; class = :refine_camera_and_poses)
+    table = TOML.parsefile(VgtkEstimation.default_config_path())["camera_poses_problem"]["optimization_strategy"]
+    record = VgtkEstimation.optimization_strategy_from_toml(table; class = :camera_poses_problem)
     @test PanoramaStitching._DEFAULT_BUNDLE_STRATEGY == record
+    @test VgtkCore.default_optimization_strategy(RotationBundleProblem(CAM, [[1 => SVector(0.0, 0.0), 2 => SVector(0.0, 0.0)]])) == record
     @test VgtkCore.lo_width(PanoramaStitching._DEFAULT_BUNDLE_STRATEGY) === nothing   # no constant of its own: Core's at d = 2
     rng = MersenneTwister(4)
     R = sweep_rotations(rng, 3)
     ts, _, _ = sweep_tracks(rng, R, 200; σ = 0.4)
     bcam = VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200))
-    kw = (; scale = 0.4, max_iter = 200, ftol = 1.0e-12, xtol = 1.0e-9)
-    dflt = refine_rotations(bcam, R, ts; kw...)
+    kw = (; scale = 0.4, stops = LmStops(; max_iter = 200, ftol = 1.0e-12, xtol = 1.0e-9))
+    problem = RefineProblem(RotationBundleProblem(bcam, ts), R)
+    dflt = solve(problem, LevenbergMarquardt(); kw...)                     # ClassDefault(): the bundle's strategy of record
     c = VgtkCore.efficiency_constant(VgtkCore.WelschShape(), 2)
-    stated = refine_rotations(bcam, R, ts; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = c), kw...)
-    # one loss everywhere: the width is Estimation's bundle_loss of the same keywords (c × scale, deployed), the scale given
-    bl = VgtkEstimation.bundle_loss(PanoramaStitching._DEFAULT_BUNDLE_STRATEGY; scale = 0.4)
+    stated = solve(problem, LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = c)); kw...)
+    # one loss everywhere: the width is Core's bundle_loss of the same strategy and scale (c × scale, deployed), the scale given
+    bl = VgtkCore.bundle_loss(PanoramaStitching._DEFAULT_BUNDLE_STRATEGY; scale = 0.4)
     @test dflt.metadata.loss_width == sqrt(VgtkCore.sq_loss_width(bl.loss)) && dflt.metadata.loss_width ≈ c * 0.4
     @test VgtkCore.noise_scale(dflt) == 0.4 && VgtkCore.scale_source(dflt) == VgtkCore.ScaleGiven
-    @test [VgtkCore.estimate(dflt)[k] for k in 1:3] == [VgtkCore.estimate(stated)[k] for k in 1:3]
-    @test dflt.iterations == stated.iterations
+    @test [dflt.u[k] for k in 1:3] == [stated.u[k] for k in 1:3]
+    @test dflt.stats.nsteps == stated.stats.nsteps
 end
 

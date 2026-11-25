@@ -6,11 +6,12 @@
 # (detection covariances off in this release), with no consumer default.
 # =============================================================================
 
-@testitem "refine_rotations whitened by known anisotropic detection covariances beats the unweighted bundle" setup = [SweepScene] begin
+@testitem "the rotation bundle whitened by known anisotropic detection covariances beats the unweighted bundle" setup = [SweepScene] begin
     using Test, Random, LinearAlgebra, StaticArrays, Statistics
     import Rotations
-    using PanoramaStitching: refine_rotations
+    using PanoramaStitching: RotationBundleProblem
     import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: solve, RefineProblem, LevenbergMarquardt, LmStops, successful_retcode
 
     # per observation a covariance Σ = Q diag(σ₁², σ₂²) Qᵀ, σ₁ ∈ [0.1, 0.3] px, σ₂ ∈ [1, 3] px at a random angle, the noise L·z
     function anisotropic_tracks(rng, R, n)
@@ -25,7 +26,8 @@
         end
         return tracks, dirs
     end
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    lm = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}())
+    kw = (; width = 3.0, stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10))
     K = 5
     eu = Float64[]; ew = Float64[]
     for seed in 1:4
@@ -35,10 +37,10 @@
         start = Dict(k => SMatrix{3, 3}(Rotations.RotMatrix(Rotations.RotationVec((0.01 .* randn(rng, 3))...))) * R[k] for k in 1:K)
         start[1] = R[1]
         err(Rs) = sqrt(mean(k -> rad2deg(Rotations.rotation_angle(Rotations.RotMatrix{3}(SMatrix{3, 3}(Rs[k])' * R[k])))^2, 2:K))
-        plain = refine_rotations(CAM, start, [[k => VgtkCore.geom(x) for (k, x) in t] for t in tracks]; kw...)
-        white = refine_rotations(CAM, start, tracks; kw...)
-        @test VgtkCore.converged(plain) && VgtkCore.converged(white)
-        push!(eu, err(VgtkCore.estimate(plain))); push!(ew, err(VgtkCore.estimate(white)))
+        plain = solve(RefineProblem(RotationBundleProblem(CAM, [[k => VgtkCore.geom(x) for (k, x) in t] for t in tracks]), start), lm; kw...)
+        white = solve(RefineProblem(RotationBundleProblem(CAM, tracks), start), lm; kw...)
+        @test successful_retcode(plain) && successful_retcode(white)
+        push!(eu, err(plain.u)); push!(ew, err(white.u))
         # the residuals the metadata reports are pixels in both; the whitened loss width is in units of the covariances'
         @test length(white.metadata.residuals) == length(tracks)
         @test 1.0 < white.metadata.loss_width < 6.0                          # 3 × the Rayleigh scale of unit-covariance residuals
@@ -48,12 +50,13 @@
     @test mean(ew) < 0.75 * mean(eu)
 end
 
-@testitem "refine_rotations whitened: the closed-form Jacobian; the refusals" setup = [SweepScene] begin
+@testitem "the whitened rotation bundle: the closed-form Jacobian; the refusals" setup = [SweepScene] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import ForwardDiff, NLLSsolver
-    using PanoramaStitching: refine_rotations
+    using PanoramaStitching: RotationBundleProblem
     import PanoramaStitching
     import VisualGeometryToolkitCore as VgtkCore
+    using VisualGeometryToolkitCore: solve, RefineProblem, LevenbergMarquardt, LmStops
 
     rng = Xoshiro(5)
     R = sweep_rotations(rng, 3)
@@ -71,12 +74,14 @@ end
     f = updated_residual(obs, ch, dv)
     @test J ≈ ForwardDiff.jacobian(f, zeros(5)) rtol = 1.0e-7
 
-    kw = (; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(), width = 3.0, max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    lm = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}())
+    stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10)
+    bundle(tracks) = solve(RefineProblem(RotationBundleProblem(CAM, tracks), R), lm; width = 3.0, stops)
     u1 = VgtkCore.project(CAM, SMatrix{3, 3}(R[1])' * d); u2 = VgtkCore.project(CAM, SMatrix{3, 3}(R[2])' * d)
     unc(u, S) = VgtkCore.Uncertain(u, VgtkCore.CovMat(S))
-    @test_throws ArgumentError refine_rotations(CAM, R, [[1 => u1, 2 => unc(u2, Σ)]]; kw...)                     # some, not all
-    @test_throws ArgumentError refine_rotations(CAM, R, [[1 => unc(u1, Σ), 2 => unc(u2, fill(NaN, SMatrix{2, 2, Float64, 4}))]]; kw...)
-    @test_throws ArgumentError refine_rotations(CAM, R, [[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]]; kw...)
+    @test_throws ArgumentError bundle([[1 => u1, 2 => unc(u2, Σ)]])                     # some, not all
+    @test_throws ArgumentError bundle([[1 => unc(u1, Σ), 2 => unc(u2, fill(NaN, SMatrix{2, 2, Float64, 4}))]])
+    @test_throws ArgumentError bundle([[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]])
 end
 
 @testitem "detection covariances off: the pairs and the bundle read plain pixels, no consumer default" setup = [SweepScene, BayerMaps] begin
@@ -88,7 +93,7 @@ end
     import VisualGeometryToolkitFeatures as VgtkFeatures
     f = described([SVector(600.0, 600.0), SVector(610.0, 590.0)])
     cs, kept = PanoramaStitching.pair_bearings(VgtkCore.BoundedCamera(CAM, VgtkCore.Size2(1200, 1200)), f, f,
-                                               [VgtkFeatures.NNMatch(1, 1, 1.0f0, 0.5f0), VgtkFeatures.NNMatch(2, 2, 0.5f0, 0.5f0)];
+                                               [VgtkCore.Attributed(VgtkCore.Correspondence{Int, Int}(i, i), VgtkFeatures.NNMatchMeta(s, 0.5f0)) for (i, s) in ((1, 1.0f0), (2, 0.5f0))];
                                                frame_map = IDENTITY_MAP)
     @test length(cs) == 2 && kept == [(1, 1), (2, 2)] && !VgtkCore.hasattr(cs, :Σ₁) && cs.score == [1.0, 0.5]
     src0 = join(read.(filter(endswith(".jl"), readdir(joinpath(pkgdir(PanoramaStitching), "src"); join = true)), String))

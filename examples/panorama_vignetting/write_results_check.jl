@@ -15,11 +15,11 @@ function write_results_check()
     v = VrtkCore.LogVignetting(VrtkCore.with_control_points(VrtkCore.RadialVignetting(4, SVector(400.0, 400.0), 420.0),
                                                             [0.0, -0.1, -0.2, -0.3]))
     G = [1.0 1.0 1.0; 1.1 1.05 0.95; 0.9 0.92 1.02]
-    res = VgtkCore.FitResult(v, VgtkCore.ReturnCode.Success, VgtkCore.IterationCap, 1, 0.0, 0, (; gains = G))
+    res = VgtkCore.FitResult(v, VgtkCore.ReturnCode.Success, VgtkCore.IterationCap, VgtkCore.SolveStats(; nsteps = 1), 0.0, 0, (; gains = G))
     C = (; run = mktempdir(), cfg = Dict{String, Any}("vignetting" => Dict{String, Any}("gain_correction" => "channel")))
     frame_map = u -> 2.0 .* u                                         # frame pixels → camera pixels (2×2 bins)
     names = ["a.ARW", "b.ARW", "c.ARW"]
-    bundle_fit = VgtkCore.FitResult(nothing, VgtkCore.ReturnCode.Success, VgtkCore.IterationCap, 7, 0.4, 120, nothing)
+    bundle_fit = VgtkCore.FitResult(nothing, VgtkCore.ReturnCode.Success, VgtkCore.IterationCap, VgtkCore.SolveStats(; nsteps = 7), 0.4, 120, nothing)
     # an outermost @testset that records a failure or an error throws Test.TestSetException when it finishes: the check's false
     ok = try
     @testset "write_results: the results of record end to end" begin
@@ -32,8 +32,8 @@ function write_results_check()
         @test b.rotations.images == Dict(enumerate(names))
         @test VrtkCore.control_points(b.vignetting) == VrtkCore.control_points(v)
         @test b.gains == G
-        @test (VgtkCore.retcode(b.fit), VgtkCore.stop_rule(b.fit), b.fit.iterations, b.fit.rms, b.fit.n) ==   # the fixture's record, read back
-              (VgtkCore.retcode(bundle_fit), VgtkCore.stop_rule(bundle_fit), bundle_fit.iterations, bundle_fit.rms, bundle_fit.n)
+        @test (b.fit.retcode, b.fit.stop_rule, b.fit.stats.nsteps, b.fit.rms, b.fit.n) ==   # the fixture's record, read back
+              (bundle_fit.retcode, bundle_fit.stop_rule, bundle_fit.stats.nsteps, bundle_fit.rms, bundle_fit.n)
         r = VgtkIO.load_raster(joinpath(C.run, "panorama_map.json"))
         @test size(r.values) == (400, 400) && eltype(r.values) == Float32
         @test r.values[17, 33] == Float32(v(frame_map(SVector(33 - 0.5, 17 - 0.5))))

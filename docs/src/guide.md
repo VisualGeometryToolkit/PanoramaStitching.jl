@@ -15,7 +15,7 @@ The pipeline has four steps:
    vignetting there — the observations of a vignetting validation or fit.
 3. [`render_panorama`](@ref) — the panorama into a view ([`panorama_view`](@ref): a cylindrical-family projection or a
    virtual camera) by the reverse warp of the frames, unblended; [`render_cube_map`](@ref) renders the six faces of a cube map.
-4. [`fit_vignetting`](@ref) — the camera's vignetting from the frames alone (every pixel of every frame, at its own pixel
+4. [`VignettingSelfCalibration`](@ref) — the camera's vignetting from the frames alone (every pixel of every frame, at its own pixel
    centre, is the scene's radiance times V), and [`score_seams`](@ref), how well a vignetting makes overlapping frames agree.
 
 [Saving the results](#5.-Saving-the-results) writes them to a file.
@@ -35,16 +35,16 @@ used below, and every block runs after it, in order, as the test suite runs them
   Bayer binning's R and B sit ¼ px off the cell centre; by default every plane's is the frame's).
 - **Camera**: a VisualGeometryToolkitCore `BoundedCamera` (a camera model and its sensor). A parametric `CameraModel` serves
   every step. A grid lens is a `CameraModel` with a `SplineLens`; it projects through its forward spline, fitted by
-  VisualGeometryToolkitEstimation's `fit_camera`. The example's camera as a 40 × 40 grid, with its forward spline:
+  VisualGeometryToolkitEstimation's `CameraRegression`. The example's camera as a 40 × 40 grid, with its forward spline:
 
 ```julia
-# Illustrative: VisualGeometryToolkitEstimation's fit_camera, one more package (pkg> add VisualGeometryToolkitEstimation)
-using VisualGeometryToolkitCore: SplineLens, imaged_region, with_model, estimate
+# Illustrative: VisualGeometryToolkitEstimation's CameraRegression, one more package (pkg> add VisualGeometryToolkitEstimation)
+using VisualGeometryToolkitCore: SplineLens, imaged_region, with_model, solve, EstimationProblem
 import VisualGeometryToolkitEstimation as VgtkEstimation
 
 # the same sensor and lens coverage, the model a 40 × 40 SplineLens with its forward spline
-grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera, imaged_region(camera); tolerance = 1e-2,
-                                                             grid_size = (40, 40))))
+problem = EstimationProblem(VgtkEstimation.CameraRegressionProblem(SplineLens, camera, imaged_region(camera)))
+grid = with_model(camera, solve(problem, VgtkEstimation.CameraRegression(; tolerance = 1e-2, grid_size = (40, 40))).u)
 # register_rotations(frames, grid; …), sample_frames(grid, …), render_panorama(grid, …)
 ```
 
@@ -67,23 +67,24 @@ grid = with_model(camera, estimate(VgtkEstimation.fit_camera(SplineLens, camera,
    `min_inliers` deciding which are kept; no threshold. Matches come from the LoMa matcher
    (`matcher = :b128`) and become bearing correspondences through the camera
    ([`PanoramaStitching.pair_bearings`](@ref)), plain detections, so a pair's residuals are in the camera's pixels.
-3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `find_rotation` (RANSAC on bearings, its sampler seeded from
-   `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
+3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `Ransac` on the pair's `RotationProblem` (RANSAC on bearings,
+   its `rng` seeded from `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
 4. **Rotation averaging**: the verified pairs form VisualGeometryToolkitEstimation's `ViewGraph` (each edge the pair's rotation, weighted by its
-   inlier count); Estimation's `fit_rotation_averaging` of it with `averaging_optimization_strategy` (an `Irls`; by default
-   Estimation's own) gives every frame's rotation.
+   inlier count); Estimation's `FilteredRotationAveraging` of it, its `RotationAveraging` at `averaging_optimization_strategy`
+   (an `Irls`; `ClassDefault()`, Estimation's own), gives every frame's rotation.
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two detections
    of one frame) are dropped. A kept pair whose frames share at least `near_duplicate_overlap` of the smaller footprint
    (VisualGeometryToolkitCore's `view_overlap` under the averaged rotations; 0.90 by default, the owner's value; `0` turns
    the check off) is a near-duplicate: averaged but seeding no track (`reg.near_duplicates`), since two near-identical views
    match their repeated structure as well as their scene, and a wrong match through them chains far.
-6. **Bundle**: [`refine_rotations`](@ref) refines every rotation but the first, and one direction per track, minimizing the
+6. **Bundle**: the rotation bundle, [`RotationBundleProblem`](@ref)`(camera, tracks)` refined from the averaged rotations by
+   Core's `LevenbergMarquardt`, refines every rotation but the first, and one direction per track, minimizing the
    robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
    `bundle_optimization_strategy` (a `Triggs`) at `scale = σ̂`, its width the strategy's efficiency constant × σ̂, σ̂ the
    noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`, pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
-   held, and it takes no keyword that would free a camera parameter. Refining the camera too is a refine of its own,
-   [`refine_camera_and_rotations`](@ref) ([Autocalibration](#Autocalibration) below).
+   held, and it takes no keyword that would free a camera parameter. Refining the camera too is the same bundle with the
+   camera in the guess ([Autocalibration](#Autocalibration) below).
 7. **Track check** (`check_tracks = true`): the observations whose residual exceeds 3.035 σ̂ (√χ²₂(0.99)) are removed and
    the bundle re-solved from its rotations, until a solve removes none (at most 10 solves); `reg.track_check` holds each
    solve's removals, rms and inlier rms (`reg.bundle.metadata.inlier_rms`, the rms over the observations within the loss
@@ -103,7 +104,7 @@ import VisualGeometryToolkitCore as VgtkCore
 reg.pairs[(1, 2)]               # matches, inliers, rms (the inliers' rms Sampson distance, px) and rotation_deg
 length(reg.tracks), reg.dropped # the tracks, and the inconsistent ones dropped
 reg.bundle.rms                  # the bundle's rms reprojection error, pixels
-VgtkCore.retcode(reg.bundle)     # how the bundle ended: Core's ReturnCode (and stop_rule, the rule that fired)
+reg.bundle.retcode              # how the bundle ended: Core's ReturnCode (and reg.bundle.stop_rule, the rule that fired)
 ```
 
 On the example's sweep the rotations come back well within 0.05° and the bundle's rms is below half a pixel.
@@ -112,18 +113,21 @@ On the example's sweep the rotations come back well within 0.05° and the bundle
 
 A camera that only rotates determines its own calibration from its frames, with no target (Hartley 1994; Agapito, Hayman
 and Reid 2001): the observations of one track must back-project to one direction in every frame that sees it, which
-constrains the camera's parameters as well as the rotations. [`refine_camera_and_rotations`](@ref) is that refine. From a
+constrains the camera's parameters as well as the rotations. The rotation bundle with the camera in its guess —
+[`RotationBundleProblem`](@ref)`(tracks; fixed)` refining `(; camera, rotations)` — is that refine. From a
 start camera (a nominal lens, or an earlier calibration of the same one), start rotations and the tracks, it refines the
 camera's parameters jointly with every rotation and one direction per track. Its one gauge is the first frame's rotation,
 held exactly.
 
 It is a refine of the stack's robust-estimation contract, so it never estimates a scale of its own:
 
-- `optimization_strategy` is the robust strategy: a `Triggs` strategy on a loss shape (its loss as NLLSsolver's robustifier at
-  one width; the default `Triggs{WelschShape}` at the shape's efficiency constant). Another strategy is an `ArgumentError`.
-- A robust strategy needs exactly one of `scale = σ` (the noise scale, pixels) or `width = w` (the loss width). Here the
-  scale is the registration's pooled noise scale. Neither, or both, is an `ArgumentError`.
-- `fixed` names the camera parameters to hold, by name or by group (`:k` for every lens coefficient; VisualGeometryToolkitCore's
+- `LevenbergMarquardt`'s `optimization_strategy` is the robust strategy: a `Triggs` strategy on a loss shape (its loss as
+  NLLSsolver's robustifier at one width; `ClassDefault()`, `Triggs{WelschShape}` at the shape's efficiency constant). Another
+  strategy is an `ArgumentError`.
+- A robust strategy needs exactly one of the solve's `scale = σ` (the noise scale, pixels) or `width = w` (the loss width).
+  Here the scale is the registration's pooled noise scale. Neither, or both, is an `ArgumentError`. Its stops are the
+  solve's `stops = LmStops(; max_iter, ftol, xtol)`.
+- the problem's `fixed` names the camera parameters to hold, by name or by group (`:k` for every lens coefficient; VisualGeometryToolkitCore's
   `free_parameter_names`). The default `()` frees every parameter but the skew, which is held by construction.
 
 The start must be close: like every refine, it ends in the local minimum its start leads to. Only a parametric camera can
@@ -131,16 +135,17 @@ be refined: a `SplineLens` camera is an `ArgumentError`. The tracks come from a 
 rerun [`register_rotations`](@ref) with the refined camera to verify the pairs through it.
 
 ```julia
-# Illustrative: VisualGeometryToolkitCore's Triggs strategy
-using VisualGeometryToolkitCore: Triggs
+# Illustrative: VisualGeometryToolkitCore's Triggs strategy and the solve interface
+using VisualGeometryToolkitCore: Triggs, solve, RefineProblem, LevenbergMarquardt, LmStops
 
 # the tracks as frame => pixel observations (each detection's centre through the frames' map), and the registration's
 # rotations as the start, keyed by frame
 tracks = [[k => frame_map(SA[reg.features[k][kp].center...]) for (k, kp) in t] for t in reg.tracks]
 start = Dict(enumerate(reg.rotations))
-autocal = refine_camera_and_rotations(camera, start, tracks; optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.0),
-                                      scale = reg.bundle_sigma, fixed = (:aspect,), max_iter = 100, ftol = 1e-10,
-                                      xtol = 1e-10)
+autocal = solve(RefineProblem(RotationBundleProblem(tracks; fixed = (:aspect,)), (; camera, rotations = start)),
+                LevenbergMarquardt(; optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.0));
+                scale = reg.bundle_sigma, stops = LmStops(; max_iter = 100, ftol = 1e-10, xtol = 1e-10))
+autocal.u.camera                # the refined camera; autocal.u.rotations, and autocal.metadata.calibration its information
 ```
 
 ## 2. Sampling the frames at directions
@@ -198,7 +203,7 @@ planet = panorama_view(CameraModel(400.0px, SA[1000.0px, 1000.0px]; lens = Lens(
 ## 4. The vignetting from the frames
 
 A rotating camera sees each scene direction at several sensor points, so its frames determine its vignetting up to one
-scale. [`fit_vignetting`](@ref) uses every pixel of every frame inside the domain, read at its own pixel centre — no
+scale. [`VignettingSelfCalibration`](@ref) uses every pixel of every frame inside the domain, read at its own pixel centre — no
 interpolation of the frames: `log I_k(p) = log L(R_k·f(p)) + log V(u(p))`, the pixel's ray `f(p)` the camera's
 back-projection (computed once: every frame shares the pixel grid), the scene `log L` a cubic B-spline over an
 [`AzimuthalChart`](@ref) of the covered sphere with a difference penalty, and V VisualGeometryToolkitCore's
@@ -224,15 +229,19 @@ import VisualRadiometryToolkitCore as VrtkCore   # the vignetting models
 
 s = VrtkCore.RadialVignetting(16, SA[500.0, 500.0], 490.0)     # controls, centre, radius (camera pixels)
 v0 = VrtkCore.LogVignetting(VrtkCore.with_control_points(s, zeros(16)))   # log V ≡ 0
-res = fit_vignetting(v0, camera, frames, reg.rotations; free_directions = VrtkCore.pole_regular_basis(v0),
-                     gain_correction = ChannelGains(), saturated, frame_map, rim_margin_px = 12.0, saturation_margin_px = 4.0, fov_deg = 89.0, plane = 2,
-                     chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
-                     vignetting_penalty_weight = 1.0e-6,
+# the problem: the frames, and the context they are read in (the camera, the rotations, the masks and maps, V's start and the
+# directions its control points move along)
+problem = VgtkCore.EstimationProblem(VrtkCore.AbstractVignetting, frames,
+                                     (; camera, rotations = reg.rotations, saturated, frame_map, vignetting = v0,
+                                      free_directions = VrtkCore.pole_regular_basis(v0)))
+res = VgtkCore.solve(problem, VignettingSelfCalibration(; gain_correction = ChannelGains(), rim_margin_px = 12.0,
+                     saturation_margin_px = 4.0, fov_deg = 89.0, plane = 2, chart_spacing_deg = 1.0, penalty_order = 3,
+                     penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6,
                      solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000),   # or SparseCholesky()
-                     observation_noise = nothing)
+                     observation_noise = nothing))
 # or observation_noise = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)), on frames with variances: σ_u the registration's
 # pooled noise scale reg.bundle_sigma (the bundle's width over its efficiency constant), px
-V = VgtkCore.estimate(res)        # the fitted model: the vignetting keyword of render_panorama
+V = res.u                         # the fitted model: the vignetting keyword of render_panorama
 g = res.metadata.gains            # the frames' exposure gains, K × 3: g_kc per frame and colour plane (g_1c = 1)
 ```
 

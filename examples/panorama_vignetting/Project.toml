@@ -27,6 +27,13 @@ VisualRadiometryToolkitCore = "544ea8c7-2427-4873-ab3e-33acc9dfb29a"   # the vig
 
 [sources]
 PanoramaStitching = {path = "../.."}
+# TEMPORARY: solve branch; remove when Core 0.14 etc. are registered
+VisualGeometryToolkitCore = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitCore"}
+VisualGeometryToolkitEstimation = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitEstimation"}
+VisualGeometryToolkitEval = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitEval"}
+VisualGeometryToolkitFeatures = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitFeatures"}
+VisualGeometryToolkitIO = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitIO"}
+VisualRadiometryToolkitCore = {path = "/home/jbpritts/src/_wt-vrtk-solve/VisualRadiometryToolkitCore"}
 
 [compat]
 CUDA = "5"
@@ -39,7 +46,7 @@ PNGFiles = "0.4"
 StatsBase = "0.34"
 VisualGeometryToolkitCore = "0.14"
 VisualGeometryToolkitEstimation = "0.13"
-VisualGeometryToolkitEval = "0.10"
+VisualGeometryToolkitEval = "0.12"
 VisualGeometryToolkitFeatures = "0.10"
 VisualGeometryToolkitIO = "0.12"
 VisualRadiometryToolkitCore = "0.1.2"

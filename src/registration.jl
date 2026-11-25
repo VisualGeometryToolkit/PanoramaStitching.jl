@@ -426,7 +426,7 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             descriptor::Symbol, matcher::Symbol, min_score::Real,
                             pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing,
                             min_inliers::Integer, seed::Integer,
-                            scoring = nothing, local_optimization_strategy = nothing, max_trials::Integer, min_trials::Integer,
+                            scoring = VgtkCore.ClassDefault(), local_optimization_strategy = VgtkCore.ClassDefault(), max_trials::Integer, min_trials::Integer,
                             averaging_optimization_strategy = VgtkCore.ClassDefault(), cycle_tol::Union{Nothing, Real} = deg2rad(2),
                             orientation_tol::Union{Nothing, Real} = deg2rad(5), bundle_optimization_strategy = VgtkCore.ClassDefault(),
                             bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real,
@@ -485,7 +485,7 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
     σ = Float64(VgtkCore.noise_scale(pooled))
     say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales, px, the bundle's scale")
     # every observation its detection's centre in the camera's pixels, through the frame map
-    pixel(k, kp) = frame_map(SVector{2, Float64}(VgtkCore.center(VgtkCore.feature_frame(feats[k][kp]))))
+    pixel(k, kp) = frame_map(SVector{2, Float64}(VgtkCore.centroid(VgtkCore.feature_frame(feats[k][kp]))))
     lm = VgtkCore.LevenbergMarquardt(; optimization_strategy = bundle_optimization_strategy)
     stops = VgtkCore.LmStops(; max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
     observations(ts) = [[k => pixel(k, kp) for (k, kp) in t] for t in ts]

@@ -85,7 +85,7 @@ Under `$VGTK_DATA_ROOT`:
    pixel: Features' detection mask; on the decoded frames' tone map, `detection_image = "tone"`, or on the RAW's
    variance-stabilized green, `"vst"`, decoded again under `[registration] sensor_characterisation`: required, as `[decode]`'s, and
    with `"tone"` it must be `[decode]`'s record) described by DeDoDe and matched by LoMa,
-   the rotation of every frame pair by RANSAC on bearings (`find_rotation`, the
+   the rotation of every frame pair by RANSAC on bearings (Estimation's `Ransac` on a `RotationProblem`, the
    Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), produced as
    `verified_pairs/<key>/` before anything else runs on them, keyed by the matching and verification settings (every
    `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files', the sensor records' and the lens's content: changing only the
@@ -99,7 +99,7 @@ Under `$VGTK_DATA_ROOT`:
    kept in the registration's product (`registration/<key>/registration.jld2`), keyed by the registration settings, the inputs, the RAW files' and the lens's content and the verified pairs' output, with the bundle's
    outcome (`converged`, `not_run` or another retcode) and its count of observations dropped at its start (a start prediction
    off the camera model's valid domain: such an observation is left out, the rest solved); `summary.md` states it.
-3. **Fit the vignetting** (`fit_vignetting`, PanoramaStitching). Every pixel of every frame inside the domain (the camera's
+3. **Fit the vignetting** (`VignettingSelfCalibration`, PanoramaStitching). Every pixel of every frame inside the domain (the camera's
    imaged region — the sensor ∩ its lens coverage ∩ its model's valid domain — less a rim margin at the coverage's edge; positive; its direction saturated in no frame, each frame's mask dilated by
    `[domain] saturation_margin_px` ≈ 3 × the bundle RMS) is
    one observation of
@@ -150,7 +150,7 @@ Under `$VGTK_DATA_ROOT`:
 
 ## The comparison of the fit's settings
 
-`arms.toml` is the comparison of record of `fit_vignetting`'s settings: twelve arms, V `"free"` (self-calibration) or
+`arms.toml` is the comparison of record of `VignettingSelfCalibration`'s settings: twelve arms, V `"free"` (self-calibration) or
 `"fixed"` (held at the V of record, the `fixed_from` arm's fit, `selfcal_shared_gain_value`: one gain per frame and I²
 weights) × the `gain_correction` (`"none"`, `"intensity"`, `"channel"`) × the `observation_noise` (`"none"`,
 `"position"`), each on both sets (`config_fx3_14mm.toml`, `config_fx3_8mm_rooftop.toml`: their decode,
@@ -207,6 +207,6 @@ julia --project=examples/panorama_vignetting examples/panorama_vignetting/run_ch
 and `reproduce.toml`'s `checks` stage runs it. It runs `stage_cache_check.jl` (the verified pairs reused when only the
 averaging or the bundle changes, recomputed when a pair setting, LoMa's provider or a RAW file changes; the registration
 re-keyed when the pairs are produced again with other outputs) and
-`autocalibration_check.jl` (the 14 mm bundle-equivalence check of `refine_camera_and_rotations` against PanoramaStitching
+`autocalibration_check.jl` (the 14 mm bundle-equivalence check of the autocalibration, `RotationBundleProblem(tracks; fixed)`, against PanoramaStitching
 7bbbea03's bundle on the same tracks; not run where its declared inputs are absent from the data root). Each exits 1 on a
 failure. PanoramaStitching's own suite checks only that `run.jl` and the checks parse, and the example's retired keys.

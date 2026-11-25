@@ -207,8 +207,8 @@ function load_lens(C; raw_width, raw_height)
     elseif inp["lens_kind"] == "grid"
         grid = VgtkIO.load(VgtkCore.BoundedCamera, path)                 # its domain is its lens coverage
         # its forward spline, fitted once over its imaged region and kept in the camera (Core's with_model: same sensor, coverage)
-        VgtkCore.with_model(grid, VgtkCore.estimate(VgtkEstimation.fit_camera(VgtkCore.SplineLens, grid, VgtkCore.imaged_region(grid);
-                                                                              tolerance = Float64(inp["spline_tolerance_px"]))))
+        VgtkCore.with_model(grid, VgtkCore.solve(VgtkCore.EstimationProblem(VgtkEstimation.CameraRegressionProblem(VgtkCore.SplineLens, grid, VgtkCore.imaged_region(grid))),
+                                                 VgtkEstimation.CameraRegression(; tolerance = Float64(inp["spline_tolerance_px"]))).u)
     else
         error("inputs.lens_kind = $(inp["lens_kind"]) is not \"cameras\" or \"grid\"")
     end
@@ -221,9 +221,9 @@ end
 
 # The averaging's and the bundle's strategies: their [registration] tables, read by Estimation's one strategy reader.
 averaging_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["averaging_optimization_strategy"];
-                                                                      class = :fit_rotation_averaging,
+                                                                      class = :rotation_averaging,
                                                                       section = "registration.averaging_optimization_strategy")
-bundle_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["bundle_optimization_strategy"]; class = :refine_rotations,
+bundle_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["bundle_optimization_strategy"]; class = :rotation_bundle_problem,
                                                                    section = "registration.bundle_optimization_strategy")
 
 # The stages' records (the verified pairs, the registration): each an Eval `Product` of the set (`stage_product`), its record
@@ -258,7 +258,7 @@ stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
 # by stable_seed(seed, i, j), so a v2 record's rotations are not this code's; they are recomputed. v5: PanoramaStitching 0.6's
 # bundle drops the observations not imaged at its start and counts them (`n_dropped_start`, replacing v3's start finiteness
 # count), and holds the frames left with none (`frames_unconstrained`). v6: the key holds the provider LoMa runs on, and the
-# record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's fit_filtered_rotation_averaging at `cycle_tol_deg` and
+# record LoMa's provenance (`loma`). v7: the view-graph filters (Estimation's FilteredRotationAveraging at `cycle_tol_deg` and
 # `orientation_tol_deg`) before the tracks; the record holds the tolerances and the pairs they removed. v8: the bundle is one LM
 # run at a multiple of the pairs' pooled SIMFIT++ scale (bundle_iterations retired); the record holds σ̂ and its iterations.
 # v9: the verified pairs' v5 (the clip mask, Features' canonical detection order).
@@ -274,7 +274,7 @@ stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
 # v15: `bundle_fit`, the bundle's termination record as Core's values (the results file's `fit`); `pairs_removed` the pairs the view-graph filters removed only (a pair with no determined covariance is in
 # pairs_no_covariance alone; PanoramaStitching 0.7); the format's words the terminology's (detections).
 # v14: detection covariances off: the bundle's observations the detections' pixels, its scale and width in pixels.
-# v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's pooled_noise_scale; SIMFIT++ deleted).
+# v13: the bundle's scale the kept pairs' RANSAC scales pooled upstream (Estimation's PooledScale; SIMFIT++ deleted).
 # v12: every bundle observation whitened by its detection's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for the position noise.
@@ -454,8 +454,8 @@ function registration(C, inp, lens; log)
                           # the bundle's termination record (Core's ReturnCode and StopRule, and the legacy retcode Symbol); the observations it
                           # dropped at its start (a start prediction off the camera model's valid domain); the frames it held at their
                           # start rotation (left with no kept observation: their 0-based indices)
-                          "bundle_retcode" => string(VgtkCore.retcode_symbol(reg.bundle)), "bundle_return_code" => string(VgtkCore.retcode(reg.bundle)),
-                          "bundle_stop_rule" => string(VgtkCore.stop_rule(reg.bundle)),
+                          "bundle_retcode" => string(VgtkCore.retcode_symbol(reg.bundle)), "bundle_return_code" => string(reg.bundle.retcode),
+                          "bundle_stop_rule" => string(reg.bundle.stop_rule),
                           "bundle_dropped_start" => reg.bundle.metadata.n_dropped_start,
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                           # the bundle's robust loss width and scale (px) and its strategy
@@ -464,10 +464,10 @@ function registration(C, inp, lens; log)
                           "bundle_scale" => VgtkCore.noise_scale(reg.bundle),
                           # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the detections' covariances) and the LM
                           # iterations its one run took
-                          "bundle_sigma" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.iterations,
+                          "bundle_sigma" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.stats.nsteps,
                           # the bundle's termination record as Core's values (the results file's `fit`: vgio/panorama's)
-                          "bundle_fit" => (retcode = VgtkCore.retcode(reg.bundle), stop_rule = VgtkCore.stop_rule(reg.bundle),
-                                           iterations = reg.bundle.iterations, rms = reg.bundle.rms, n = reg.bundle.n),
+                          "bundle_fit" => (retcode = reg.bundle.retcode, stop_rule = reg.bundle.stop_rule,
+                                           iterations = reg.bundle.stats.nsteps, rms = reg.bundle.rms, n = reg.bundle.n),
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
                           # the ONNX Runtime provider used, its threads and, on CUDA, the driver, runtime and cuDNN versions
                           "loma" => loma_record(reg.loma))
@@ -482,7 +482,7 @@ function registration(C, inp, lens; log)
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
             loma = rec["loma"], product = p,
             # the bundle's termination record (no estimate, no metadata): what vgio/panorama's `fit` stores
-            bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, b.iterations, b.rms, b.n, nothing)))
+            bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, VgtkCore.SolveStats(; nsteps = b.iterations), b.rms, b.n, nothing)))
 end
 
 # ----------------------------------------------------------------------------- vignetting spaces from the config
@@ -550,13 +550,14 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
     solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
              s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
     gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
-    return fit_vignetting(m, lens, dev.frames, rotations; free_directions = Z, gain_correction = gc === nothing ? nothing : gc(),
-                          saturated = dev.saturated, frame_map = dev.frame_map,
+    problem = VgtkCore.EstimationProblem(VrtkCore.AbstractVignetting, dev.frames,
+                                         (; camera = lens, rotations, saturated = dev.saturated, frame_map = dev.frame_map,
+                                          plane_maps = dev.plane_maps, vignetting = m, free_directions = Z))
+    return VgtkCore.solve(problem, VignettingSelfCalibration(; gain_correction = gc === nothing ? nothing : gc(),
                           rim_margin_px = d["rim_margin_px"], saturation_margin_px = d["saturation_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"],
-                          plane_maps = dev.plane_maps,
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
-                          observation_noise = fit_observation_noise(v, point_scale_px))
+                          observation_noise = fit_observation_noise(v, point_scale_px)))
 end
 # The frames' exposure gains of a fit (K × 3), for the seam score and the renders: its metadata's when it fitted them, else none.
 fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] == "none" ? nothing : res.metadata.gains
@@ -586,7 +587,7 @@ end
 # frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`. The panorama record's provenance states the sensor record
 # the frames were decoded under (`sensor_characterisation_sha256`, `nothing` for "none": `decoded_frames`).
 function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf); sensor_characterisation_sha256)
-    v = VgtkCore.estimate(res)
+    v = res.u
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
                              Dict(k => VgtkCore.EuclideanMap(R, zero(SVector{3, Float64}) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
@@ -647,9 +648,9 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
     Hf, Wf, _ = size(inp.frames[1])
     uc = C.cfg["render"]["up"]
     uc in ("level", "first_frame") || error("render.up = $uc is not \"level\" or \"first_frame\"")
-    sweep = sweep_up(reg.rotations)                                       # the sweep's up; its least eigenvalue the roll-free check
-    up = uc == "level" ? up_frame(sweep.up) : SMatrix{3, 3, Float64, 9}(LinearAlgebra.I)
-    uc == "level" && say(log, "up frame: level (the frames' x axes span a plane to $(round(sweep.eigenvalues[1]; sigdigits = 2)), least eigenvalue)")
+    sweep = VgtkCore.solve(VgtkCore.EstimationProblem(SweepUp, reg.rotations), RollFreeUp())   # the sweep's up; its least eigenvalue the roll-free check
+    up = uc == "level" ? up_frame(sweep.u) : SMatrix{3, 3, Float64, 9}(LinearAlgebra.I)
+    uc == "level" && say(log, "up frame: level (the frames' x axes span a plane to $(round(sweep.metadata.eigenvalues[1]; sigdigits = 2)), least eigenvalue)")
 
     # the frames on the compute backend: the images (renders) and the masks (fit, seams) apart. The backend changes no result
     # (device and host agree to 1e-6 in log V, the package's tests); PANORAMA_VIGNETTING_DEVICE overrides the config's for one run
@@ -661,9 +662,9 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
     dev = (; frames = move.(inp.frames), saturated = move.(inp.saturated), inp.frame_map, inp.plane_maps)   # the maps: isbits
     kind = C.cfg["vignetting"]["model"]
     fit(kind, C, lens, dev, reg.rotations, W, H)                          # compile
-    t = time(); res = fit(kind, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($kind, warm)"] = time() - t
+    t = time(); res = fit(kind, C, lens, dev, reg.rotations, W, H); T["VignettingSelfCalibration ($kind, warm)"] = time() - t
     m = res.metadata
-    say(log, "fit_vignetting ($kind): $(res.retcode), $(res.iterations) iterations, weighted rms $(round(res.rms; digits = 4)), " *
+    say(log, "VignettingSelfCalibration ($kind): $(res.retcode), $(res.stats.nsteps) iterations, weighted rms $(round(res.rms; digits = 4)), " *
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
     say(log, "  observation noise $(m.observation_noise) (the model's log I moved by $(m.log_change) in the last solve); " *
              "stages (s): $(m.seconds)")
@@ -679,7 +680,7 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
            rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"], plane_maps = dev.plane_maps, chunk = sc["chunk"])
     t = time()
     before = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = no_vignetting, skw...)
-    after = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(res), gains = fit_gains(C, res), skw...)
+    after = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = res.u, gains = fit_gains(C, res), skw...)
     T["score_seams (two)"] = time() - t
     save_ratio(joinpath(C.run, "seams_uncorrected.png"), Array(before.ratio)); save_ratio(joinpath(C.run, "seams_corrected.png"), Array(after.ratio))
     say(log, "seams (saturated directions excluded from every frame, the fit's symmetric masks): uncorrected rms $(round(before.rms; digits = 4)) MAD $(round(before.mad; digits = 4)); " *
@@ -689,7 +690,7 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
     rc = C.cfg["render"]
     rext = rc["extent"] == "coverage" ? ext : Tuple(rc["extent"])
     rkw = (; frame_map = dev.frame_map, rim_margin_px = d["rim_margin_px"], fov_deg = d["fov_deg"], plane_maps = dev.plane_maps)
-    V = VgtkCore.estimate(res)
+    V = res.u
     # the corrected renders divide by the frames' gains as well; the uncorrected ones show the frames as they are
     render(view, vig) = Array(render_panorama(lens, dev.frames, reg.rotations, view; vignetting = vig,
                                               gains = vig === no_vignetting ? nothing : fit_gains(C, res), rkw...).image)
@@ -720,10 +721,10 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
     pp = SVector{2, Float64}(VgtkCore.principal_point(VgtkCore.model(lens).intrinsics))
     rows = Any[(kind, res, after, vignetting_summary(V, pp, inp.frame_map, (Hf, Wf); mask = in_domain))]
     for k in C.cfg["vignetting"]["compare_models"]
-        t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["fit_vignetting ($k, compare)"] = time() - t
-        s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = VgtkCore.estimate(r2), gains = fit_gains(C, r2), skw...)
+        t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["VignettingSelfCalibration ($k, compare)"] = time() - t
+        s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = r2.u, gains = fit_gains(C, r2), skw...)
         write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf); inp.sensor_characterisation_sha256)
-        push!(rows, (k, r2, s2, vignetting_summary(VgtkCore.estimate(r2), pp, inp.frame_map, (Hf, Wf); mask = in_domain)))
+        push!(rows, (k, r2, s2, vignetting_summary(r2.u, pp, inp.frame_map, (Hf, Wf); mask = in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
     write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
@@ -766,7 +767,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "|---|---|---|---|---|---|---|---|---|---|---|")
         for (k, r, s, v) in rows
             m = r.metadata
-            println(io, "| $k | $(r.retcode) | $(r.iterations) | $(f(r.rms)) | $(f(m.residual_rms)) | $(f(m.residual_mad)) | $(r.n) | " *
+            println(io, "| $k | $(r.retcode) | $(r.stats.nsteps) | $(f(r.rms)) | $(f(m.residual_rms)) | $(f(m.residual_mad)) | $(r.n) | " *
                         "$(f(v.V_min; d = 3)) / $(f(v.V_max; d = 3)) | ($(f(v.max_at[1]; d = 0)), $(f(v.max_at[2]; d = 0))) | " *
                         "$(f(v.max_offset_px; d = 0)) | $(f(100v.asymmetry; d = 1)) % |")
         end

@@ -79,7 +79,7 @@
         @test readme.S.seen isa AbstractMatrix{Bool} && size(readme.S.seen, 2) == 4 && any(readme.S.seen)
         @test readme.rect.size == (1080, 1920) && readme.planet.size == (2000, 2000)
         # frames without vignetting at one exposure: V and every gain close to 1, the seams small
-        @test readme.VgtkCore.converged(readme.res)
+        @test readme.VgtkCore.successful_retcode(readme.res)
         @test readme.g[1] == 1 && all(g -> isapprox(g, 1; atol = 0.01), readme.g)
         @test all(r -> isapprox(readme.V(readme.SA[500.0 + r, 500.0], nothing), 1; atol = 0.01), 0:50:400)
         @test readme.seams.rms < 0.05
