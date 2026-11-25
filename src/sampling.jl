@@ -55,7 +55,7 @@ Where a frame's sensor point counts, in camera pixels (a region answering `p ∈
 `width × height` frame (camera pixels; the bilinear taps) and inside what `camera` images — its `imaged_region`, the sensor ∩
 its lens coverage ∩ its model's valid domain — less `rim_margin_px` at its lens coverage's edge (the image circle's soft
 rim; the sensor's edge is not eroded, so a camera whose coverage is its whole sensor loses nothing to the margin). The
-domain of [`sample_frames`](@ref), [`render_panorama`](@ref), [`score_seams`](@ref) and [`fit_vignetting`](@ref).
+domain of [`sample_frames`](@ref), [`render_panorama`](@ref), [`score_seams`](@ref) and [`VignettingSelfCalibration`](@ref).
 """
 frame_region(camera::VgtkCore.BoundedCamera, width, height, rim_margin_px) =
     VgtkCore.Rect(2.0, 2.0, width - 4.0, height - 4.0) ∩ _imaged_less_rim(camera, rim_margin_px)

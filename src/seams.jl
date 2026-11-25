@@ -3,11 +3,11 @@
 # =============================================================================
 
 # The frames' gains of `score_seams` and `render_panorama`: `nothing`, or a K × C matrix (per frame and colour plane, as
-# `fit_vignetting`'s `metadata.gains`).
+# `VignettingSelfCalibration`'s `metadata.gains`).
 function _check_gains(f, gains, K, C)
     gains === nothing && return nothing
     gains isa AbstractMatrix && size(gains) == (K, C) ||
-        throw(DimensionMismatch("$f: gains are a $K × $C matrix (per frame and colour plane: fit_vignetting's metadata.gains), got $(summary(gains))"))
+        throw(DimensionMismatch("$f: gains are a $K × $C matrix (per frame and colour plane: VignettingSelfCalibration's metadata.gains), got $(summary(gains))"))
     return nothing
 end
 
@@ -66,7 +66,7 @@ pixel of the panorama raster `view` ([`panorama_view`](@ref)): the pixel's ray
 is sampled in every frame ([`sample_frames`](@ref): the exact sub-pixel sensor
 point, the frame's bilinear value of `plane`, the vignetting there, the masks —
 saturated pixels EXCLUDED, a clipped value is no observation; the masks are
-[`fit_vignetting`](@ref)'s, each dilated by `saturation_margin_px` camera pixels
+[`VignettingSelfCalibration`](@ref)'s, each dilated by `saturation_margin_px` camera pixels
 and symmetric over the frames: a direction any frame whose domain sees it has
 saturated there is measured by no frame, so the score reads the fit's own
 observations) and, where at
@@ -77,7 +77,7 @@ noise, misregistration and parallax; a wrong one leaves a step at every frame
 boundary. The score is the ratio's spread over the pixels measured twice or
 more: `rms` and the robust `mad` (StatsBase's `mad`, normalized: the 1.4826·MAD; misalignment and moving content
 inflate the rms), over `n` pixels. `gains` (optional, `K × 3`, per frame and
-colour plane: [`fit_vignetting`](@ref)'s `metadata.gains`) divides each
+colour plane: [`VignettingSelfCalibration`](@ref)'s `metadata.gains`) divides each
 frame's exposure gain of `plane` out as well, `log(I_k/(g_k,plane·V_k))`;
 `nothing` takes the frames as one exposure.
 

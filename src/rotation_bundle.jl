@@ -4,7 +4,8 @@
 #
 # A camera that only rotated sees a distant point at one direction d_j of the
 # common frame from every frame k: x_jk = π(R_kᵀ·d_j), π the calibrated camera's
-# projection (fixed), R_k frame k's rotation (d = R_k·f_k). `refine_rotations`
+# projection (fixed), R_k frame k's rotation (d = R_k·f_k). The rotation bundle
+# (`RotationBundleProblem`, refined by Core's `LevenbergMarquardt` through the block contract)
 # minimizes the robust sum of the pixel reprojection errors of every observation
 # of every track over the rotations of every frame but the first (the gauge)
 # and the directions of the tracks: an NLLSsolver problem with one
@@ -16,20 +17,21 @@
 # (VisualGeometryToolkitCore `loss_robustifier`) — the pattern of Estimation's
 # relative-pose bundle.
 #
-# `refine_rotations` holds the camera's calibration. Its one companion,
-# `refine_camera_and_rotations`, frees it: the AUTOCALIBRATION of a rotating
+# With the camera in the problem the bundle holds its calibration. With the camera in
+# the guess, `(; camera, rotations)`, it frees it: the AUTOCALIBRATION of a rotating
 # camera (no target, a pure-rotation sequence; Hartley 1994; Agapito, Hayman and
 # Reid 2001) — one more variable, VisualGeometryToolkitCore's `ParameterManifold`
 # of the camera's model restricted to its free parameters (the camera block of
-# Estimation's `refine_camera_and_poses`), on which every observation then also
+# Estimation's `CameraPosesProblem`), on which every observation then also
 # depends. With the first frame's rotation the gauge, a rotating sequence leaves
 # nothing else free; the bundle's metadata carries the reduced (Schur) information
 # of the rotations and the camera with which to check it. Both are the one
 # bundle below (`_rotation_bundle`), the camera variable present or absent.
 # =============================================================================
 
-const _FrameChart = VgtkCore.SO3Manifold{Float64}
-const _SphereChart = typeof(VgtkCore.SphereManifold(SVector(0.0, 0.0, 1.0)))
+# A frame's variable is a `VgtkCore.SO3Manifold{Float64}`, a track direction's a 2-dof
+# `VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}` (the type of `SphereManifold(d)` for a 3-vector `d`), each spelled
+# where a block asserts it (check_naming R20: no constant names one concrete type).
 
 # A track's direction is a 2-dof sphere chart held as Core's `Eliminable{E}`: `E` says whether NLLSsolver eliminates it, which
 # needs the installed NLLSsolver's Schur system (`MultiVariateLSschur`, Core's `nlls_features().schur`); `eliminate`
@@ -60,7 +62,7 @@ end
 NLLSsolver.ndeps(::_Observation) = static(2)
 NLLSsolver.nres(::_Observation) = static(2)
 NLLSsolver.varindices(r::_Observation) = r.varind
-NLLSsolver.getvars(r::_Observation{E}, vars::Vector) where {E} = (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart})
+NLLSsolver.getvars(r::_Observation{E}, vars::Vector) where {E} = (vars[r.varind[1]]::VgtkCore.SO3Manifold{Float64}, vars[r.varind[2]]::VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}})
 NLLSsolver.robustkernel(r::_Observation) = r.kernel
 Base.eltype(::_Observation) = Float64
 
@@ -72,7 +74,7 @@ Base.eltype(::_Observation) = Float64
 # is not: NLLSsolver would accept such an iterate, linearize there and loop on its NaN system for ever (measured 2026-11-04,
 # the synthetic Tamron sequence from its true rotations). With it the residual and its Jacobian are defined on the same set,
 # an iterate past it is a NaN cost (a rejected step), and an observation whose start prediction is past it is dropped
-# (`refine_rotations`, counted in `n_dropped_start`).
+# (the bundle's start, counted in `n_dropped_start`).
 @inline function _project(r::_Observation, f)
     u = r.projection(f); p = SVector(u[1], u[2])
     return VgtkCore.Point2(p[1], p[2]) ∈ r.camera.domain ? p : SVector(NaN, NaN)
@@ -87,7 +89,7 @@ _observation_whitening(x) = nothing
 function _observation_whitening(x::VgtkCore.Uncertain)
     Σ = SMatrix{2, 2, Float64, 4}(Statistics.cov(x))
     Li = VgtkCore.whitening_factor(-SMatrix{2, 2, Float64, 4}(I), Σ)
-    (all(isfinite, Li) && !iszero(Li)) || throw(ArgumentError("refine_rotations: an observation's covariance $Σ is not finite and positive definite"))
+    (all(isfinite, Li) && !iszero(Li)) || throw(ArgumentError("RotationBundleProblem: an observation's covariance $Σ is not finite and positive definite"))
     return Li
 end
 
@@ -112,7 +114,7 @@ NLLSsolver.ndeps(::_CameraObservation) = static(3)
 NLLSsolver.nres(::_CameraObservation) = static(2)
 NLLSsolver.varindices(r::_CameraObservation) = r.varind
 NLLSsolver.getvars(r::_CameraObservation{E}, vars::Vector) where {E} =
-    (vars[r.varind[1]]::_FrameChart, vars[r.varind[2]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[3]])
+    (vars[r.varind[1]]::VgtkCore.SO3Manifold{Float64}, vars[r.varind[2]]::VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}, vars[r.varind[3]])
 NLLSsolver.robustkernel(r::_CameraObservation) = r.kernel
 Base.eltype(::_CameraObservation) = Float64
 
@@ -164,7 +166,7 @@ end
 # by name; the method also keeps inference from reading a frame or direction variable as the camera (NLLSsolver's cost loop
 # is generic over the blocks).
 _camera_of_chart(c::_CameraVariable) = c.model
-_camera_of_chart(c) = throw(ArgumentError("refine_camera_and_rotations: the camera variable must be its _CameraVariable, got a $(typeof(c))"))
+_camera_of_chart(c) = throw(ArgumentError("RotationBundleProblem: the camera variable must be its _CameraVariable, got a $(typeof(c))"))
 @inline _pixel_residual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
     _project_model(_camera_of_chart(c), c.domain, _camera_direction(ch, d)) - r.x
 NLLSsolver.computeresidual(r::_CameraObservation, ch::VgtkCore.RotationChart, d::VgtkCore.Eliminable, c) =
@@ -182,7 +184,7 @@ NLLSsolver.computecost(vars::AbstractVector, r::Union{_Observation, _CameraObser
 # NLLSsolver's variable flags count from the direction: shifted by one they are `obs`'s (bit 1 the frame, never set here).
 struct _HeldFrame{N, O} <: NLLSsolver.AbstractResidual
     obs::O
-    frame::_FrameChart
+    frame::VgtkCore.SO3Manifold{Float64}
     varind::SVector{N, Int}
 end
 NLLSsolver.ndeps(::_HeldFrame{N}) where {N} = static(N)
@@ -191,9 +193,9 @@ NLLSsolver.varindices(r::_HeldFrame) = r.varind
 NLLSsolver.robustkernel(r::_HeldFrame) = NLLSsolver.robustkernel(r.obs)
 Base.eltype(::_HeldFrame) = Float64
 # NLLSsolver reads only the block's variables (the direction, and the camera); the held frame's rotation is prepended for `obs`.
-NLLSsolver.getvars(r::_HeldFrame{1, <:_Observation{E}}, vars::Vector) where {E} = (vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart},)
+NLLSsolver.getvars(r::_HeldFrame{1, <:_Observation{E}}, vars::Vector) where {E} = (vars[r.varind[1]]::VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}},)
 NLLSsolver.getvars(r::_HeldFrame{2, <:_CameraObservation{E}}, vars::Vector) where {E} =
-    (vars[r.varind[1]]::VgtkCore.Eliminable{E, _SphereChart}, vars[r.varind[2]])
+    (vars[r.varind[1]]::VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}, vars[r.varind[2]])
 NLLSsolver.computeresidual(r::_HeldFrame, args...) = NLLSsolver.computeresidual(r.obs, r.frame, args...)
 NLLSsolver.computeresjac(varflags, r::_HeldFrame, args...) = NLLSsolver.computeresjac(Int(varflags) << 1, r.obs, r.frame, args...)
 NLLSsolver.computecost(vars::AbstractVector, r::_HeldFrame) =
@@ -206,7 +208,7 @@ _with_varind(o::_CameraObservation{E, L, W}, varind) where {E, L, W} = _CameraOb
 # Its closed-form frame and direction blocks (those of `_Observation`, through the variable's model) and its camera block,
 # ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
 # the camera; only the free variables' columns are returned, in that order.
-function NLLSsolver.computeresjac(varflags, r::_CameraObservation, ch::_FrameChart, d::VgtkCore.Eliminable, c)
+function NLLSsolver.computeresjac(varflags, r::_CameraObservation, ch::VgtkCore.SO3Manifold{Float64}, d::VgtkCore.Eliminable, c)
     m = _camera_of_chart(c)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
     u = _project_model(m, c.domain, f)
@@ -230,7 +232,7 @@ end
 # and by R_kᵀ·∂d/∂v along the direction's chart.
 # `varflags` (NLLSsolver's): bit 1 the frame, bit 2 the direction — only the free variables' columns are returned (the
 # gauge frame is fixed). A whitened observation returns L⁻¹e and L⁻¹J (L fixed: the residual's exact Jacobian).
-function NLLSsolver.computeresjac(varflags, r::_Observation, ch::_FrameChart, d::VgtkCore.Eliminable)
+function NLLSsolver.computeresjac(varflags, r::_Observation, ch::VgtkCore.SO3Manifold{Float64}, d::VgtkCore.Eliminable)
     R = SMatrix{3, 3, Float64, 9}(ch.R); dir = VgtkCore.model(d.value); f = R' * dir
     u = _project(r, f)
     _, M = VgtkCore.backproject_with_jacobian(r.camera.model, u)
@@ -245,8 +247,7 @@ end
 """
     RotationBundleMetadata
 
-`FitResult` metadata of [`refine_rotations`](@ref) and
-[`refine_camera_and_rotations`](@ref): `directions` (one unit
+`FitResult` metadata of the rotation bundle ([`RotationBundleProblem`](@ref)): `directions` (one unit
 direction per track, the common frame), `residuals` (per track, the pixel
 reprojection error norm of each of its observations at the result, unwhitened),
 `loss_width` (the width the strategy ran at: px, or in whitened units when the
@@ -267,11 +268,8 @@ dropped observation's residual is NaN, and a track left out keeps its start
 direction), `frames_unconstrained` (the frames other than the gauge left with
 no kept observation: each is held at its start rotation),
 
-`camera` (the camera at the result: the one given by `refine_rotations`, which
-holds it, else the refined one, of the given camera's type and, for a
-`BoundedCamera`, its sensor and lens coverage) and `calibration`, `nothing` when
-the camera is held, else the autocalibration's information at the result
-([`refine_camera_and_rotations`](@ref)):
+and `calibration`, `nothing` when the camera is held, else the autocalibration's information at the result (the
+camera refined: the guess `(; camera, rotations)`):
 
 - `free_parameters` — the names of the camera parameters refined;
 - `parameters`, `sigma`, `covariance` — their values, standard deviations and
@@ -292,7 +290,7 @@ the camera is held, else the autocalibration's information at the result
 - `direction_min_eigenvalue` — the least eigenvalue over the kept tracks of
   their 2 × 2 direction blocks (each positive: every kept direction observed).
 """
-struct RotationBundleMetadata{K, C, I}
+struct RotationBundleMetadata{K, I}
     directions::Vector{SVector{3, Float64}}
     residuals::Vector{Vector{Float64}}
     loss_width::Float64
@@ -302,175 +300,143 @@ struct RotationBundleMetadata{K, C, I}
     n_observations::Int
     n_dropped_start::Int
     frames_unconstrained::Vector{K}
-    camera::C
     calibration::I
 end
 
 """
-    refine_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width, max_iter,
-                     ftol, xtol, eliminate = <NLLSsolver's Schur system>) -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+    RotationBundleProblem(camera, tracks; eliminate = <NLLSsolver's Schur system>)
+    RotationBundleProblem(tracks; fixed = (), eliminate = <NLLSsolver's Schur system>)
 
-The rotation bundle of a pure-rotation sequence seen by the calibrated `camera`
-(fixed: the calibration is held, a rotation-only bundle with no parameter
-keyword — [`refine_camera_and_rotations`](@ref) is the autocalibration; its `backproject` and `backproject_with_jacobian` give the start and
-the Jacobian; a `CameraModel` or a `BoundedCamera`), projected through its
-closed-form forward map π, its model's `imaging_transform` (a grid lens's
-`SplineLens` through its forward spline: give a SplineLens camera one with VisualGeometryToolkitEstimation's
-`fit_forward_spline(camera; tolerance)`, which keeps its backward, K and frame, while `fit_camera(SplineLens, …)` turns
-a gauge-K camera onto its optical axis, a new frame). A residual is NaN off
-the camera model's `valid_domain` (a grid lens's lattice), where its
-back-projection Jacobian is undefined; the lens coverage does not enter the
-bundle. The
-rotations `R_k` (`d = R_k·f_k`) of every frame but the first of
-the sorted keys of `rotations` (the gauge, held fixed) and one direction `d_j`
-per track minimizing the robust sum of the pixel reprojection errors
-`π(R_kᵀ d_j) − x_jk` of every observation. A refine: it starts from
-`rotations` (a rotation averaging of the view graph,
-`VisualGeometryToolkitEstimation.fit_rotation_averaging`) and each track's mean
-bearing in the common frame.
+The `f` of the rotation bundle of a pure-rotation sequence (VisualGeometryToolkitCore's block contract,
+`AbstractBlockProblem`), solved from a guess by Core's `LevenbergMarquardt` (its default):
 
-An observation whose start prediction is not imaged (its residual or Jacobian
-not finite at the start: the prediction off the model's valid domain) is
-dropped, a track left in fewer than two frames is dropped whole (it keeps its
-start direction, held), and a partly kept track restarts from the mean bearing
-of the observations it keeps, its observations tested again until none is
-dropped: the solve is that of the kept observations alone. A frame other than
-the gauge left with no kept observation is held at its start rotation. The
-result's `n` is the number of observations kept; its metadata's
-`n_observations` the number given and `n_dropped_start` their difference
+    solve(RefineProblem(RotationBundleProblem(camera, tracks), rotations), LevenbergMarquardt(; optimization_strategy);
+          scale | width, stops)                                       -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
+    solve(RefineProblem(RotationBundleProblem(tracks; fixed), (; camera, rotations)), LevenbergMarquardt(; optimization_strategy);
+          scale | width, stops)                                       -> FitResult{@NamedTuple{camera, rotations}, RotationBundleMetadata}
+
+What the guess holds is refined. With the camera in the problem (the first form) its calibration is HELD: a rotation-only
+bundle of the calibrated `camera` (a `CameraModel` or a `BoundedCamera`; its `backproject` and
+`backproject_with_jacobian` give the start and the Jacobian), projected through its closed-form forward map π, its
+model's `imaging_transform` (a grid lens's `SplineLens` through its forward spline: give a SplineLens camera one with
+VisualGeometryToolkitEstimation's `ForwardSpline(; tolerance)` on `CameraRegressionProblem(camera)`, which keeps its
+backward, K and frame, while `CameraRegression` of a SplineLens target turns a gauge-K camera onto its optical axis, a new
+frame). With the camera in the guess (the second form) the bundle is the AUTOCALIBRATION of a rotating camera: no target,
+a pure-rotation sequence (Hartley 1994; Agapito, Hayman and Reid 2001) — the same observations, start, kept set, gauge
+and result, with the camera's free parameters one more variable: VisualGeometryToolkitCore's `ParameterManifold` of the
+camera's model restricted to them (the camera block of Estimation's `CameraPosesProblem`), its Jacobian ForwardDiff
+through the chart. The observations kept at the start are those the GIVEN camera images; the residuals, the loss width
+and the result are the refined camera's; the result's `u` is `(; camera, rotations)`, the camera of the guess's type
+(for a `BoundedCamera`, its sensor and lens coverage kept), and the metadata's `calibration` the parameters' information
 ([`RotationBundleMetadata`](@ref)).
 
-- `tracks` — `AbstractVector` of tracks, each an `AbstractVector` of `frame =>
-  pixel` observations (pixels in the camera's frame), two frames at least. A
-  pixel may be VisualGeometryToolkitCore's `Uncertain(pixel, CovMat(Σ))`, its
-  2 × 2 covariance `Σ = LLᵀ` (finite, positive definite, up to one global
-  scale): the residual is then whitened, `L⁻¹(π(R_kᵀ d_j) − x_jk)`, and the
-  loss acts on the whitened residual. Every observation carries a covariance
-  or none does.
-- `optimization_strategy` — the robust strategy of the robust-estimation contract: a `Triggs{K}`
-  (VisualGeometryToolkitCore's; the default VisualGeometryToolkitEstimation's pixel bundle's, configs/default.toml
-  `[refine_camera_and_poses]`: `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D residual), its loss `K` as NLLSsolver's robustifier (`loss_robustifier`) at ONE width fixed for the bundle's one
-  NLLSsolver run; or `nothing`, the plain least squares (no scale or width).
-- exactly one of `scale = σ` (the observations' noise scale, pixels or whitened units, or an upstream robust result:
-  `register_rotations` hands the verified pairs' RANSAC scales pooled by Estimation's `pooled_noise_scale`) — the width is the strategy's efficiency
-  constant × σ — or `width = w` (the loss width). Neither, or both, is an `ArgumentError`. `max_iter`, `ftol` (the relative cost decrease) and `xtol`
-  (the largest step in chart units: radians for a rotation or a direction)
-  are its stops (Core's `LmStops`, its one LM adapter `lmsolve_chart!` on an `LmProblem`); the result's `iterations` the LM iterations
-  it took.
-- `eliminate` — whether NLLSsolver eliminates the directions (their Schur
-  complement), which needs the loaded NLLSsolver's Schur system
-  (`MultiVariateLSschur`; Core's `nlls_features().schur`): the default where it
-  has one; `false` solves every unknown together, the default otherwise.
-  `eliminate = true` without the Schur system is an `ArgumentError` naming it.
+A residual is NaN off the camera model's `valid_domain` (a grid lens's lattice), where its back-projection Jacobian is
+undefined; the lens coverage does not enter the bundle. The rotations `R_k` (`d = R_k·f_k`) of every frame but the first
+of the sorted keys of `rotations` (the gauge, held fixed) and one direction `d_j` per track minimize the robust sum of the
+pixel reprojection errors `π(R_kᵀ d_j) − x_jk` of every observation. A refine: it starts from `rotations` (a rotation
+averaging of the view graph, VisualGeometryToolkitEstimation's `RotationAveraging`) and each track's mean bearing in
+the common frame.
 
-A refine descends towards the local minimum its start leads to, until a stop; the result's termination
-record (Core's `retcode` and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `converged(result)` its success) says how
-the bundle ended: Core's `lmsolve_chart!` verdict, returned as it is (an `ftol` or `xtol` stop is `Success` with no
-stationarity test, so a loose tolerance converges short of the minimum; a step-size stop at a non-finite step is
-`Stalled` with `NonFinite`; the iteration cap `MaxIters`); `max_iter = 0` (no
-solve: the start's rotations are the result) `MaxIters` with `IterationCap`. A track observed in fewer than two frames, or naming a frame
-without a start rotation, some observations with a covariance and some
-without, a covariance that is not finite and positive definite, and a start
-that keeps no observation (every track left in fewer than two imaged frames)
-are an `ArgumentError`, and so are the retired `loss`/`loss_width` (the strategy and its scale input replace them) and
-`camera_free` (the bundle holds the calibration: [`refine_camera_and_rotations`](@ref) frees it).
+An observation whose start prediction is not imaged (its residual or Jacobian not finite at the start: the prediction
+off the model's valid domain) is dropped, a track left in fewer than two frames is dropped whole (it keeps its start
+direction, held), and a partly kept track restarts from the mean bearing of the observations it keeps, its observations
+tested again until none is dropped: the solve is that of the kept observations alone. A frame other than the gauge left
+with no kept observation is held at its start rotation. The result's `n` is the number of observations kept; its
+metadata's `n_observations` the number given and `n_dropped_start` their difference.
+
+- `tracks` — `AbstractVector` of tracks, each an `AbstractVector` of `frame => pixel` observations (pixels in the
+  camera's frame), two frames at least. A pixel may be VisualGeometryToolkitCore's `Uncertain(pixel, CovMat(Σ))`, its
+  2 × 2 covariance `Σ = LLᵀ` (finite, positive definite, up to one global scale): the residual is then whitened,
+  `L⁻¹(π(R_kᵀ d_j) − x_jk)`, and the loss acts on the whitened residual. Every observation carries a covariance or none
+  does.
+- `fixed` (the autocalibration) — the camera parameters HELD, by name or by a coefficient family's group (`:k` for
+  `k1…`, `:d`, `:p`, `:sx`, `:sy`): VisualGeometryToolkitCore's `free_parameter_names(model, fixed)`. The default `()`
+  frees every parameter but the skew, which the stack holds by construction (named in `fixed` it is a no-op). An
+  unknown or repeated entry, a camera with nothing free and a SplineLens camera (its controls have no static chart) are
+  an `ArgumentError` at the solve.
+- `eliminate` — whether NLLSsolver eliminates the directions (their Schur complement), which needs the loaded
+  NLLSsolver's Schur system (`MultiVariateLSschur`; Core's `nlls_features().schur`): the default where it has one;
+  `false` solves every unknown together, the default otherwise. `eliminate = true` without the Schur system is an
+  `ArgumentError` naming it.
+
+The solve: `LevenbergMarquardt`'s `optimization_strategy` is the robust strategy of the robust-estimation contract, a
+`Triggs{K}` (VisualGeometryToolkitCore's; `ClassDefault()`, VisualGeometryToolkitEstimation's pixel bundle's,
+configs/default.toml `[camera_poses_problem]`: `Triggs{WelschShape}` at the shape's efficiency constant for a 2-D
+residual), its loss `K` as NLLSsolver's robustifier (`loss_robustifier`) at ONE width fixed for the bundle's one
+NLLSsolver run, or `nothing`, the plain least squares (no scale or width). Exactly one of `scale = σ` (the observations'
+noise scale, pixels or whitened units, or an upstream robust result: [`register_rotations`](@ref) hands the verified
+pairs' RANSAC scales pooled by Estimation's `PooledScale`) — the width is the strategy's efficiency constant × σ — or
+`width = w` (the loss width). `stops` (Core's `LmStops`: `max_iter`, `ftol` the relative cost decrease, `xtol` the
+largest step in chart units, radians for a rotation or a direction) are the LM's, Core's one LM adapter
+`lmsolve_chart!` on an `LmProblem`; the result's `stats.nsteps` the LM iterations it took.
+
+A refine descends towards the local minimum its start leads to, until a stop; the result's termination record (`retcode`
+and `stop_rule`: a `ReturnCode.T` and a `StopRule`; `successful_retcode(result)` its success) says how the bundle ended:
+Core's `lmsolve_chart!` verdict, returned as it is (an `ftol` or `xtol` stop is `Success` with no stationarity test, so
+a loose tolerance converges short of the minimum; a step-size stop at a non-finite step is `Stalled` with `NonFinite`;
+the iteration cap `MaxIters`); `max_iter = 0` (no solve: the start's rotations are the result) `MaxIters` with
+`IterationCap`. A track observed in fewer than two frames, or naming a frame without a start rotation, some
+observations with a covariance and some without, a covariance that is not finite and positive definite, and a start
+that keeps no observation (every track left in fewer than two imaged frames) are an `ArgumentError`.
 """
-function refine_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
-                          optimization_strategy = _DEFAULT_BUNDLE_STRATEGY, scale = nothing, width = nothing,
-                          max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = _SCHUR, retired...)
-    for k in keys(retired)
-        k === :camera_free && throw(ArgumentError(
-            "refine_rotations: the rotation bundle holds the camera's calibration (no parameter keyword); to refine the camera " *
-            "with the rotations — the autocalibration of a rotating camera — call refine_camera_and_rotations(…; fixed)"))
-        k in (:loss, :loss_width) && throw(ArgumentError(
-            "refine_rotations: the keyword `$k` is retired: give the robust strategy as `optimization_strategy = Triggs{Shape}(…)` " *
-            "and exactly one of `scale` or `width` (the robust-estimation contract)"))
-        throw(ArgumentError("refine_rotations: unknown keyword `$k`"))
-    end
-    bundle = VgtkEstimation.bundle_loss(optimization_strategy; scale, width, caller = "refine_rotations")
-    return _rotation_bundle(camera, rotations, tracks, nothing, (); bundle, max_iter, ftol, xtol, eliminate,
-                            what = "refine_rotations")
+struct RotationBundleProblem{C, T <: AbstractVector, F} <: VgtkCore.AbstractBlockProblem
+    camera::C                    # the held camera, or nothing (the autocalibration: the camera is the guess's)
+    tracks::T
+    fixed::F                     # the autocalibration's held parameters; nothing with a held camera
+    eliminate::Bool
 end
+RotationBundleProblem(camera::Union{VgtkCore.CameraModel, VgtkCore.BoundedCamera}, tracks::AbstractVector; eliminate::Bool = _SCHUR) =
+    RotationBundleProblem(camera, tracks, nothing, eliminate)
+RotationBundleProblem(tracks::AbstractVector; fixed::Tuple{Vararg{Symbol}} = (), eliminate::Bool = _SCHUR) =
+    RotationBundleProblem(nothing, tracks, fixed, eliminate)
 
-# VisualGeometryToolkitEstimation's configuration of record (its configs/default.toml), read once through its public reader:
+# VisualGeometryToolkitEstimation's configuration of record (its configs/default.toml, read through its version converter):
 # a strategy default the bundles share with Estimation is looked up there, never restated here.
-const _ESTIMATION_DEFAULTS = VgtkCore.parse_defaults(VgtkEstimation.default_config_path())
+const _ESTIMATION_DEFAULTS = VgtkCore.parse_defaults(VgtkEstimation.default_config_path(); versions = VgtkEstimation.ESTIMATION_CONFIG_VERSIONS)
 _estimation_strategy(table::AbstractString, key::AbstractString, class::Symbol) =
     VgtkEstimation.optimization_strategy_from_toml(VgtkCore.toml_default(_ESTIMATION_DEFAULTS, table, key);
                                                    class, section = "$table.$key")
 
-# The default strategy of the rotation bundles: Estimation's pixel bundle's, [refine_camera_and_poses]
+# The default strategy of the rotation bundle (`ClassDefault()`): Estimation's pixel bundle's, [camera_poses_problem]
 # `optimization_strategy` (Triggs{Welsch} stating no efficiency constant: its width is Core's efficiency constant for a 2-D
 # residual, a pixel reprojection error, times the caller's `scale`).
-const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("refine_camera_and_poses", "optimization_strategy", :refine_camera_and_poses)
+const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("camera_poses_problem", "optimization_strategy", :camera_poses_problem)
+VgtkCore.default_optimization_strategy(::RotationBundleProblem) = _DEFAULT_BUNDLE_STRATEGY
 
-"""
-    refine_camera_and_rotations(camera, rotations, tracks; optimization_strategy = Triggs{WelschShape}(…), scale | width,
-                                fixed = (), max_iter, ftol, xtol, eliminate = <NLLSsolver's Schur system>)
-        -> FitResult{Dict{K, RotMatrix{3, Float64}}, RotationBundleMetadata}
-
-The AUTOCALIBRATION of a rotating camera: no target, a pure-rotation sequence (Hartley 1994; Agapito, Hayman and Reid 2001).
-The rotation bundle of [`refine_rotations`](@ref) — the same observations, start, kept set, gauge and result — with the
-camera's free parameters one more variable: VisualGeometryToolkitCore's `ParameterManifold` of the camera's model restricted
-to them (the camera block of Estimation's `refine_camera_and_poses`), its Jacobian ForwardDiff through the chart. The only
-gauge is the first frame's rotation, held exactly; with it a rotating sequence leaves nothing else free, which the metadata's
-`calibration` shows (the reduced information, and the parameters' covariance: [`RotationBundleMetadata`](@ref)). The
-observations kept at the start are those the GIVEN camera images; the residuals, the loss width and the result are the
-refined camera's.
-
-A contract refine:
-- `optimization_strategy` — the robust strategy, a `Triggs{K}` (VisualGeometryToolkitCore's; the default
-  VisualGeometryToolkitEstimation's pixel bundle's, configs/default.toml `[refine_camera_and_poses]`: `Triggs{WelschShape}`
-  at the shape's efficiency constant for a 2-D residual): the loss `K` as NLLSsolver's
-  robustifier at ONE fixed width.
-- exactly one of `scale = σ` (the observations' noise scale, px or whitened units; or an upstream robust result) — the width
-  is then the strategy's efficiency constant × σ — or `width = w` (the loss width itself).
-- `fixed` — the camera parameters HELD, by name or by a coefficient family's group (`:k` for `k1…`, `:d`, `:p`, `:sx`,
-  `:sy`): VisualGeometryToolkitCore's `free_parameter_names(model, fixed)`. The default `()` frees every parameter but the
-  skew, which the stack holds by construction (named in `fixed` it is a no-op). An unknown or repeated entry, a camera with
-  nothing free, a SplineLens camera (its controls have no static chart), and the retired `camera_free`, `free`, `fix`,
-  `fixed_params` and `hold` are an `ArgumentError`.
-- `max_iter`, `ftol`, `xtol`, `eliminate` — as [`refine_rotations`](@ref)'s.
-"""
-function refine_camera_and_rotations(camera, rotations::AbstractDict, tracks::AbstractVector;
-                                     optimization_strategy = _DEFAULT_BUNDLE_STRATEGY,
-                                     scale = nothing, width = nothing, fixed::Tuple{Vararg{Symbol}} = (),
-                                     max_iter::Integer, ftol::Real, xtol::Real, eliminate::Bool = _SCHUR,
-                                     retired...)
-    for k in keys(retired)                                       # camera_free and the other spellings of a held-parameter list
-        k in _RETIRED_HOLD_KEYWORDS && throw(ArgumentError(
-            "refine_camera_and_rotations: the keyword `$k` is not the stack's; give the HELD camera parameters as `fixed = (…)` " *
-            "(every other parameter but the skew is free)"))
-        throw(ArgumentError("refine_camera_and_rotations: unknown keyword `$k`"))
-    end
-    bundle = VgtkEstimation.bundle_loss(optimization_strategy; scale, width, caller = "refine_camera_and_rotations")
+# The held camera: the guess is the rotations.
+VgtkCore.block_refit(f::RotationBundleProblem, rotations::AbstractDict, loss, stops::VgtkCore.LmStops, damping::VgtkCore.LmDamping) =
+    _rotation_bundle(f.camera, rotations, f.tracks, nothing, (); bundle = loss, stops, damping, eliminate = f.eliminate)
+VgtkCore.block_refit(::RotationBundleProblem{Nothing}, ::AbstractDict, loss, stops::VgtkCore.LmStops, damping::VgtkCore.LmDamping) =
+    throw(ArgumentError("RotationBundleProblem: the autocalibration (no camera in the problem) refines the guess " *
+                        "(; camera, rotations); give the camera to the problem to hold it"))
+# The autocalibration: the camera is the guess's, refined over its free parameters.
+function VgtkCore.block_refit(f::RotationBundleProblem{Nothing}, u0::NamedTuple{(:camera, :rotations)}, loss,
+                              stops::VgtkCore.LmStops, damping::VgtkCore.LmDamping)
+    camera = u0.camera
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
-    names = VgtkCore.free_parameter_names(m, fixed)
-    isempty(names) && throw(ArgumentError(
-        "refine_camera_and_rotations: `fixed` holds every camera parameter: nothing to calibrate (refine_rotations is the bundle " *
-        "with the calibration held)"))
     # the camera's variable: Core's ParameterManifold of its model restricted to the free parameters (names checked by
     # `free_parameter_names`); a SplineLens camera (a gauge K: its parameters are its lattice's controls, which the stack
     # refines only by back-projection, or holds) is refused
     (m isa VgtkCore.CameraModel && !(m.lens isa VgtkCore.SplineLens)) ||
-        throw(ArgumentError("refine_camera_and_rotations: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
+        throw(ArgumentError("RotationBundleProblem: the autocalibration needs a parametric camera model (its parameters by name); this camera's lens is a $(nameof(typeof(m.lens)))"))
+    names = VgtkCore.free_parameter_names(m, f.fixed)
+    isempty(names) && throw(ArgumentError(
+        "RotationBundleProblem: `fixed` holds every camera parameter: nothing to calibrate (give the camera to the problem " *
+        "to hold its calibration)"))
     chc = VgtkCore.restrict(VgtkCore.ParameterManifold(m), names)
-    return _rotation_bundle(camera, rotations, tracks, chc, names; bundle, max_iter, ftol, xtol, eliminate,
-                            what = "refine_camera_and_rotations")
+    return _rotation_bundle(camera, u0.rotations, f.tracks, chc, names; bundle = loss, stops, damping, eliminate = f.eliminate)
 end
 
-# The retired names of the held-parameter keyword (`fixed` is the stack's one): refused naming it.
-const _RETIRED_HOLD_KEYWORDS = (:camera_free, :free, :fix, :fixed_params, :hold)
-
-# The one rotation bundle of `refine_rotations` (`chc === nothing`: the camera held) and `refine_camera_and_rotations` (`chc`
-# the camera's chart over its free parameters `free`), `what` the caller named in a message; `bundle` the loss of the
-# robust-estimation contract, VisualGeometryToolkitEstimation's `bundle_loss` of the caller's keywords (its strategy, scale
-# input and deployed loss). Its strategy is a Triggs{K} — the loss K as NLLSsolver's robustifier at the deployed width,
-# `sqrt(sq_loss_width(loss))` as every bundle of the stack — or `nothing` (plain least squares); an Irls{K} is refused by Estimation's bundle_loss: this
-# bundle runs one LM. The scale record is the input's (`scale_source`, and `noise_scale` unless ScaleNone: NaN).
+# The one rotation bundle (`chc === nothing`: the camera held; else `chc` the camera's chart over its free parameters
+# `free`); `bundle` the parsed refine of the robust-estimation contract, Core's `bundle_loss` of the solve's strategy and
+# scale input (`(; strategy, input, loss)`). Its strategy is a Triggs{K} — the loss K as NLLSsolver's robustifier at the
+# deployed width, `sqrt(sq_loss_width(loss))` as every bundle of the stack — or `nothing` (plain least squares); an Irls{K}
+# is refused by Core's bundle_loss: this bundle runs one LM. The scale record is the input's (`scale_source`, and
+# `noise_scale` unless ScaleNone: NaN).
 function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free_names::Tuple{Vararg{Symbol}};
-                          bundle::NamedTuple, max_iter::Integer, ftol::Real, xtol::Real,
-                          eliminate::Bool, what::AbstractString) where {K}
+                          bundle::NamedTuple, stops::VgtkCore.LmStops, damping::VgtkCore.LmDamping, eliminate::Bool) where {K}
+    what = "RotationBundleProblem"
+    max_iter = stops.max_iter
     loss = bundle.strategy === nothing ? nothing : VgtkCore.strategy_loss(bundle.strategy)()
     width = bundle.loss === nothing ? NaN : sqrt(VgtkCore.sq_loss_width(bundle.loss))
     scale_source = VgtkCore.scale_source(bundle.input)
@@ -486,8 +452,8 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
         "have; leave `eliminate` out (every unknown solved together)"))
     E = eliminate && _SCHUR                                        # = eliminate after the refusal; a constant false without Schur
     cv = chc === nothing ? nothing : _CameraVariable(chc)
-    V = chc === nothing ? Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}} :
-        Union{_FrameChart, VgtkCore.Eliminable{E, _SphereChart}, typeof(cv)}
+    V = chc === nothing ? Union{VgtkCore.SO3Manifold{Float64}, VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}} :
+        Union{VgtkCore.SO3Manifold{Float64}, VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}, typeof(cv)}
     nobs = 0; nuncertain = 0
     for t in tracks
         length(unique(first.(t))) >= 2 || throw(ArgumentError("$what: a track needs observations in two frames"))
@@ -565,28 +531,28 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
                 push!(blocks, _with_varind(ob, SVector(Tuple(newidx[v] for v in vi))))
             else
                 rest = SVector(Tuple(newidx[v] for v in vi[2:end]))
-                push!(blocks, _HeldFrame{length(rest), typeof(ob)}(ob, vars[vi[1]]::_FrameChart, rest))
+                push!(blocks, _HeldFrame{length(rest), typeof(ob)}(ob, vars[vi[1]]::VgtkCore.SO3Manifold{Float64}, rest))
             end
         end
-        lp = VgtkCore.LmProblem(V[vars[v] for v in eachindex(vars) if unfixed[v]], blocks)
-        sol = VgtkCore.lmsolve_chart!(lp, VgtkCore.LmStops(; max_iter, ftol, xtol))
+        lp = VgtkCore.LmProblem(V[vars[v] for v in eachindex(vars) if unfixed[v]], blocks; damping)
+        sol = VgtkCore.lmsolve_chart!(lp, stops)
         for v in eachindex(vars)                                            # the solution into the full variable vector
             unfixed[v] && (vars[v] = lp.variables[newidx[v]])
         end
     end
     # The termination record (§14): Core's adapter's verdict; `max_iter = 0` runs no solve: the iteration cap.
     rc, rule = sol === nothing ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (sol.code, sol.rule)
-    out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::_FrameChart).R)) for k in frames)
+    out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::VgtkCore.SO3Manifold{Float64}).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]
     rn = residual_norms(_pixel_residual); flat = filter(isfinite, reduce(vcat, rn; init = Float64[]))
     niter = sol === nothing ? 0 : sol.iterations
-    cam_out = chc === nothing ? camera : VgtkCore.with_model(camera, _camera_of_chart(vars[ic]))
     calib = chc === nothing ? nothing :
         _autocalibration((vars[ic]::typeof(cv)).chart, free_names, [(j, i, o) for (j, t) in enumerate(tracks) for (i, o) in enumerate(t) if active[j][i]],
                           (j, i, o) -> observation(max_iter == 0 ? NLLSsolver.NoRobust() : robustifier(), j, i, o),
                           vars, fid, nf, unconstrained)
-    return VgtkCore.FitResult(out, rc, rule, niter, _plain_rms(flat), nkept,
-                              RotationBundleMetadata(dirs, rn, width, _rms(filter(≤(width), flat)), scale, scale_source, nobs, nobs - nkept, unconstrained, cam_out, calib))
+    u = chc === nothing ? out : (; camera = VgtkCore.with_model(camera, _camera_of_chart(vars[ic])), rotations = out)
+    return VgtkCore.FitResult(u, rc, rule, VgtkCore.SolveStats(; nsteps = niter), _plain_rms(flat), nkept,
+                              RotationBundleMetadata(dirs, rn, width, _rms(filter(≤(width), flat)), scale, scale_source, nobs, nobs - nkept, unconstrained, calib))
 end
 
 # The rms of residual norms: the result's `rms` over every kept observation (0 with none, as before), and its inliers' (those
@@ -626,7 +592,7 @@ function _autocalibration(cc, free_names, kept, observation, vars, fid, nf, unco
     end
     tracks = sort!(collect(keys(D))); nt = length(tracks)
     Dmin = minimum(j -> LinearAlgebra.eigmin(LinearAlgebra.Symmetric(D[j])), tracks)
-    singular() = throw(ArgumentError("refine_camera_and_rotations: the autocalibration's information is singular at the result"))
+    singular() = throw(ArgumentError("RotationBundleProblem: the autocalibration's information is singular at the result"))
     Dmin > 0 || singular()
     S = Haa
     for j in tracks

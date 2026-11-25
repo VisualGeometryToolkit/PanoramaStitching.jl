@@ -22,19 +22,21 @@
     saturated = [falses(40, 40) for _ in rotations]
     @compile_workload begin
         kw = (; frame_map, rim_margin_px = 2.0, fov_deg = 100.0)
-        fit = (; saturated, kw..., saturation_margin_px = 2.0, plane = 2, chart_spacing_deg = 4.0, penalty_order = 3, penalty_weight = 0.01,
-               vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky(), observation_noise = nothing)
+        fit = (; rim_margin_px = 2.0, fov_deg = 100.0, saturation_margin_px = 2.0, plane = 2, chart_spacing_deg = 4.0, penalty_order = 3,
+               penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6, solver = SparseCholesky(), observation_noise = nothing)
+        problem(v, Z) = VgtkCore.EstimationProblem(VrtkCore.AbstractVignetting, frames,
+                                                   (; camera, rotations, saturated, frame_map, vignetting = v, free_directions = Z))
         # the radial and the tensor log-vignetting, each from log V ≡ 0
         radial = VrtkCore.LogVignetting(VrtkCore.with_control_points(VrtkCore.RadialVignetting(6, SVector(40.0, 40.0), 42.0), zeros(6)))
-        result = fit_vignetting(radial, camera, frames, rotations; free_directions = VrtkCore.pole_regular_basis(radial), gain_correction = ChannelGains(), fit...)
+        result = VgtkCore.solve(problem(radial, VrtkCore.pole_regular_basis(radial)), VignettingSelfCalibration(; gain_correction = ChannelGains(), fit...))
         tensor = VrtkCore.LogVignetting(VrtkCore.with_control_points(VrtkCore.TensorProductVignetting((4, 4), VgtkCore.Rect(2.0, 2.0, 74.0, 74.0)), zeros(16)))
-        fit_vignetting(tensor, camera, frames, rotations; free_directions = Matrix(1.0I, 16, 16), gain_correction = IntensityGains(), fit...)
-        v = VgtkCore.estimate(result)
+        VgtkCore.solve(problem(tensor, Matrix(1.0I, 16, 16)), VignettingSelfCalibration(; gain_correction = IntensityGains(), fit...))
+        v = result.u
         view = panorama_view(VgtkCore.Equirectangular(), (-60.0, 90.0, -40.0, 40.0), 5.0)
         render_panorama(camera, frames, rotations, view; vignetting = v, kw...)
         render_cube_map(camera, frames, rotations, 8; vignetting = v, kw...)
         score_seams(camera, frames, rotations, view; vignetting = v, saturated, saturation_margin_px = 2.0, kw..., plane = 2, chunk = 1000)
         sample_frames(camera, frames, rotations, fibonacci_directions(rotations, 50; fov_deg = 100.0); saturated, vignetting = v, kw...)
-        # (not refine_rotations: an NLLSsolver solve evaluates into NLLSsolver, which a precompiling package may not do)
+        # (not the rotation bundle: an NLLSsolver solve evaluates into NLLSsolver, which a precompiling package may not do)
     end
 end

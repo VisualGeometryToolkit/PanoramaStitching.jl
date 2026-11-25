@@ -32,7 +32,7 @@ forward `(0, 0, 1)` projected onto the horizontal, its x the right-handed
 completion — VisualGeometryToolkitCore's `lookat_pose` frame (the `:cv`
 convention) looking along that forward. `up_frame(pitch, roll)` is
 `up_frame(true_up(pitch, roll))` ([`true_up`](@ref), degrees); `up` may also be
-a sweep's own, [`sweep_up`](@ref)`(rotations).up`. The `up` keyword of
+a sweep's own, the `u` of [`RollFreeUp`](@ref). The `up` keyword of
 [`panorama_view`](@ref).
 """
 function up_frame(up::AbstractVector)
@@ -45,25 +45,40 @@ end
 up_frame(pitch::Real, roll::Real) = up_frame(true_up(pitch, roll))
 
 """
-    sweep_up(rotations) -> (; up, eigenvalues)
+    SweepUp
 
-The up direction of a roll-free sweep from its frames' rotations alone
-(`d = R_k·f_k`, the common frame's directions): a roll-free frame's image x axis
-(`R_k`'s first column) is horizontal, so up is orthogonal to every one — the
-eigenvector of the least eigenvalue of `Σ_k x_k x_kᵀ` — signed against the
-frames' summed image-down axes (`R_k`'s second columns). `eigenvalues` are the
-matrix's, ascending: the least is ≈ 0 when the sweep is roll free (the
-diagnostic of the estimate). It holds whatever the frames' pitch, unlike the
-axis of the frames' rotations. Its frame is [`up_frame`](@ref)`(sweep_up(R).up)`.
+The model tag of a sweep's up direction in the common frame (`EstimationProblem(SweepUp, rotations)`, solved by
+[`RollFreeUp`](@ref)): abstract, never instantiated; the estimate is an `SVector{3, Float64}`, a unit vector.
 """
-function sweep_up(rotations)
+abstract type SweepUp end
+
+"""
+    RollFreeUp()
+
+A [`ClosedFormKind`](@extref VisualGeometryToolkitCore.ClosedFormKind): the up direction of a roll-free sweep from its
+frames' rotations alone,
+
+    solve(EstimationProblem(SweepUp, rotations), RollFreeUp()) -> FitResult{SVector{3, Float64}}
+
+(`d = R_k·f_k`, the common frame's directions): a roll-free frame's image x axis (`R_k`'s first column) is horizontal,
+so up is orthogonal to every one — the eigenvector of the least eigenvalue of `Σ_k x_k x_kᵀ` — signed against the
+frames' summed image-down axes (`R_k`'s second columns). `u` is the up direction, `n` the frames, the metadata
+`(; eigenvalues)`, the matrix's, ascending: the least is ≈ 0 when the sweep is roll free (the diagnostic of the
+estimate). It holds whatever the frames' pitch, unlike the axis of the frames' rotations. Its frame is
+[`up_frame`](@ref)`(r.u)`.
+"""
+struct RollFreeUp <: VgtkCore.AbstractEstimationAlgorithm end
+VgtkCore.estimator_kind(::RollFreeUp) = VgtkCore.ClosedFormKind()
+
+function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{SweepUp, <:AbstractVector, VgtkCore.NullParameters}, ::RollFreeUp)
+    rotations = prob.f
     A = zeros(3, 3)
     for R in rotations
         x = SMatrix{3, 3, Float64, 9}(R)[:, 1]; A .+= x * x'
     end
     E = LinearAlgebra.eigen(LinearAlgebra.Symmetric(A)); a = SVector{3}(E.vectors[:, 1])
     down = sum(SMatrix{3, 3, Float64, 9}(R)[:, 2] for R in rotations)
-    return (; up = dot(a, down) > 0 ? -a : a, eigenvalues = E.values)
+    return VgtkCore.closed_form_result(dot(a, down) > 0 ? -a : a, length(rotations); metadata = (; eigenvalues = E.values))
 end
 
 """
@@ -151,7 +166,7 @@ The panorama of `frames` in the raster `view` ([`panorama_view`](@ref)) by the R
 `camera ∘ R_kᵀ ∘ view.rays` per frame — then divided by the vignetting `vignetting(u, f)`, looked up at the sensor point `u`
 (camera pixels) and the ray `f` (the frame's camera frame) — a model defined on the sensor reads `u`, one defined on the
 ray's direction (a field angle) reads `f`; a VisualRadiometryToolkitCore `AbstractVignetting` reads `u` — and by the frame's exposure gain
-`gains[k, c]` of each colour plane c when `gains` is given (`K × 3`, per frame and plane: [`fit_vignetting`](@ref)'s
+`gains[k, c]` of each colour plane c when `gains` is given (`K × 3`, per frame and plane: [`VignettingSelfCalibration`](@ref)'s
 `metadata.gains`; `nothing`, the frames taken as one exposure). No seam, no blend, and
 each pixel keeps the value of the LAST frame that sees it, so a wrong vignetting shows as a step at every frame boundary.
 
@@ -160,7 +175,7 @@ A frame sees a pixel when its ray is within `fov_deg` of the camera frame's z ax
 and at least 2 px inside the frame — the geometric masks of [`sample_frames`](@ref), evaluated as batches at the warp's own
 sensor points. The render shows the frames as they are: a saturated pixel is rendered with its clipped value (a window that
 clips in every frame comes out bright, not empty); saturation masks observations only ([`sample_frames`](@ref),
-[`fit_vignetting`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images. `frame_map` is the frames' map
+[`VignettingSelfCalibration`](@ref), [`score_seams`](@ref)). `frames` are `H × W × 3` linear images. `frame_map` is the frames' map
 onto the camera's pixels (VisualGeometryToolkitCore's `raw_frame_map(L)`), and `plane_maps` each plane's
 (`bayer_plane_map(L, c)`; by default every plane's is the frame's); plane c is read through
 `inv(plane_maps[c]) ∘ camera ∘ R_kᵀ ∘ rays`, all three planes in one Core `image_warp!`. The masks and the vignetting are at
@@ -282,7 +297,7 @@ end
     coverage_extent(camera, frames, rotations, up, frame_map; δ = 0.5) -> (lon₀, lon₁, lat₀, lat₁)
 
 The longitude and latitude box (degrees) the `frames` cover in the view of the
-up frame `up` (e.g. [`up_frame`](@ref)`(sweep_up(rotations).up)`): the seen
+up frame `up` (e.g. [`up_frame`](@ref) of a sweep's [`RollFreeUp`](@ref) up direction): the seen
 pixels of a coarse equirectangular [`render_panorama`](@ref) at `δ` degrees per
 pixel over the whole sphere (latitudes within ±89°), no vignetting, the
 frames to their sensor's edge within 89° of the optical axis; the box of its

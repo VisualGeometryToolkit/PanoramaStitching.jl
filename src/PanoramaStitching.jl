@@ -11,13 +11,15 @@ camera into any view â€” the cylindrical family, a virtual camera, a cube map â€
 unblended (`render_panorama`, `render_cube_map`); the camera's vignetting
 (VisualRadiometryToolkitCore's model) and the frames' exposure gains from the
 frames alone, interpolation free, or the gains alone under a given vignetting
-(`fit_vignetting`), and the seams a vignetting leaves (`score_seams`); the
+(`VignettingSelfCalibration`), and the seams a vignetting leaves (`score_seams`); the
 results saved and loaded as a `vgio/panorama/v2.0` file (`save_panorama`,
 `load_panorama`), each part written by the kind that owns it.
 
 Built on the VisualGeometryToolkit stack: VisualGeometryToolkitFeatures' ASIFT
 detector and LoMa descriptor and matcher, VisualGeometryToolkitEstimation's
-`find_rotation`, `ViewGraph` and `fit_rotation_averaging`, VisualGeometryToolkitCore's
+`Ransac` on a `RotationProblem`, `ViewGraph` and `RotationAveraging`, VisualGeometryToolkitCore's
+estimation interface (`solve(problem, algorithm)`: the rotation bundle is a `RotationBundleProblem` refined by its
+`LevenbergMarquardt`, the vignetting fits are algorithms of this package),
 cameras, rotation charts, panorama projections and warping
 machinery (`image_warp`, `image_sample!`, `pointwise!`: KernelAbstractions
 kernels on GPU arrays, the same code on the host), VisualRadiometryToolkitCore's
@@ -56,14 +58,15 @@ using JSON: JSON                                                # src/panorama_r
 using PrecompileTools: @setup_workload, @compile_workload       # src/precompile.jl
 
 export register_rotations, Registration, verify_pairs, VerifiedPairs
-export chain_tracks, refine_rotations, refine_camera_and_rotations, RotationBundleMetadata
+export chain_tracks, RotationBundleProblem, RotationBundleMetadata
 export world_direction, FrameSamples, sample_frames, fibonacci_directions
-export true_up, up_frame, sweep_up, PanoramaView, panorama_view, render_panorama, render_cube_map, coverage_extent
-export fit_vignetting, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, PositionNoise
+export true_up, up_frame, SweepUp, RollFreeUp, PanoramaView, panorama_view, render_panorama, render_cube_map, coverage_extent
+export VignettingSelfCalibration, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, PositionNoise
 export IntensityGains, ChannelGains
 export score_seams, vignetting_summary
 export save_panorama, load_panorama
-export PairCorrespondences, ring_correspondences, ring_pair_vignetting, fit_additive_level, additive_level_slope, PairVignettingMetadata
+export PairCorrespondences, ring_correspondences, RingVignetting, RingPairMedians, AdditiveLevel, LevelBisection, additive_level_slope,
+       PairVignettingMetadata
 public PANORAMA_KIND, panorama_json_schema
 public detect_features, pair_bearings, frame_region, CUBE_FACES, GAIN_CORRECTIONS, OBSERVATION_NOISES, refuse_retired_registration
 

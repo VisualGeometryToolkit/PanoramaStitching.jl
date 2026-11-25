@@ -22,7 +22,7 @@
 #   camera      VisualGeometryToolkitIO     body_spec(BoundedCamera)   camera_json / camera_from_json
 #   rotations   VisualGeometryToolkitIO     body_spec(Trajectory)      JSON.lower(style, ·) / JSON.lift(style, Trajectory, ·)
 #   vignetting  VisualRadiometryToolkitIO   VIGNETTING_BODY            JSON.lower(style, ·) / JSON.lift(style, AbstractVignetting, ·)
-#   fit         VisualGeometryToolkitIO     body_spec(FitResult)       fit_record_json / fit_record_from_json
+#   fit         VisualGeometryToolkitIO     body_spec(FitResult)       JSON.lower(style, ·) / JSON.lift(style, FitResult, ·)
 #   gains       this record's               (frame_index, gain) per frame, a matrix as its rows (VisualGeometryToolkitIO's)
 #
 # No body holds a rotation alone, so the rotations are the trajectory body with every translation zero (a camera that
@@ -129,12 +129,12 @@ or one of its own — a sampled map, a flat field's binned radial profile), whic
 writes none and reads back `nothing`.
 
 `fit` is the bundle's `FitResult` (any estimate and metadata: only its
-termination record is written — `retcode`, `stop_rule`, `iterations`, `rms`,
-`n`) or `nothing` (none recorded).
+termination record is written — `retcode`, `stop_rule`, `iterations` (its
+`stats.nsteps`), `rms`, `n`) or `nothing` (none recorded).
 
 `gains` is `nothing` (every frame at one exposure) or a `K × C` matrix,
 `gains[k, c]` the exposure gain of frame index `k` in colour plane `c`
-([`fit_vignetting`](@ref)'s `metadata.gains`), every one positive; the
+([`VignettingSelfCalibration`](@ref)'s `metadata.gains`), every one positive; the
 rotations' frame indices are then `1:K`. Numbers of a narrower type (Float32)
 are written exactly. The file's `generator` names PanoramaStitching as the
 calling package. [`load_panorama`](@ref) reads the file back.
@@ -145,7 +145,7 @@ function save_panorama(path::AbstractString, camera::VgtkCore.BoundedCamera, rot
     s = VgtkIO.VgioStyle(; length_unit)
     body = merge((camera = VgtkIO.camera_json(camera, VgtkIO.pixel_frame(s); length_unit), rotations = JSON.lower(s, rotations)),
                  vignetting === nothing ? (;) : (vignetting = JSON.lower(s, vignetting),),
-                 _gains_json(gains), fit === nothing ? (;) : (fit = VgtkIO.fit_record_json(fit),))
+                 _gains_json(gains), fit === nothing ? (;) : (fit = JSON.lower(s, fit),))
     VgtkIO.with_caller(@__MODULE__) do
         VgtkIO.write_kind(path, PANORAMA_KIND, body; style = s, provenance)
     end
@@ -180,7 +180,7 @@ function load_panorama(path::AbstractString)
         rotations = JSON.lift(s, VgtkCore.Trajectory, d.rotations::VgtkIO.Record),
         vignetting = haskey(d, :vignetting) ? JSON.lift(s, VrtkCore.AbstractVignetting, d.vignetting::VgtkIO.Record) : nothing,
         gains = _gains_from_json(get(d, :gains, nothing)),
-        fit = haskey(d, :fit) ? VgtkIO.fit_record_from_json(d.fit) : nothing,
+        fit = haskey(d, :fit) ? JSON.lift(s, VgtkCore.FitResult, d.fit::VgtkIO.Record) : nothing,
     )
 end
 

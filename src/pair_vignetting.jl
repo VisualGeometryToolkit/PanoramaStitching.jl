@@ -8,10 +8,10 @@
 # median over a ring pair's correspondences is its measurement (robust to the scene's edges under the registration error), and
 # least squares over the ring pairs, weighted by their counts, gives ln V per ring with ln V₁ = 0 (the first ring the reference:
 # the gauge eliminated, never pinned). No spline of V and no model of the scene: the supplement's model-free reference against
-# which `fit_vignetting`'s V is read.
+# which `VignettingSelfCalibration`'s V is read.
 #
 # An ADDITIVE level c in the frames (I = L·V + c: a veiling glare or a black-level error) breaks the cancellation — the pair's log
-# ratio then depends on L — and flattens the solution at the rim, where V is small; `fit_additive_level` estimates c as the level
+# ratio then depends on L — and flattens the solution at the rim, where V is small; `LevelBisection` estimates c as the level
 # at which the log ratio no longer depends on the scene's brightness (`additive_level_slope`) and the solution is read with it
 # removed.
 #
@@ -70,9 +70,9 @@ The correspondences of the pair equation: the frames sampled at `directions` ([`
 `plane` the colour plane read), each seen direction's sensor point put on its ring of `field_angle(u)` (degrees; a kernel-lawful
 callable of the camera pixel, e.g. the equisolid angle about the vignetting's centre) among `edges`, cut at `tmax`, and every
 pair of frames that see a direction in two different rings one correspondence. Each frame's `saturated` mask is dilated by
-`saturation_margin_px` camera pixels (≈ the registration error; [`fit_vignetting`](@ref)'s one dilation), read by
+`saturation_margin_px` camera pixels (≈ the registration error; [`VignettingSelfCalibration`](@ref)'s one dilation), read by
 `sample_frames`' rule, and a direction any frame whose domain sees it has saturated there is dropped from every frame
-(`fit_vignetting`'s one symmetric test). The sampling and the per-frame-pair selection run on the frames' backend.
+(`VignettingSelfCalibration`'s one symmetric test). The sampling and the per-frame-pair selection run on the frames' backend.
 """
 ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector,
                      directions::AbstractArray{<:StaticVector{3}}; kw...) = _ring_correspondences(camera, frames, rotations, directions, true; kw...)
@@ -92,7 +92,7 @@ function _ring_correspondences(camera::VgtkCore.BoundedCamera, frames::AbstractV
     kw = (; frame_map, rim_margin_px, fov_deg, vignetting = (u, f) -> 1.0, plane_maps)
     be = KA.get_backend(frames[1])
     margin = _checked_saturation_margin("ring_correspondences", saturation_margin_px)
-    # the sweep's symmetric saturation test (fit_vignetting's one implementation, `_sweep_saturation`): each frame's own mask
+    # the sweep's symmetric saturation test (VignettingSelfCalibration's one implementation, `_sweep_saturation`): each frame's own mask
     # dilated by `saturation_margin_px`, read by sample_frames' rule (no clipped pixel among a sample's bilinear taps), and a
     # direction any frame sees saturated dropped from every frame (`symmetric = false`: the own masks alone, the tests' reference)
     any_frame = _sweep_saturation(saturated, camera, frame_map, rim_margin_px, fov_deg, rotations, margin, be)
@@ -128,7 +128,7 @@ end
 """
     PairVignettingMetadata
 
-The diagnostics of [`ring_pair_vignetting`](@ref): the ring edges and cut, the additive level removed (`offset`), the ring
+The diagnostics of [`RingPairMedians`](@ref): the ring edges and cut, the additive level removed (`offset`), the ring
 pairs' medians `pair_median[a, b]` (NaN where none) and summed weights `pair_weight[a, b]` (a < b), the robust residual scale
 `residual_mad` (the weighted median of |ln I_k − ln I_l − (ln V_a − ln V_b)|), the correspondences used per ring
 `ring_count`, and the rings the ring-pair graph does not connect to the first (`unidentified`: NaN in the estimate).
@@ -156,7 +156,7 @@ function _sorted_weighted_median(y, w)
 end
 
 # The correspondences grouped by ring pair (a, b): the permutation sorting them by ring pair and then by `y`, and each ring
-# pair's range of it (`ring_pair_vignetting`'s medians, `additive_level_slope`'s within-pair slopes).
+# pair's range of it (`RingPairMedians`' medians, `additive_level_slope`'s within-pair slopes).
 function _ring_pair_runs(pc::PairCorrespondences, y)
     R = length(pc.edges) - 1
     key = (Int.(view(pc.rings, 1, :)) .- 1) .* R .+ Int.(view(pc.rings, 2, :))
@@ -184,20 +184,54 @@ function _pair_rows(pc::PairCorrespondences, c::Real, frame_weights)
 end
 
 """
-    ring_pair_vignetting(pc::PairCorrespondences; offset = 0.0, frame_weights = ones(pc.n_frames)) -> FitResult
+    RingVignetting
 
-The model-free vignetting of the correspondences `pc` (one deterministic computation: the algorithm, no verb): per ring pair
+The model tag of the model-free vignetting of a sweep, ln V per ring of a field angle (`EstimationProblem(RingVignetting,
+pc, p)`, solved by [`RingPairMedians`](@ref)): abstract, never instantiated; the estimate is a `Vector{Float64}`, one
+`ln V` per ring.
+"""
+abstract type RingVignetting end
+
+"""
+    AdditiveLevel
+
+The model tag of the additive level `c` of a sweep's frames (`I = L·V + c`; `EstimationProblem(AdditiveLevel, pc, p)`,
+solved by [`LevelBisection`](@ref)): abstract, never instantiated; the estimate is a `Float64` in the frames' units.
+"""
+abstract type AdditiveLevel end
+
+"""
+    RingPairMedians()
+
+A [`ClosedFormKind`](@extref VisualGeometryToolkitCore.ClosedFormKind): the model-free vignetting of the
+correspondences `pc` (one deterministic computation),
+
+    solve(EstimationProblem(RingVignetting, pc::PairCorrespondences[, (; offset = 0.0, frame_weights = ones(pc.n_frames))]),
+          RingPairMedians()) -> FitResult{Vector{Float64}, PairVignettingMetadata}
+
+per ring pair
 (a, b) the weighted median of `ln(I_k − c) − ln(I_l − c)` (`c = offset`, the additive level removed; each correspondence
 weighted by its frames' `frame_weights`, a bootstrap's multiplicities), then the least squares of `ln V_a − ln V_b` = that
 median over the ring pairs, each row weighted by its summed weight, with `ln V₁ = 0` (the first ring the gauge, eliminated).
 The estimate is `ln V` per ring (`NaN` for a ring the ring pairs do not connect to the first); the termination record
 `(Success, ClosedForm)` (`(InitialFailure, NoRule)` when no ring pair has a correspondence or none connects a ring to the
 first), `rms` the weighted rms of the ring-pair rows, `n` the correspondences
-used, the metadata a [`PairVignettingMetadata`](@ref).
+used, the metadata a [`PairVignettingMetadata`](@ref). The context's keys are optional (Core's `read_context`): `offset` the
+additive level removed, `frame_weights` per frame (a bootstrap's multiplicities); any other key is an `ArgumentError`.
 """
-function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
+struct RingPairMedians <: VgtkCore.AbstractEstimationAlgorithm end
+VgtkCore.estimator_kind(::RingPairMedians) = VgtkCore.ClosedFormKind()
+
+function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{RingVignetting, PairCorrespondences}, ::RingPairMedians)
+    pc = prob.f
+    (; offset, frame_weights) = VgtkCore.read_context(prob.p, (), (; offset = 0.0, frame_weights = nothing), "RingPairMedians")
+    frame_weights = something(frame_weights, ones(pc.n_frames))
+    return _ring_pair_medians(pc, offset, frame_weights)
+end
+
+function _ring_pair_medians(pc::PairCorrespondences, offset::Real, frame_weights::AbstractVector{<:Real})
     length(frame_weights) == pc.n_frames ||
-        throw(DimensionMismatch("ring_pair_vignetting: $(length(frame_weights)) frame weights for $(pc.n_frames) frames"))
+        throw(DimensionMismatch("RingPairMedians: $(length(frame_weights)) frame weights for $(pc.n_frames) frames"))
     R = length(pc.edges) - 1
     y, w = _pair_rows(pc, offset, Float64.(frame_weights))
     a = view(pc.rings, 1, :); b = view(pc.rings, 2, :)
@@ -214,10 +248,10 @@ function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame
     rows = [(i, j) for i in 1:R for j in (i + 1):R if wt[i, j] > 0]
     x = fill(NaN, R)
     meta(r, u) = PairVignettingMetadata(pc.edges, pc.tmax, Float64(offset), med, wt, r, cnt, u)
-    isempty(rows) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, 0, NaN, 0, meta(NaN, collect(2:R)))
+    isempty(rows) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, VgtkCore.SolveStats(), NaN, 0, meta(NaN, collect(2:R)))
     conn = _connected_to_first(R, rows)
     free = [q for q in 2:R if conn[q]]; col = Dict(q => c for (c, q) in enumerate(free))
-    isempty(free) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, 0, NaN, 0, meta(NaN, collect(2:R)))
+    isempty(free) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, VgtkCore.SolveStats(), NaN, 0, meta(NaN, collect(2:R)))
     rows = [(i, j) for (i, j) in rows if conn[i] && conn[j]]
     M = zeros(length(rows), length(free)); m = zeros(length(rows)); s = zeros(length(rows))
     for (r, (i, j)) in enumerate(rows)
@@ -233,7 +267,7 @@ function ring_pair_vignetting(pc::PairCorrespondences; offset::Real = 0.0, frame
     e = abs.(y[ok] .- (x[a[ok]] .- x[b[ok]])); we = w[ok]
     q = sortperm(e)
     mad = isempty(e) ? NaN : _sorted_weighted_median(e[q], we[q])
-    return VgtkCore.FitResult(x, VgtkCore.ReturnCode.Success, VgtkCore.ClosedForm, 0, rms, count(ok), meta(mad, [q for q in 2:R if !conn[q]]))
+    return VgtkCore.FitResult(x, VgtkCore.ReturnCode.Success, VgtkCore.ClosedForm, VgtkCore.SolveStats(), rms, count(ok), meta(mad, [q for q in 2:R if !conn[q]]))
 end
 
 # The rings the ring-pair graph connects to the first (the gauge's ring): a breadth-first search over the rows.
@@ -257,7 +291,7 @@ end
 
 The dependence of the pair equation on the scene's brightness at the level `c`: the pooled within-ring-pair least-squares slope of
 the residual `e = ln(I_k − c) − ln(I_l − c) − (v(θ_k) − v(θ_l))` on the brightness `ln(I_k − c) − v(θ_k) + ln(I_l − c) − v(θ_l)`
-(`v` the [`ring_pair_vignetting`](@ref) solution at `c`, linear in the field angle between the ring centres and held beyond: the
+(`v` the [`RingPairMedians`](@ref) solution at `c`, linear in the field angle between the ring centres and held beyond: the
 vignetting's variation inside a ring taken out of both, so neither carries it), each ring pair centred on its own median of `e`
 and mean of the brightness, the correspondences past 5 robust deviations of their pair's median left out. Zero at the true
 level (the log ratio then is the vignetting's, whatever `L`); positive below it (a residual level lifts the dark directions'
@@ -265,7 +299,7 @@ ratio toward 0) and negative above it.
 """
 function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
     fw = Float64.(frame_weights)
-    x = VgtkCore.estimate(ring_pair_vignetting(pc; offset = c, frame_weights = fw))
+    x = _ring_pair_medians(pc, c, fw).u
     mids = (pc.edges[1:(end - 1)] .+ pc.edges[2:end]) ./ 2
     ok = isfinite.(x); xm = mids[ok]; xv = x[ok]
     length(xv) >= 2 || return NaN
@@ -292,23 +326,45 @@ function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::A
 end
 
 """
-    fit_additive_level(pc::PairCorrespondences; bounds, tolerance, frame_weights = ones(pc.n_frames), max_iter = 100) -> FitResult
+    LevelBisection(; bounds, tolerance, max_iter = 100)
+
+A [`FitKind`](@extref VisualGeometryToolkitCore.FitKind) (iterative: a bisection to a tolerance, within a budget):
+
+    solve(EstimationProblem(AdditiveLevel, pc::PairCorrespondences[, (; frame_weights = ones(pc.n_frames))]),
+          LevelBisection(; bounds, tolerance, max_iter)) -> FitResult{Float64}
 
 The additive level `c` of the sweep's frames (`I = L·V + c`, the plane `pc` read): the root in `bounds = (lo, hi)` (the frames'
 units; a correspondence with a value at or below a level is no row at it) of [`additive_level_slope`](@ref) — the level at which the pair equation's log ratio no longer depends on the scene's
 brightness — by bisection to a bracket of `tolerance`. The estimate is `c`; the termination record `(Success, ToleranceMet)` when
-the bracket closed within `max_iter` iterations (`(MaxIters, IterationCap)` otherwise; `(Failure, NoRule)` when the slope does not
+the bracket closed within `max_iter` iterations (`stats.nsteps`; `(MaxIters, IterationCap)` otherwise; `(Failure, NoRule)` when the slope does not
 change sign over `bounds`: no root there, the estimate the end of the smaller slope); `rms` the robust residual scale of
-[`ring_pair_vignetting`](@ref) at `c`, `n` its correspondences, the metadata `(; vignetting, slope)`: that solution at `c` and the
-slope there.
+[`RingPairMedians`](@ref) at `c`, `n` its correspondences, the metadata `(; vignetting, slope)`: that solution at `c` and the
+slope there. The context's one key, `frame_weights`, is optional (Core's `read_context`). `bounds` with `lo ≥ hi` or a
+non-positive `tolerance` is an `ArgumentError` at construction; no correspondence, or none with both values above `hi`, at
+the solve.
 """
-function fit_additive_level(pc::PairCorrespondences; bounds::Tuple{Real, Real}, tolerance::Real,
-                            frame_weights::AbstractVector{<:Real} = ones(pc.n_frames), max_iter::Integer = 100)
-    lo, hi = Float64.(bounds)
-    lo < hi && tolerance > 0 || throw(ArgumentError("fit_additive_level: bounds must be (lo, hi) with lo < hi and tolerance > 0, got $bounds, $tolerance"))
-    length(pc) > 0 || throw(ArgumentError("fit_additive_level: no correspondences"))
+struct LevelBisection <: VgtkCore.AbstractEstimationAlgorithm
+    bounds::Tuple{Float64, Float64}
+    tolerance::Float64
+    max_iter::Int
+    function LevelBisection(bounds::Tuple{Float64, Float64}, tolerance::Float64, max_iter::Int)
+        bounds[1] < bounds[2] && tolerance > 0 ||
+            throw(ArgumentError("LevelBisection: bounds must be (lo, hi) with lo < hi and tolerance > 0, got $bounds, $tolerance"))
+        return new(bounds, tolerance, max_iter)
+    end
+end
+LevelBisection(; bounds::Tuple{Real, Real}, tolerance::Real, max_iter::Integer = 100) =
+    LevelBisection(Float64.(bounds), Float64(tolerance), Int(max_iter))
+VgtkCore.estimator_kind(::LevelBisection) = VgtkCore.FitKind()
+
+function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCorrespondences}, alg::LevelBisection)
+    pc = prob.f
+    frame_weights = something(VgtkCore.read_context(prob.p, (), (; frame_weights = nothing), "LevelBisection").frame_weights,
+                              ones(pc.n_frames))
+    lo, hi = alg.bounds; tolerance = alg.tolerance; max_iter = alg.max_iter
+    length(pc) > 0 || throw(ArgumentError("LevelBisection: no correspondences"))
     any((view(pc.values, 1, :) .> hi) .& (view(pc.values, 2, :) .> hi)) ||
-        throw(ArgumentError("fit_additive_level: no correspondence has both values above the upper bound $hi"))
+        throw(ArgumentError("LevelBisection: no correspondence has both values above the upper bound $hi"))
     f(c) = additive_level_slope(pc, c; frame_weights)
     a, b = lo, hi; fa, fb = f(a), f(b)
     it = 0
@@ -328,6 +384,6 @@ function fit_additive_level(pc::PairCorrespondences; bounds::Tuple{Real, Real}, 
         c = (a + b) / 2
         code, rule = b - a > tolerance ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
     end
-    r = ring_pair_vignetting(pc; offset = c, frame_weights)
-    return VgtkCore.FitResult(c, code, rule, it, VgtkCore.metadata(r).residual_mad, r.n, (; vignetting = r, slope = f(c)))
+    r = _ring_pair_medians(pc, c, frame_weights)
+    return VgtkCore.FitResult(c, code, rule, VgtkCore.SolveStats(; nsteps = it), r.metadata.residual_mad, r.n, (; vignetting = r, slope = f(c)))
 end

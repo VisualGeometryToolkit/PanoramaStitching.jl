@@ -1,5 +1,5 @@
 # =============================================================================
-# fit_vignetting — the vignetting of a rotating camera from its own frames, interpolation free
+# VignettingSelfCalibration — the vignetting of a rotating camera from its own frames, interpolation free
 # =============================================================================
 #
 # The model of every pixel p of every frame k inside the fit domain:
@@ -41,7 +41,7 @@
 # the MODEL's, evaluated at the previous solve (the first solve is the value noise's alone); it
 # needs the frames' variances (an uncertain image). Each solve is the exact linear one.
 #
-# Why `fit_vignetting` (naming.md): correspondences in, no guess, no hypotheses → not refine or
+# Why a fit (naming.md, FitKind): correspondences in, no guess, no hypotheses → not refine or
 # find; reweighted and repeated (the position noise's solves), the CG's tolerance and budget → rule 4.
 # =============================================================================
 
@@ -77,7 +77,7 @@ end
 """
     ConjugateGradient(; tolerance, max_iter)
 
-[`fit_vignetting`](@ref)'s solve by Jacobi-preconditioned conjugate gradients
+[`VignettingSelfCalibration`](@ref)'s solve by Jacobi-preconditioned conjugate gradients
 on the frames' backend (VisualGeometryToolkitCore's `normal_cg` on the applied
 normal equations), to the relative residual `tolerance` (`‖g − N x‖ ≤
 tolerance·‖g‖`, `g` the right-hand side) within `max_iter` iterations
@@ -93,7 +93,7 @@ ConjugateGradient(; tolerance::Real, max_iter::Integer) = ConjugateGradient(Floa
 """
     SparseCholesky()
 
-[`fit_vignetting`](@ref)'s solve by a sparse Cholesky factorization (CHOLMOD)
+[`VignettingSelfCalibration`](@ref)'s solve by a sparse Cholesky factorization (CHOLMOD)
 of the same system, assembled on the host (its termination `Success` with
 `ClosedForm`).
 """
@@ -102,7 +102,7 @@ struct SparseCholesky end
 """
     PositionNoise(; point_covariance, iterations = 1)
 
-[`fit_vignetting`](@ref)'s `observation_noise`: the pixel's sensor position is
+[`VignettingSelfCalibration`](@ref)'s `observation_noise`: the pixel's sensor position is
 uncertain too, beside its value's noise (the frames' own variance: an uncertain
 image, VisualGeometryToolkitCore's `LinearRaw` under a sensor model whose noise
 feeds one). A row is the implicit constraint
@@ -141,7 +141,7 @@ end
 """
     IntensityGains()
 
-[`fit_vignetting`](@ref)'s `gain_correction`: one exposure gain per frame
+[`VignettingSelfCalibration`](@ref)'s `gain_correction`: one exposure gain per frame
 shared by every colour plane (a gain on the intensity),
 `log I_kc = log g_k + log L_c(d) + log V(u)`, `K − 1` unknowns with the gauge
 `g₁ = 1`, fitted on the fitted `plane` and taken for every colour plane.
@@ -151,7 +151,7 @@ struct IntensityGains end
 """
     ChannelGains()
 
-[`fit_vignetting`](@ref)'s `gain_correction`: one exposure gain per frame and
+[`VignettingSelfCalibration`](@ref)'s `gain_correction`: one exposure gain per frame and
 colour plane, `log I_kc = log g_kc + log L_c(d) + log V(u)`, the gauge
 `g_1c = 1` per plane: a frame's exposure and its white balance or colour shift.
 V is one, shared by the planes: fitted (or held) on `plane` with that plane's
@@ -163,7 +163,7 @@ struct ChannelGains end
 """
     GAIN_CORRECTIONS
 
-The TOML tags of [`fit_vignetting`](@ref)'s `gain_correction` (a
+The TOML tags of [`VignettingSelfCalibration`](@ref)'s `gain_correction` (a
 VisualGeometryToolkitCore `TagRegistry`, family suffix `Gains`): `"none"`
 (`nothing`: every frame at one exposure), `"intensity"` ([`IntensityGains`](@ref))
 and `"channel"` ([`ChannelGains`](@ref)); the example's `vignetting.gain_correction`.
@@ -177,7 +177,7 @@ const GAIN_CORRECTIONS = VgtkCore.TagRegistry(:gain_correction, "Gains", "none" 
 """
     OBSERVATION_NOISES
 
-The TOML tags of [`fit_vignetting`](@ref)'s `observation_noise` (a
+The TOML tags of [`VignettingSelfCalibration`](@ref)'s `observation_noise` (a
 VisualGeometryToolkitCore `TagRegistry`, family suffix `Noise`): `"none"`
 (`nothing`: the value's noise alone) and `"position"` ([`PositionNoise`](@ref),
 whose settings the config states beside it); the example's
@@ -188,10 +188,6 @@ const OBSERVATION_NOISES = VgtkCore.TagRegistry(:observation_noise, "Noise", "no
                                                 retired = ("sampson" => "position", "intensity" => "none",
                                                            "intensity_and_position" => "position"),
                                                 paths = [r"^vignetting\.observation_noise$"])
-
-# The noise keyword of PanoramaStitching 0.4–0.6 (`observation_noise` since 0.7), refused naming its successor (spelled in fragments: check_naming
-# retires its word from every identifier).
-const _RETIRED_NOISE_KEYWORD = Symbol("measure" * "ment_noise")
 
 # A frame's values and, for an uncertain image (Core's LinearRaw under a sensor model whose noise feeds a variance), each value's
 # variance var(I); a plain image has none (`nothing`).
@@ -210,7 +206,7 @@ tensor B-spline of `n × n` controls laid over the closed square `area` of it,
 `n = ⌈2·half_extent / spacing⌉ + 4`, so the controls are `spacing` (radians)
 apart: Core's `spline_window` / `spline_value` lattice, the controls
 `[row, column]` along the chart's (second, first) coordinate.
-[`fit_vignetting`](@ref) centres it so that its singular point is as far from
+[`VignettingSelfCalibration`](@ref) centres it so that its singular point is as far from
 the frames' coverage as the sphere allows (for a cap-like coverage, close to
 the mean optical axis; for a full 360° sweep, the pole the frames do not see).
 """
@@ -234,7 +230,7 @@ end
 """
     VignettingMetadata
 
-The metadata of [`fit_vignetting`](@ref)'s `FitResult`: `chart` (the scene's
+The metadata of [`VignettingSelfCalibration`](@ref)'s `FitResult`: `chart` (the scene's
 [`AzimuthalChart`](@ref)), `scene` (log L's `n × n` controls, host, the
 chart's layout, so that `VisualGeometryToolkitCore.spline_value(scene, chart.area,
 chart.chart(d))` is log L at the direction `d`; `NaN` where no observation
@@ -501,7 +497,7 @@ end
 # keeps it where V dims it below white, so the observations that remain see it only at the rim and V comes out too flat there
 # (on RC's panorama sweeps 5–15 % at the last ring). Each frame's mask dilated by `margin` camera pixels (`_dilated_saturation`)
 # and the any-frame test over the frames' domains (`_SaturatedInAnyFrame`: `frame_region` less `rim_margin_px`, within
-# `fov_deg`), its rotations as SMatrix values. `fit_vignetting`'s rows (`_saturated_rows`) and the sampled directions
+# `fov_deg`), its rotations as SMatrix values. `VignettingSelfCalibration`'s rows (`_saturated_rows`) and the sampled directions
 # (`_symmetric_samples`) read this one value.
 function _sweep_saturation(saturated, camera::VgtkCore.BoundedCamera, frame_map, rim_margin_px, fov_deg, rotations, margin::Float64, be)
     Hf, Wf = size(saturated[1])
@@ -513,7 +509,7 @@ end
 # Each frame's own dilated mask of the sweep's test, one Hf × Wf array per frame (copies: the test reads every frame's).
 _own_masks(any_frame) = [any_frame.masks[:, :, k] for k in axes(any_frame.masks, 3)]
 
-# `fit_vignetting`'s rows under the sweep's test `any_frame`: one Hf × Wf mask per frame, `true` at every domain pixel `lin`
+# `VignettingSelfCalibration`'s rows under the sweep's test `any_frame`: one Hf × Wf mask per frame, `true` at every domain pixel `lin`
 # (its ray `rays`) whose direction is saturated somewhere, its own dilated mask elsewhere, on the frames' backend.
 function _saturated_rows(any_frame, lin, rays, be)
     return map(enumerate(_own_masks(any_frame))) do (k, E)
@@ -708,10 +704,15 @@ end
 # ----------------------------------------------------------------------------- the fit
 
 """
-    fit_vignetting(vignetting, camera::BoundedCamera, frames, rotations; free_directions, gain_correction, saturated, frame_map,
-                   rim_margin_px, saturation_margin_px, fov_deg, plane, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg, penalty_order, penalty_weight,
-                   vignetting_penalty_weight, solver, observation_noise)
-        -> FitResult{<:VisualRadiometryToolkitCore.AbstractVignetting, VignettingMetadata}
+    VignettingSelfCalibration(; gain_correction, plane, rim_margin_px, saturation_margin_px, fov_deg, chart_spacing_deg,
+                              penalty_order, penalty_weight, vignetting_penalty_weight, solver, observation_noise)
+
+A [`FitKind`](@extref VisualGeometryToolkitCore.FitKind) (iterative: the position noise's reweighted solves, the CG's
+tolerance and budget):
+
+    solve(EstimationProblem(AbstractVignetting, frames, (; camera, rotations, saturated, frame_map[, plane_maps],
+                                                         vignetting, free_directions)),
+          VignettingSelfCalibration(; …)) -> FitResult{<:VisualRadiometryToolkitCore.AbstractVignetting, VignettingMetadata}
 
 The vignetting V and the exposure gains of a camera that only rotated, from
 its frames alone (no flat field): every pixel of every frame is the scene's
@@ -725,7 +726,10 @@ pixel grid the frames share), and the scene L is a B-spline over an
 [`AzimuthalChart`](@ref) of the covered sphere whose values are fitted with
 V and the gains.
 
-- `vignetting`: V's model and start, a VisualGeometryToolkitCore
+The context `p` (Core's `read_context`: a missing or unknown key is an `ArgumentError`):
+
+- `camera`, `rotations`: the VisualGeometryToolkitCore `BoundedCamera` and the frames' rotations (`d = R_k·f_k`).
+- `vignetting`: V's model and start, a VisualRadiometryToolkitCore
   `LogVignetting` (V = exp(s), `s` a `RadialVignetting` or
   `TensorProductVignetting` B-spline of log V on the sensor, camera pixels; its control points the
   start of log V, e.g. zeros); held fixed, any vignetting the render takes (a
@@ -752,7 +756,7 @@ V and the gains.
   then puts the difference into V (on the rooftop sweep the gains reached
   +18 % and V at the domain's edge came out 7 % too dark without them); per
   channel when the white balance or the light's colour can change too.
-  Required, no default (TOML: [`GAIN_CORRECTIONS`](@ref)).
+  An algorithm setting, required, no default (TOML: [`GAIN_CORRECTIONS`](@ref)).
 - The fit domain: every pixel of the `H × W × 3` `frames` whose sensor point lies inside the camera's
   `imaged_region` (its sensor ∩ its lens coverage ∩ its model's valid domain)
   less `rim_margin_px` at its lens coverage's edge, and 2 px inside the frame, with its ray within
@@ -786,6 +790,11 @@ V and the gains.
   row by `I²/var(I)`; a plain image carries no variance and takes the read-noise
   FALLBACK, a constant σ in I, weight `I²` (the weights of every fit before 0.7).
   The metadata's `value_variance` says which.
+The algorithm's settings are every other keyword above and below (each required): `gain_correction`, `plane`,
+`rim_margin_px`, `saturation_margin_px`, `fov_deg`, `chart_spacing_deg`, `penalty_order`, `penalty_weight`,
+`vignetting_penalty_weight`, `solver` and `observation_noise`; the context holds `camera`, `rotations`, `saturated`,
+`frame_map`, `plane_maps` (optional), `vignetting` and `free_directions`.
+
 - `observation_noise`: the rest of a row's observation noise (required): `nothing`
   (the value's alone, one solve) or [`PositionNoise`](@ref) (the pixel's sensor
   position too: after that solve, `iterations` more, each with its weights from
@@ -804,10 +813,9 @@ Returns a `FitResult` whose estimate is the fitted VisualRadiometryToolkitCore v
 (isbits: the `vignetting` keyword of [`render_panorama`](@ref),
 [`sample_frames`](@ref) and [`score_seams`](@ref), on the host or a device;
 the given model when V is held fixed), its termination record
-(VisualGeometryToolkitCore's `retcode`, a `ReturnCode.T`, and `stop_rule`; `converged(result)`
-its success) the worst over every linear solve of every plane, the other planes' of
+(`r.retcode`, a `ReturnCode.T`, and `r.stop_rule`; `successful_retcode(r)` its success) the worst over every linear solve of every plane, the other planes' of
 [`ChannelGains`](@ref) included (Core's `worst_retcode`: a CG that ended at its
-budget in any solve is `MaxIters`), `iterations` the CG's summed over every solve of every plane (0 for
+budget in any solve is `MaxIters`), `stats.nsteps` the CG's iterations summed over every solve of every plane (0 for
 Cholesky),
 `rms` the rms of the log residual over `n` rows weighted by the last solve's
 weights, and
@@ -815,36 +823,67 @@ weights, and
 `gains` keyword of [`score_seams`](@ref) and [`render_panorama`](@ref); the
 residuals and the solves are the fitted `plane`'s).
 """
-function fit_vignetting(vignetting, camera::VgtkCore.BoundedCamera, frames::AbstractVector, rotations::AbstractVector;
-                        gain_correction::Union{Nothing, IntensityGains, ChannelGains}, plane::Integer, kw...)
-    haskey(kw, _RETIRED_NOISE_KEYWORD) &&
-        throw(ArgumentError("fit_vignetting: the keyword `$(_RETIRED_NOISE_KEYWORD)` was renamed `observation_noise` (PanoramaStitching " *
-                            "0.7: the noise of an observation, the terminology's word; VignettingMetadata's field too)"))
+struct VignettingSelfCalibration{G <: Union{Nothing, IntensityGains, ChannelGains}, S <: Union{ConjugateGradient, SparseCholesky},
+                                 N <: Union{Nothing, PositionNoise}} <: VgtkCore.AbstractEstimationAlgorithm
+    gain_correction::G
+    plane::Int
+    rim_margin_px::Float64
+    saturation_margin_px::Float64
+    fov_deg::Float64
+    chart_spacing_deg::Float64
+    penalty_order::Int
+    penalty_weight::Float64
+    vignetting_penalty_weight::Float64
+    solver::S
+    observation_noise::N
+end
+VignettingSelfCalibration(; gain_correction::Union{Nothing, IntensityGains, ChannelGains}, plane::Integer, rim_margin_px::Real,
+                          saturation_margin_px::Real, fov_deg::Real, chart_spacing_deg::Real, penalty_order::Integer,
+                          penalty_weight::Real, vignetting_penalty_weight::Real, solver::Union{ConjugateGradient, SparseCholesky},
+                          observation_noise::Union{Nothing, PositionNoise}) =
+    VignettingSelfCalibration(gain_correction, Int(plane), Float64(rim_margin_px), Float64(saturation_margin_px), Float64(fov_deg),
+                              Float64(chart_spacing_deg), Int(penalty_order), Float64(penalty_weight),
+                              Float64(vignetting_penalty_weight), solver, observation_noise)
+VgtkCore.estimator_kind(::VignettingSelfCalibration) = VgtkCore.FitKind()
+
+# The context the fit reads (`plane_maps` optional: every plane's map the frame's by default).
+const _VIGNETTING_CONTEXT = (:camera, :rotations, :saturated, :frame_map, :vignetting, :free_directions)
+
+function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{VrtkCore.AbstractVignetting, <:AbstractVector, <:NamedTuple},
+                          alg::VignettingSelfCalibration)
+    ctx = VgtkCore.read_context(prob.p, _VIGNETTING_CONTEXT, (; plane_maps = nothing), "VignettingSelfCalibration")
+    frames = prob.f
     split = map(_frame_values, frames)
     variances = last.(split)
     (all(isnothing, variances) || !any(isnothing, variances)) ||
-        throw(ArgumentError("fit_vignetting: the frames' images are all plain or all uncertain (a value's variance each), not a mix"))
+        throw(ArgumentError("VignettingSelfCalibration: the frames' images are all plain or all uncertain (a value's variance each), not a mix"))
     frames = first.(split); variances = variances[1] === nothing ? nothing : variances
-    kw = (; kw..., variances)
-    r = _fit_plane(vignetting, camera, frames, rotations; gains = gain_correction !== nothing, plane, kw...)::VgtkCore.FitResult
-    if gain_correction isa ChannelGains
+    camera = ctx.camera; rotations = ctx.rotations; plane = alg.plane
+    kw = (; free_directions = ctx.free_directions, saturated = ctx.saturated, frame_map = ctx.frame_map,
+          plane_maps = something(ctx.plane_maps, ntuple(_ -> ctx.frame_map, 3)), rim_margin_px = alg.rim_margin_px,
+          saturation_margin_px = alg.saturation_margin_px, fov_deg = alg.fov_deg, chart_spacing_deg = alg.chart_spacing_deg,
+          penalty_order = alg.penalty_order, penalty_weight = alg.penalty_weight,
+          vignetting_penalty_weight = alg.vignetting_penalty_weight, solver = alg.solver, observation_noise = alg.observation_noise,
+          variances)
+    r = _fit_plane(ctx.vignetting, camera, frames, rotations; gains = alg.gain_correction !== nothing, plane, kw...)::VgtkCore.FitResult
+    if alg.gain_correction isa ChannelGains
         # each other plane's gains under the fitted V (held fixed: its log V(u) the fixed numbers), its own scene, into its
         # column of the K × C gains (the fit's own plane's in every column until then)
-        held = merge(NamedTuple(kw), (; free_directions = zeros(0, 0)))
-        term = (VgtkCore.retcode(r), VgtkCore.stop_rule(r)); iters = r.iterations
+        held = merge(kw, (; free_directions = zeros(0, 0)))
+        term = (r.retcode, r.stop_rule); iters = r.stats.nsteps
         for c in axes(r.metadata.gains, 2)
             c == plane && continue
-            g, tc, it = _fit_plane(VgtkCore.estimate(r), camera, frames, rotations; gains = true, plane = c, gains_only = true,
+            g, tc, it = _fit_plane(r.u, camera, frames, rotations; gains = true, plane = c, gains_only = true,
                                    held...)::Tuple{Vector{Float64}, Tuple{VgtkCore.ReturnCode.T, VgtkCore.StopRule}, Int}
             r.metadata.gains[:, c] .= g; iters += it
             term = VgtkCore.worst_retcode(term, tc)                        # an unconverged plane's gains are not hidden
         end
-        return VgtkCore.FitResult(VgtkCore.estimate(r), term..., iters, r.rms, r.n, r.metadata)
+        return VgtkCore.FitResult(r.u, term..., VgtkCore.SolveStats(; nsteps = iters), r.rms, r.n, r.metadata)
     end
     return r
 end
 
-# One plane's fit (`fit_vignetting`'s system), its gains in every column of the K × C metadata gains (`gains`: K − 1 free,
+# One plane's fit (`VignettingSelfCalibration`'s system), its gains in every column of the K × C metadata gains (`gains`: K − 1 free,
 # g₁ = 1; else all 1). `gains_only`: the K gains, the worst termination of its solves and the CG iterations alone, without the residuals'
 # statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
@@ -854,28 +893,28 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
                     solver::Union{ConjugateGradient, SparseCholesky},
                     observation_noise::Union{Nothing, PositionNoise}, variances::Union{Nothing, AbstractVector},
                     gains_only::Bool = false)
-    penalty_order in (2, 3) || throw(ArgumentError("fit_vignetting: penalty_order must be 2 or 3, got $penalty_order"))
+    penalty_order in (2, 3) || throw(ArgumentError("VignettingSelfCalibration: penalty_order must be 2 or 3, got $penalty_order"))
     K = length(frames)
-    length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("fit_vignetting: frames, rotations and saturated disagree"))
-    K >= 2 || throw(ArgumentError("fit_vignetting: at least two frames, got $K"))
-    margin = _checked_saturation_margin("fit_vignetting", saturation_margin_px)
+    length(rotations) == K && length(saturated) == K || throw(DimensionMismatch("VignettingSelfCalibration: frames, rotations and saturated disagree"))
+    K >= 2 || throw(ArgumentError("VignettingSelfCalibration: at least two frames, got $K"))
+    margin = _checked_saturation_margin("VignettingSelfCalibration", saturation_margin_px)
     observation_noise isa PositionNoise && variances === nothing &&
-        throw(ArgumentError("fit_vignetting: PositionNoise needs the frames' value variances (an uncertain image: Core's LinearRaw " *
+        throw(ArgumentError("VignettingSelfCalibration: PositionNoise needs the frames' value variances (an uncertain image: Core's LinearRaw " *
                             "under a sensor model whose noise feeds them); a plain image has none"))
     Zp = Matrix{Float64}(free_directions); fits_v = size(Zp, 2) > 0
     fits_v && !(vignetting isa VrtkCore.LogVignetting) &&
-        throw(ArgumentError("fit_vignetting: free directions move a VisualRadiometryToolkitCore LogVignetting's control points (the " *
+        throw(ArgumentError("VignettingSelfCalibration: free directions move a VisualRadiometryToolkitCore LogVignetting's control points (the " *
                             "fit is linear in log V); a $(typeof(vignetting).name.name) can only be held fixed (free_directions with no column)"))
     # a V held fixed is read as log V at the domain's pixels only: its block of the system is one zero column
     nV = fits_v ? VrtkCore.n_control_points(vignetting) : 1
     fits_v && size(Zp, 1) != nV &&
-        throw(DimensionMismatch("fit_vignetting: free_directions has $(size(Zp, 1)) rows for $nV control points"))
+        throw(DimensionMismatch("VignettingSelfCalibration: free_directions has $(size(Zp, 1)) rows for $nV control points"))
     Hf, Wf, C = size(frames[1])
-    1 <= plane <= C || throw(ArgumentError("fit_vignetting: plane $plane of a $C-plane frame"))
+    1 <= plane <= C || throw(ArgumentError("VignettingSelfCalibration: plane $plane of a $C-plane frame"))
     be = KA.get_backend(frames[1])
     t_all = time_ns(); seconds = Dict{Symbol, Float64}(s => 0.0 for s in _STAGES)   # the stages' wall times
-    _checked_plane_maps("fit_vignetting", plane_maps)
-    1 <= plane <= length(plane_maps) || throw(ArgumentError("fit_vignetting: plane $plane of $(length(plane_maps)) plane maps"))
+    _checked_plane_maps("VignettingSelfCalibration", plane_maps)
+    1 <= plane <= length(plane_maps) || throw(ArgumentError("VignettingSelfCalibration: plane $plane of $(length(plane_maps)) plane maps"))
     Rs = [SMatrix{3, 3, Float64, 9}(R) for R in rotations]
 
     # the domain: the pixels' sensor points and rays, once
@@ -889,7 +928,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     VgtkCore.pointwise!(sees, inside, Uall, Fall)
     lin = findall(inside)                                                 # the domain: linear indices into one H × W plane
     P = length(lin)
-    P > 0 || throw(ArgumentError("fit_vignetting: the fit domain is empty"))
+    P > 0 || throw(ArgumentError("VignettingSelfCalibration: the fit domain is empty"))
     upix = Uall[lin]; rays = Fall[lin]
     Uall = Fall = U2 = inside = nothing
     position_noise = observation_noise isa PositionNoise
@@ -918,7 +957,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
 
     poff = (plane - 1) * Hf * Wf
     nrows = sum(k -> count(.!(saturated[k][lin]) .& (frames[k][lin .+ poff] .> 0)), 1:K)
-    nrows > 0 || throw(ArgumentError("fit_vignetting: no unsaturated positive value in the domain"))
+    nrows > 0 || throw(ArgumentError("VignettingSelfCalibration: no unsaturated positive value in the domain"))
     wbuf = VgtkCore.device_zeros(Float64, be, P)
     # the weight scale of one solve's weights (`weight_of(k)` frame k's): their mean over the rows is 1
     function scale_of(weight_of)
@@ -947,7 +986,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         fill!(VI, SVector{1, Int}(1)); fill!(VW, SVector{1, Float64}(0.0))
     end
     VgtkCore.pointwise!(_LogV(v), LV, upix, rays; exec)
-    fits_v || all(isfinite, Array(LV)) || throw(ArgumentError("fit_vignetting: the given V is not positive at every domain pixel"))
+    fits_v || all(isfinite, Array(LV)) || throw(ArgumentError("VignettingSelfCalibration: the given V is not positive at every domain pixel"))
     xh = Float64[]; cL = Float64[]; active = falses(nL); rel = NaN; term = _CHOLESKY_TERMINATION
     iters = 0; change = 0.0
     nsolves = position_noise ? 1 + observation_noise.iterations : 1
@@ -1053,7 +1092,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             KA.synchronize(be)
             it > 1 && (change = max(change, maximum(abs, Array(LMs[k]) .- old)))
         end
-        @debug "fit_vignetting: solve $it, $(term[1]) ($(term[2])) so far; the model's log I moved by $change at most"
+        @debug "VignettingSelfCalibration: solve $it, $(term[1]) ($(term[2])) so far; the model's log I moved by $change at most"
         it == nsolves && break
         models = [_LogIntensityModel(v, ch, cLm, Rs[k], lg[k]) for k in 1:K]
         weight_of = k -> _PositionWeight(models[k], upix, rays, rayJ, Σu, lin, variances[k], poff)
@@ -1079,7 +1118,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), StatsBase.mad(Float64.(R_all); normalize = true),
                               (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
                               variances !== nothing, observation_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
-    return VgtkCore.FitResult(v, term..., iters, sqrt(swr / sw), length(R_all), meta)
+    return VgtkCore.FitResult(v, term..., VgtkCore.SolveStats(; nsteps = iters), sqrt(swr / sw), length(R_all), meta)
 end
 
 const _STAGES = (:backproject, :chart, :saturation, :accumulate, :vignetting_block, :penalty, :solve, :residuals, :total)
