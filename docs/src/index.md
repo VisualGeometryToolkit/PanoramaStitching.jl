@@ -29,7 +29,7 @@ PanoramaStitching and the packages it is built on are registered in General. Jul
 the packages the example also loads:
 
 ```julia-repl
-pkg> add PanoramaStitching VisualGeometryToolkitCore VisualRadiometryToolkitCore StaticArrays
+pkg> add PanoramaStitching VisualGeometryToolkitCore VisualGeometryToolkitEstimation VisualRadiometryToolkitCore StaticArrays
 ```
 
 ## A first example
@@ -40,7 +40,9 @@ frames alone and renders their cylindrical panorama.
 ```julia
 using PanoramaStitching
 using VisualGeometryToolkitCore: CameraModel, BoundedCamera, Size2, KannalaBrandt, Circle, Point2, Equirectangular,
-    Cylindrical, CauchyShape, Triggs, LinearRaw, raw_frame_map, backproject, project, bilinear_sample, exp_so3, log_so3, px
+    Cylindrical, CauchyShape, Triggs, LevenbergMarquardt, LmStops, LinearRaw, raw_frame_map, backproject, project, bilinear_sample,
+    exp_so3, log_so3, px
+using VisualGeometryToolkitEstimation: Ransac, RansacConfig
 using StaticArrays: SA
 using LinearAlgebra: norm
 using Random: Xoshiro
@@ -76,10 +78,10 @@ end
 # The rotations from the frames alone, then the cylindrical panorama at 0.25° per pixel.
 reg = register_rotations(frames, camera; frame_map, tone_percentile = 99.5, detector_margin_px = 20.0,
                          asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
-                         min_score = 0.0, pairs = :all, min_inliers = 40, seed = 1,
-                         max_trials = 10_000, min_trials = 100,
-                         bundle_optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.5), bundle_max_iter = 1000,
-                         bundle_ftol = 1e-10, bundle_xtol = 1e-10)
+                         min_score = 0.0, pairs = AllPairs(), min_inliers = 40, seed = 1,
+                         ransac = Ransac(; config = RansacConfig(; max_trials = 10_000, min_trials = 100)),
+                         bundle = TrackCheck(LevenbergMarquardt(; optimization_strategy = Triggs{CauchyShape}(efficiency_constant = 2.5))),
+                         bundle_stops = LmStops(; max_iter = 1000, ftol = 1e-10, xtol = 1e-10))
 errors = [rad2deg(norm(log_so3(reg.rotations[k]' * truth[k]))) for k in 1:4]   # degrees, each below 0.05
 reg.bundle.rms                                                   # the bundle's rms reprojection error: 0.24 px here, below 0.5 px
 cyl = panorama_view(Cylindrical(), (-100.0, 205.0, -45.0, 45.0), 0.25)

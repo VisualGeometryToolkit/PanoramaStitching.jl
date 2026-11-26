@@ -82,7 +82,7 @@ function compare_set(A, order, C, inp, lens, reg, dir, key, arms_path, set_path)
     Vref = nothing
     rows = Dict{String, Any}[]
     for a in order
-        cfg = deepcopy(C.cfg); v = cfg["vignetting"]
+        cfg = deepcopy(C.cfg); v = cfg["vignetting_self_calibration"]
         v["gain_correction"] = a["gain_correction"]; v["observation_noise"] = a["observation_noise"]
         v["observation_noise_iterations"] = A["observation_noise_iterations"]
         Ca = (; cfg, run = dir, C.path)

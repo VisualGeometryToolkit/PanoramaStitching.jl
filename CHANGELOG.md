@@ -43,6 +43,52 @@ worktrees until they are registered).
 - `register_rotations`' and `verify_pairs`' `scoring`, `local_optimization_strategy`, `averaging_optimization_strategy` and
   `bundle_optimization_strategy` default to `ClassDefault()` (was `nothing` or an internal sentinel for "the stack's
   default"); `nothing` is the stack's "none" (no local optimization, the least squares).
+- Settings are algorithm arguments (the stack's conformance audit): `register_rotations` and `verify_pairs` take the
+  algorithms they compose as values, not their fields as flat keywords.
+  - `scoring`, `local_optimization_strategy`, `max_trials`, `min_trials` → `ransac = Ransac(; scoring,
+    local_optimization_strategy, config = RansacConfig(; max_trials, min_trials))` (VisualGeometryToolkitEstimation's; its
+    fields' `ClassDefault()` the rotation class's of record, `nothing` the stack's "none").
+  - `averaging_optimization_strategy`, `cycle_tol`, `orientation_tol` → `averaging = FilteredRotationAveraging(; cycle_tol,
+    orientation_tol, averaging = RotationAveraging(; optimization_strategy))` (default: 2° and 5°, the class's strategy);
+    a tolerance that is not positive is refused where the value is built (Estimation's), before any feature is detected.
+  - `pairs = :all | :lag_overlap` with `max_lag` (and `verify_pairs`' `averaging_optimization_strategy`) → `pairs =
+    AllPairs()` or `pairs = LagOverlap(; max_lag, averaging = RotationAveraging(…))`: the lag stage's averaging is the
+    `LagOverlap`'s own (the images form of `register_rotations` no longer hands its `averaging`'s strategy to it: give both).
+    An unknown selection is a `TypeError`; `max_lag < 1` an `ArgumentError` of `LagOverlap`.
+  - `bundle_optimization_strategy`, `bundle_max_iter`, `bundle_ftol`, `bundle_xtol`, `check_tracks` → `bundle =
+    LevenbergMarquardt(; optimization_strategy)` (no track check) or `bundle = TrackCheck(LevenbergMarquardt(;
+    optimization_strategy); cut_multiple = 3.035, max_outer_iterations = 10)` (the default, `TrackCheck()`), and
+    `bundle_stops = LmStops(; max_iter, ftol, xtol)`.
+  - Each old keyword is an unknown keyword (an `ArgumentError`).
+- `TrackCheck`, the track check as an algorithm (a `RefineKind` on `RefineProblem(RotationBundleProblem(camera, tracks),
+  rotations)`, solved with the bundle's `scale` and `stops`): the bundle, its observations past `cut_multiple` × σ̂ removed
+  and re-solved until none is (at most `max_outer_iterations` solves that removed some), its result's metadata `(; bundle,
+  history, kept)`. Was a loop inside `register_rotations` with the cut and the cap as constants; the same solves, bit for bit.
+- `ConjugateGradient(; tolerance, max_iter)` → VisualGeometryToolkitCore's `NormalCG()` as `VignettingSelfCalibration`'s
+  `solver`, its stops the solve keyword `stops = ToleranceStops(; rtol = tolerance, max_iter)` (required with `NormalCG()`;
+  refused with `SparseCholesky()`, which reads none). The CG is Core's `solve(NormalEquationsProblem(N, g; diagonal, u0),
+  NormalCG(); stops)`, the arithmetic of the `normal_cg` call it replaces.
+- `VignettingMetadata.solver` (a Symbol, `:cg` or `:cholesky`) is gone: the solver is the result's algorithm's,
+  `typeof(r.alg.solver)`.
+- The example's configuration (`examples/panorama_vignetting/`), decision 11: version 2 (`config_version = 2`), its tables
+  named after what they configure — `[registration]` the task verb's own settings, `[rotation_problem.ransac]`
+  (`outlier_halfwidth_px`, `local_optimization_strategy`) and `[ransac]` (`max_trials`, `min_trials`) the pairs' RANSAC,
+  `[lag_overlap]` (`max_lag`), `[rotation_averaging]` (`optimization_strategy`, was `averaging_optimization_strategy`),
+  `[rotation_bundle_problem.levenberg_marquardt]`
+  (`optimization_strategy`, was `bundle_optimization_strategy`) and its `.stops` (`max_iter`, `ftol`, `xtol`, were `bundle_*`),
+  `[vignetting_self_calibration]` (the fit's settings, were `[vignetting]`'s) and its `.stops` (`rtol`, `max_iter`, were
+  `cg_tolerance`, `cg_max_iter`). The algorithms are chosen by tag through TagRegistries (`PAIR_SELECTIONS`: `registration.pairs`
+  `"all"` / `"lag_overlap"`; `BUNDLE_REFINES`: `registration.bundle` `"track_check"` / `"levenberg_marquardt"`, was the Bool
+  `check_tracks`; `LINEAR_SOLVERS`: `vignetting_self_calibration.solver` `"normal_cg"` / `"sparse_cholesky"`, was `"cg"` /
+  `"cholesky"` chosen by string with an `error`). `run.jl`'s converter (`EXAMPLE_CONFIG_VERSIONS`, VisualGeometryToolkitCore's
+  `ConfigVersions`) reads a version-1 config value for value (tested on the two configs of record of 0.11, stored in
+  `test/fixtures/stored_configs/`); the configs of record are version 2. The stage keys hold the new tables, so a cached stage
+  is recomputed once; no number moves. The view-graph filters' `cycle_tol_deg` and `orientation_tol_deg` stay in
+  `[registration]`: their algorithm's tag, `filtered_rotation_averaging`, is a retired function name, which the naming gate
+  accepts as a table name only for an algorithm the package itself defines.
+- `additive_level_slope(pc, c; frame_weights)` → `additive_level_slope(pc, c[, frame_weights])` (per-frame data, positional);
+  it and `LevelBisection` read the ring vignetting through `solve(EstimationProblem(RingVignetting, pc, (; offset,
+  frame_weights)), RingPairMedians())` (`LevelBisection`'s `metadata.vignetting` is that solve's recorded result).
 
 ### Changed
 

@@ -53,7 +53,7 @@ end
 @testitem "VignettingSelfCalibration: a radial and an off-centre 2-D V recovered, host and device, CG and Cholesky" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
     using LinearAlgebra: I
-    using PanoramaStitching: PanoramaStitching, VignettingSelfCalibration, score_seams, panorama_view, ConjugateGradient, SparseCholesky
+    using PanoramaStitching: PanoramaStitching, VignettingSelfCalibration, score_seams, panorama_view, SparseCholesky
     import VisualGeometryToolkitCore as VgtkCore
     import VisualRadiometryToolkitCore as VrtkCore
     using VisualRadiometryToolkitCore: AbstractVignetting, RadialVignetting, TensorProductVignetting, LogVignetting, pole_regular_basis, n_control_points,
@@ -71,7 +71,7 @@ end
     alg = (; rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, observation_noise = nothing,
            plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
            vignetting_penalty_weight = 1.0e-6, gain_correction = nothing)
-    cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
+    cgs = VgtkCore.NormalCG(); cg_stops = VgtkCore.ToleranceStops(; rtol = 1.0e-10, max_iter = 20000)
 
     # a radial V about a centre 30 px off the image's centre, smooth at the centre (the pole-regular subspace)
     c = SVector(430.0, 390.0)
@@ -81,10 +81,14 @@ end
     v0 = logv(RadialVignetting(12, c, 420.0))                # the domain reaches ρ ≈ 413 px from c
     Z = pole_regular_basis(v0)
     @test_throws ArgumentError VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, q.frames, (; ctx..., vignetting = VrtkCore.log_spline(v0), free_directions = Z)),
-                                              VignettingSelfCalibration(; alg..., solver = cgs))   # a V-form spline is only held fixed
+                                              VignettingSelfCalibration(; alg..., solver = cgs); stops = cg_stops)   # a V-form spline is only held fixed
     problem = VgtkCore.EstimationProblem(AbstractVignetting, q.frames, (; ctx..., vignetting = v0, free_directions = Z))
-    cg = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = cgs))
+    cg = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = cgs); stops = cg_stops)
     ch = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = SparseCholesky()))
+    # the CG's stops are the solve's (Core's ToleranceStops), required with it; a Cholesky solve reads none, refused
+    @test_throws "needs the solve keyword `stops" VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = cgs))
+    @test_throws "reads no `stops`" VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = SparseCholesky()); stops = cg_stops)
+    @test cg.alg.solver isa VgtkCore.NormalCG && ch.alg.solver isa SparseCholesky   # the solver is the algorithm's, read by type
     e_cg = error_vs(cg.u, radial, q); e_ch = error_vs(ch.u, radial, q)
     @info "VignettingSelfCalibration radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.stats.nsteps) CG iterations, rms $(cg.rms)"
     @test VgtkCore.successful_retcode(cg) && cg.stop_rule == VgtkCore.ToleranceMet && VgtkCore.retcode_symbol(cg) === :converged
@@ -96,14 +100,14 @@ end
     @test un.metadata.value_variance && error_vs(un.u, radial, q)[1] < 2.0e-3
     @test_throws "not a mix" VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, [relative_frames(q.frames[1:1], 0.01); q.frames[2:end]],
                                                                      (; ctx..., vignetting = v0, free_directions = Z)),
-                                            VignettingSelfCalibration(; alg..., solver = cgs))
+                                            VignettingSelfCalibration(; alg..., solver = cgs); stops = cg_stops)
     # the noise keyword of 0.4–0.6 is no setting of the algorithm (spelled in fragments: check_naming retires its word)
     @test_throws MethodError VignettingSelfCalibration(; alg..., solver = cgs, Symbol("measure" * "ment_noise") => nothing)
     # a context key the fit does not read, or one it needs left out, is refused naming it
     @test_throws r"VignettingSelfCalibration: the context `p` holds the unknown key\(s\) plane" VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, q.frames,
-        (; ctx..., vignetting = v0, free_directions = Z, plane = 2)), VignettingSelfCalibration(; alg..., solver = cgs))
+        (; ctx..., vignetting = v0, free_directions = Z, plane = 2)), VignettingSelfCalibration(; alg..., solver = cgs); stops = cg_stops)
     @test_throws r"VignettingSelfCalibration: the context `p` lacks free_directions" VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, q.frames,
-        (; ctx..., vignetting = v0)), VignettingSelfCalibration(; alg..., solver = cgs))
+        (; ctx..., vignetting = v0)), VignettingSelfCalibration(; alg..., solver = cgs); stops = cg_stops)
     @test e_cg[1] < 2.0e-3 && e_ch[1] < 2.0e-3
     @test maximum(abs.(control_points(cg.u) .- control_points(ch.u))) < 1.0e-5
     @test cg.rms < 0.02
@@ -135,7 +139,7 @@ end
 
 @testitem "VignettingSelfCalibration, score_seams: the device agrees with the host" setup = [VignettingSequence, BayerMaps] begin
     using Test, StaticArrays, CUDA
-    using PanoramaStitching: VignettingSelfCalibration, score_seams, render_panorama, panorama_view, ConjugateGradient
+    using PanoramaStitching: VignettingSelfCalibration, score_seams, render_panorama, panorama_view
     import VisualGeometryToolkitCore as VgtkCore
     using VisualRadiometryToolkitCore: AbstractVignetting, RadialVignetting, LogVignetting, pole_regular_basis, control_points, with_control_points
     using PanoramaStitching: PositionNoise, ChannelGains
@@ -159,11 +163,12 @@ end
         alg = (; rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, observation_noise = nothing,
                plane = 2, chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01,
                vignetting_penalty_weight = 1.0e-6, gain_correction = ChannelGains(),
-               solver = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000))
+               solver = VgtkCore.NormalCG())
+        cg_stops = VgtkCore.ToleranceStops(; rtol = 1.0e-10, max_iter = 20000)
         fitted = (; camera = q.camera, rotations = q.R, frame_map = FRAME_MAP, vignetting = v0, free_directions = pole_regular_basis(v0))
-        h = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, q.frames, (; fitted..., saturated = q.saturated)), VignettingSelfCalibration(; alg...))
+        h = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, q.frames, (; fitted..., saturated = q.saturated)), VignettingSelfCalibration(; alg...); stops = cg_stops)
         df, ds = CuArray.(q.frames), CuArray.(q.saturated)
-        d = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, df, (; fitted..., saturated = ds)), VignettingSelfCalibration(; alg...))
+        d = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, df, (; fitted..., saturated = ds)), VignettingSelfCalibration(; alg...); stops = cg_stops)
         @test VgtkCore.successful_retcode(d)
         # the atomic sums run in another order on each backend (and from run to run): V agrees to the solve's precision
         @test maximum(abs.(control_points(d.u) .- control_points(h.u))) < 1.0e-6
@@ -172,8 +177,8 @@ end
         # in the kernels)
         sw = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.0), iterations = 2)
         uf = relative_frames(q.frames, 0.01)                                 # the position noise reads the values' variances
-        hs = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, uf, (; fitted..., saturated = q.saturated)), VignettingSelfCalibration(; alg..., observation_noise = sw))
-        dsf = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, CuArray.(uf), (; fitted..., saturated = ds)), VignettingSelfCalibration(; alg..., observation_noise = sw))
+        hs = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, uf, (; fitted..., saturated = q.saturated)), VignettingSelfCalibration(; alg..., observation_noise = sw); stops = cg_stops)
+        dsf = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, CuArray.(uf), (; fitted..., saturated = ds)), VignettingSelfCalibration(; alg..., observation_noise = sw); stops = cg_stops)
         @test maximum(abs.(control_points(dsf.u) .- control_points(hs.u))) < 1.0e-6
         @test maximum(abs.(dsf.metadata.gains .- hs.metadata.gains)) < 1.0e-8 && abs(dsf.rms - hs.rms) < 1.0e-6
         view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.5)
@@ -187,9 +192,9 @@ end
         # render and the seams (the functors are moved by OnBackend)
         tv = TableV(collect(range(1.0, 0.6; length = 64)), c, 420.0)
         hf = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, q.frames, (; fitted..., saturated = q.saturated, vignetting = tv, free_directions = zeros(0, 0))),
-                            VignettingSelfCalibration(; alg...))
+                            VignettingSelfCalibration(; alg...); stops = cg_stops)
         dfit = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, df, (; fitted..., saturated = ds, vignetting = tv, free_directions = zeros(0, 0))),
-                              VignettingSelfCalibration(; alg...))
+                              VignettingSelfCalibration(; alg...); stops = cg_stops)
         @test maximum(abs.(dfit.metadata.gains .- hf.metadata.gains)) < 1.0e-8
         rk = (; vignetting = tv, frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0)
         a = render_panorama(q.camera, q.frames, q.R, view; rk...); b = render_panorama(q.camera, df, q.R, view; rk...)
@@ -205,7 +210,7 @@ end
 # alone. score_seams and render_panorama divide the gains out.
 @testitem "VignettingSelfCalibration: the frames' exposure gains recovered (gauge g₁ = 1), V free or held fixed; score_seams and render_panorama divide them out" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
-    using PanoramaStitching: PanoramaStitching, VignettingSelfCalibration, score_seams, render_panorama, panorama_view, ConjugateGradient,
+    using PanoramaStitching: PanoramaStitching, VignettingSelfCalibration, score_seams, render_panorama, panorama_view,
         SparseCholesky, PositionNoise, IntensityGains
     import VisualGeometryToolkitCore as VgtkCore
     using VisualRadiometryToolkitCore: AbstractVignetting, RadialVignetting, LogVignetting, pole_regular_basis, n_control_points, with_control_points
@@ -217,7 +222,7 @@ end
     ctx = (; camera = q.camera, rotations = q.R, saturated = q.saturated, frame_map = FRAME_MAP)
     alg = (; rim_margin_px = 8.0, saturation_margin_px = 2.0, fov_deg = 120.0, plane = 2, observation_noise = nothing,
            chart_spacing_deg = 1.0, penalty_order = 3, penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6)
-    cgs = ConjugateGradient(; tolerance = 1.0e-10, max_iter = 20000)
+    cgs = VgtkCore.NormalCG(); cg_stops = VgtkCore.ToleranceStops(; rtol = 1.0e-10, max_iter = 20000)
     function v_error(v)
         us = filter(u -> hypot(u[1] - 400, u[2] - 400) < 382, vec([FRAME_MAP(SVector(j - 0.5, i - 0.5)) for j in 1:400, i in 1:400]))
         a = [log(v(u)) for u in us]; b = [radial(u) for u in us]
@@ -226,9 +231,9 @@ end
     Z = pole_regular_basis(v0)
     problem = VgtkCore.EstimationProblem(AbstractVignetting, q.frames, (; ctx..., vignetting = v0, free_directions = Z))
     uncertain = VgtkCore.EstimationProblem(AbstractVignetting, relative_frames(q.frames, 0.01), (; ctx..., vignetting = v0, free_directions = Z))   # the position noise reads the values' variances
-    with = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = cgs))
+    with = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = cgs); stops = cg_stops)
     chol = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = SparseCholesky()))
-    without = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = nothing, solver = cgs))
+    without = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = nothing, solver = cgs); stops = cg_stops)
     G = with.metadata.gains; gw = G[:, 2]
     @test size(G) == (6, 3) && G[:, 1] == G[:, 2] == G[:, 3]          # IntensityGains: one per frame, every plane
     @info "frame gains: recovered $(round.(gw; digits = 5)) (true $g); V error with $(v_error(with.u)), without $(v_error(without.u))"
@@ -259,12 +264,12 @@ end
     @test maximum(abs.(sam.metadata.gains[:, 2] ./ g .- 1)) < 1.0e-3 && v_error(sam.u) < 2.0e-3
     # the termination is every solve's (Core's worst_retcode), not the last one's: the cold first solve capped by the CG
     # budget, the warm-started reweighted solves after it within it — the fit is MaxIters (its legacy Symbol :max_iterations)
-    cg(n) = ConjugateGradient(; tolerance = 1.0e-10, max_iter = n)
-    single = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = cg(100_000)))
+    cg(n) = VgtkCore.ToleranceStops(; rtol = 1.0e-10, max_iter = n)
+    single = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = VgtkCore.NormalCG()); stops = cg(100_000))
     @test VgtkCore.successful_retcode(single) && single.stop_rule == VgtkCore.ToleranceMet
     budget = single.stats.nsteps ÷ 2                           # the cold solve capped well short (its CG count varies by an iteration or so: threaded scatter-adds)
-    capped = VgtkCore.solve(uncertain, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = cg(budget),
-                                                                   observation_noise = sw))
+    capped = VgtkCore.solve(uncertain, VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = VgtkCore.NormalCG(),
+                                                                   observation_noise = sw); stops = cg(budget))
     @test capped.stats.nsteps < 3 * budget                   # a later solve met the tolerance within the budget
     @test capped.retcode == VgtkCore.ReturnCode.MaxIters && capped.stop_rule == VgtkCore.IterationCap
     @test VgtkCore.retcode_symbol(capped) === :max_iterations && !VgtkCore.successful_retcode(capped)
@@ -322,7 +327,7 @@ end
 # score_seams and render_panorama read the K × 3 gains per plane.
 @testitem "VignettingSelfCalibration: gain_correction none / intensity / channel, V fitted or held fixed (per-plane gains recovered)" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
-    using PanoramaStitching: VignettingSelfCalibration, score_seams, render_panorama, panorama_view, SparseCholesky, ConjugateGradient,
+    using PanoramaStitching: VignettingSelfCalibration, score_seams, render_panorama, panorama_view, SparseCholesky,
         IntensityGains, ChannelGains, GAIN_CORRECTIONS
     import VisualGeometryToolkitCore as VgtkCore
     using VisualRadiometryToolkitCore: AbstractVignetting, RadialVignetting, LogVignetting, pole_regular_basis, with_control_points
@@ -381,8 +386,8 @@ end
     @test all(i -> all(cc -> a.image[i, cc] * ch.metadata.gains[o[i], cc] ≈ b.image[i, cc], 1:3), m)
 
     # an other plane's unconverged solve is not hidden: its CG budget's end is the result's retcode, its iterations summed
-    rc = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = ConjugateGradient(; tolerance = 1.0e-14, max_iter = 3),
-                                                           gain_correction = ChannelGains()))
+    rc = VgtkCore.solve(problem, VignettingSelfCalibration(; alg..., solver = VgtkCore.NormalCG(),
+                                                           gain_correction = ChannelGains()); stops = VgtkCore.ToleranceStops(; rtol = 1.0e-14, max_iter = 3))
     @test rc.retcode == VgtkCore.ReturnCode.MaxIters && rc.stop_rule == VgtkCore.IterationCap && rc.stats.nsteps == 3 * 3
     # a V held fixed that is not positive somewhere in the domain is refused by name (not Base's DomainError of the log)
     dark(u, f) = u[1] < 100 ? -0.5 : truth(u, f)
@@ -421,7 +426,7 @@ end
 # arms.toml hold the current keys and tags.
 @testitem "panorama_vignetting example: the renamed and retired TOML keys refused by name; the configs of record are current" begin
     using Test, TOML
-    using PanoramaStitching: PanoramaStitching
+    using PanoramaStitching: PanoramaStitching, AllPairs, LagOverlap, TrackCheck
     import VisualGeometryToolkitCore as VgtkCore
     import VisualRadiometryToolkitCore as VrtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -431,8 +436,11 @@ end
                                       x.head === :function && x.args[1] isa Expr && x.args[1].args[1] === name)
     m = Module()
     Core.eval(m, :(import PanoramaStitching))
+    Core.eval(m, :(using PanoramaStitching: AllPairs, LagOverlap, TrackCheck, SparseCholesky))
+    Core.eval(m, :(import VisualGeometryToolkitCore as VgtkCore))
     for name in (:RENAMED_KEYS, :RETIRED_VIGNETTING_KEYS, :refuse_renamed_keys, :refuse_circle, :refuse_output, :refuse_inert_pair_keys,
-                 :refuse_undeclared_sensor_record, :refuse_config, :detector_settings)
+                 :refuse_undeclared_sensor_record, :refuse_config, :detector_settings, :EXAMPLE_CONFIG_VERSIONS, :PAIR_SELECTIONS,
+                 :BUNDLE_REFINES, :LINEAR_SOLVERS)
         Core.eval(m, only(filter(x -> defines(x, name), code.args)))
     end
     refuse(t) = Base.invokelatest(m.refuse_renamed_keys, t, "config")
@@ -476,10 +484,11 @@ end
     for k in ("electrons_per_dn", "read_noise_dn")
         @test_throws "sensor_characterization" PanoramaStitching.refuse_retired_registration(Dict{String, Any}(k => 1.0), "config [registration]")
     end
-    # `max_lag` with pairs = "all" is refused when the config is read (no inert setting, cached or not)
-    inert(t) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}(t), "config [registration]")
-    @test_throws "read only by pairs" inert(("pairs" => "all", "max_lag" => 1))
-    @test inert(("pairs" => "lag_overlap", "max_lag" => 1))["max_lag"] == 1
+    # `[lag_overlap]` with pairs = "all" is refused when the config is read (no inert setting, cached or not)
+    inert(pairs) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}("registration" => Dict{String, Any}("pairs" => pairs),
+                                                                                 "lag_overlap" => Dict{String, Any}("max_lag" => 1)), "config")
+    @test_throws "read only by pairs" inert("all")
+    @test inert("lag_overlap")["lag_overlap"]["max_lag"] == 1
     # PanoramaStitching 0.7's optical-axis angles are retired (0.8): refused by name, naming the view_overlap rules
     retired(t) = PanoramaStitching.refuse_retired_registration(Dict{String, Any}(t), "config [registration]")
     @test_throws r"`overlap_deg` is retired: .*any view.*min_inliers" retired(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))
@@ -504,17 +513,31 @@ end
         @test TOML.parsefile(joinpath(dir, f))["decode"]["cache"] isa Bool                      # the decode cache, opt-in, stated
         @test TOML.parsefile(joinpath(dir, f))["decode"]["sensor_characterization"] isa String   # the frames' sensor record, stated (no default)
         @test TOML.parsefile(joinpath(dir, f))["registration"]["sensor_characterization"] isa String   # the detector's, stated too
-        @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
+        @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f)), f) isa AbstractDict
         @test PanoramaStitching.refuse_retired_registration(TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test TOML.parsefile(joinpath(dir, f))["registration"]["near_duplicate_overlap"] == 0.90   # the owner's value, stated
         @test Base.invokelatest(m.refuse_circle, inputs, f) === inputs
-        # the view-graph filters' tolerances and the detector's variant are stated
-        reg = TOML.parsefile(joinpath(dir, f))["registration"]
-        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg", "selection", "detection_image", "local_optimization_strategy"))
+        # the current layout (version 2): the view-graph filters' tolerances and the detector's variant are stated, each algorithm's
+        # settings in its own table, the algorithms by tag
+        c = TOML.parsefile(joinpath(dir, f))
+        @test c["config_version"] == VgtkCore.current_config_version(m.EXAMPLE_CONFIG_VERSIONS) == 2
+        @test VgtkCore.migrate_config(c, m.EXAMPLE_CONFIG_VERSIONS) == c                         # current: read as it is
+        reg = c["registration"]
+        @test all(k -> haskey(reg, k), ("selection", "detection_image", "bundle"))
+        @test all(k -> haskey(reg, k), ("cycle_tol_deg", "orientation_tol_deg"))
+        @test m.PAIR_SELECTIONS[reg["pairs"]] in (AllPairs, LagOverlap) && m.BUNDLE_REFINES[reg["bundle"]] === TrackCheck
         # the pairs' local optimization is an Estimation strategy table, read by Estimation's own loader
-        @test VgtkEstimation.optimization_strategy_from_toml(reg["local_optimization_strategy"]; class = :rotation) isa VgtkCore.AbstractOptimizationStrategy
-        v = TOML.parsefile(joinpath(dir, f))["vignetting"]
-        @test refuse(v) === v && G[v["gain_correction"]] isa Any && (N[v["observation_noise"]]; true)
+        @test VgtkEstimation.optimization_strategy_from_toml(c["rotation_problem"]["ransac"]["local_optimization_strategy"]; class = :rotation) isa
+              VgtkCore.AbstractOptimizationStrategy
+        v = c["vignetting"]; vs = c["vignetting_self_calibration"]
+        @test refuse(v) === v && refuse(vs) === vs && G[vs["gain_correction"]] isa Any && (N[vs["observation_noise"]]; true)
+        @test m.LINEAR_SOLVERS[vs["solver"]] === VgtkCore.NormalCG && haskey(vs["stops"], "rtol")
+        # the config of record of the earlier layout (version 1, stored as it was) reads through the converter to this file, value
+        # for value; a current file holding a version-1 key is refused naming its current one
+        v1 = TOML.parsefile(joinpath(pkgdir(PanoramaStitching), "test", "fixtures", "stored_configs", "panorama_vignetting", f))
+        @test !haskey(v1, "config_version") && VgtkCore.migrate_config(v1, m.EXAMPLE_CONFIG_VERSIONS) == c
+        @test_throws "rotation_problem.ransac.outlier_halfwidth_px" VgtkCore.migrate_config(
+            merge(c, Dict("registration" => merge(reg, Dict("outlier_halfwidth_px" => 1.0)))), m.EXAMPLE_CONFIG_VERSIONS)
         # the V models are Core's VIGNETTING_TAGS of the spline log V is (the retired "tensor" refused by name)
         @test all(k -> VrtkCore.VIGNETTING_TAGS[k] in (VrtkCore.RadialVignetting, VrtkCore.TensorProductVignetting),
                   vcat(v["model"], v["compare_models"]))

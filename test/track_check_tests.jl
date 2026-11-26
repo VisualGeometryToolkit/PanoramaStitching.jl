@@ -8,8 +8,12 @@
 @testitem "register_rotations: a near-duplicate pair chains no track; the track check removes a planted wrong chain past 3.035 σ̂, the rms drops" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
     import Rotations
-    using PanoramaStitching: PanoramaStitching, register_rotations, VerifiedPairs
+    using PanoramaStitching: PanoramaStitching, register_rotations, VerifiedPairs, TrackCheck
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    averaging = VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5),
+                                                         averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)))
+    stops = VgtkCore.LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6)
     # K sweep frames 0.5 rad apart and frame K + 1 a near-duplicate of frame `dup` (1° off); tracks of world directions (σ px),
     # within 70° of a frame's axis: the bounded camera's lens coverage (BCAM70, a circle 70.6° off axis), so a frame's footprint
     # shares about 0.77 of itself with the next frame's (0.5 rad on) and about 0.99 with its near-duplicate's.
@@ -71,8 +75,7 @@
     @testset "near-duplicates" begin
         s = planted_sweep(MersenneTwister(11); nwrong = 40)
         bcam = BCAM70
-        kw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
-              bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false)
+        kw = (; frame_map = IDENTITY_MAP, averaging, bundle = VgtkCore.LevenbergMarquardt(), bundle_stops = stops)
         # an observation is (frame, detection); a planted match joins detection a of frame i and b of frame j
         together(ts, (i, a), (j, b)) = any(t -> (i, a) in t && (j, b) in t, ts)
         joined(reg) = count(((a, b),) -> together(reg.tracks, (s.dup, s.index[s.dup][a]), (s.N, s.index[s.N][b])), s.planted)
@@ -96,10 +99,18 @@
     @testset "the track check" begin
         s = planted_sweep(MersenneTwister(12); nwrong = 60)
         bcam = BCAM70
-        kw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
-              bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6)
-        off = register_rotations(s.vp, bcam; kw..., check_tracks = false)
-        on = register_rotations(s.vp, bcam; kw..., check_tracks = true)
+        kw = (; frame_map = IDENTITY_MAP, averaging, bundle_stops = stops)
+        off = register_rotations(s.vp, bcam; kw..., bundle = VgtkCore.LevenbergMarquardt())
+        on = register_rotations(s.vp, bcam; kw..., bundle = TrackCheck())
+        @test register_rotations(s.vp, bcam; kw...).rotations == on.rotations     # register_rotations' default bundle: TrackCheck()
+        # the cut and the cap are the algorithm's settings; their defaults, and the refusals
+        @test TrackCheck().cut_multiple == 3.035 && TrackCheck().max_outer_iterations == 10
+        @test_throws ArgumentError TrackCheck(; cut_multiple = 0.0)
+        @test_throws ArgumentError TrackCheck(; max_outer_iterations = 0)
+        @test VgtkCore.estimator_kind(TrackCheck()) isa VgtkCore.RefineKind
+        # a cap of one solve: tested once, re-solved once, the second solve untested
+        once = register_rotations(s.vp, bcam; kw..., bundle = TrackCheck(; max_outer_iterations = 1))
+        @test length(once.track_check) == 1 && once.track_check[1] == on.track_check[1]
         @test isempty(off.track_check)
         h = on.track_check
         @test length(h) >= 2 && h[1].removed > 0 && h[end].removed == 0           # removed, re-solved, until none is removed

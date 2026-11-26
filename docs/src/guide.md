@@ -38,7 +38,7 @@ used below, and every block runs after it, in order, as the test suite runs them
   VisualGeometryToolkitEstimation's `CameraRegression`. The example's camera as a 40 × 40 grid, with its forward spline:
 
 ```julia
-# Illustrative: VisualGeometryToolkitEstimation's CameraRegression, one more package (pkg> add VisualGeometryToolkitEstimation)
+# Illustrative: a grid lens's forward spline, VisualGeometryToolkitEstimation's CameraRegression
 using VisualGeometryToolkitCore: SplineLens, imaged_region, with_model, solve, EstimationProblem
 import VisualGeometryToolkitEstimation as VgtkEstimation
 
@@ -61,17 +61,19 @@ grid = with_model(camera, solve(problem, VgtkEstimation.CameraRegression(; toler
    `detector_margin_px`, described by
    VisualGeometryToolkitFeatures' DeDoDe/LoMa descriptor (`descriptor = :b`), at most `max_detections` per frame.
    `tone_percentile` sets the exposure the detector sees; `asift_tilts = [(1.0, 0.0)]` is the untilted view only.
-2. **Pairs**: `pairs = :all` matches every frame pair; `pairs = :lag_overlap` only those at most `max_lag` apart in capture
-   order, plus every pair past the lag whose frames share any view under the rotation averaging of the verified pairs
+2. **Pairs**: `pairs = AllPairs()` matches every frame pair; `pairs = LagOverlap(; max_lag, averaging)` only those at most
+   `max_lag` apart in capture order, plus every pair past the lag whose frames share any view under its `averaging` of the
+   verified pairs
    (VisualGeometryToolkitCore's `view_overlap` of the frames posed by those rotations: the solid angle both image), with
    `min_inliers` deciding which are kept; no threshold. Matches come from the LoMa matcher
    (`matcher = :b128`) and become bearing correspondences through the camera
    ([`PanoramaStitching.pair_bearings`](@ref)), plain detections, so a pair's residuals are in the camera's pixels.
-3. **Pairwise rotations**: VisualGeometryToolkitEstimation's `Ransac` on the pair's `RotationProblem` (RANSAC on bearings,
-   its `rng` seeded from `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
+3. **Pairwise rotations**: `ransac`, VisualGeometryToolkitEstimation's `Ransac` (its scorer, local optimization and
+   `RansacConfig`), on the pair's `RotationProblem` (RANSAC on bearings, its `rng` seeded from `seed`) verifies each pair; a pair with fewer than `min_inliers` inliers is dropped.
 4. **Rotation averaging**: the verified pairs form VisualGeometryToolkitEstimation's `ViewGraph` (each edge the pair's rotation, weighted by its
-   inlier count); Estimation's `FilteredRotationAveraging` of it, its `RotationAveraging` at `averaging_optimization_strategy`
-   (an `Irls`; `ClassDefault()`, Estimation's own), gives every frame's rotation.
+   inlier count); `averaging`, Estimation's `FilteredRotationAveraging` of it (its view-graph filters' tolerances, 2° and 5°
+   by default, and its `RotationAveraging`'s strategy, an `Irls`; `ClassDefault()`, Estimation's own), gives every frame's
+   rotation.
 5. **Tracks**: [`chain_tracks`](@ref) links the inlier matches into tracks across frames (the components of the match graph,
    Estimation's `ViewGraph` on the observations); inconsistent tracks (two detections
    of one frame) are dropped. A kept pair whose frames share at least `near_duplicate_overlap` of the smaller footprint
@@ -79,14 +81,15 @@ grid = with_model(camera, solve(problem, VgtkEstimation.CameraRegression(; toler
    the check off) is a near-duplicate: averaged but seeding no track (`reg.near_duplicates`), since two near-identical views
    match their repeated structure as well as their scene, and a wrong match through them chains far.
 6. **Bundle**: the rotation bundle, [`RotationBundleProblem`](@ref)`(camera, tracks)` refined from the averaged rotations by
-   Core's `LevenbergMarquardt`, refines every rotation but the first, and one direction per track, minimizing the
-   robust pixel reprojection error through the camera's forward map with NLLSsolver: the strategy
-   `bundle_optimization_strategy` (a `Triggs`) at `scale = σ̂`, its width the strategy's efficiency constant × σ̂, σ̂ the
+   `bundle`, Core's `LevenbergMarquardt` (or a [`TrackCheck`](@ref) of one, step 7), refines every rotation but the first,
+   and one direction per track, minimizing the robust pixel reprojection error through the camera's forward map with
+   NLLSsolver: its `optimization_strategy` (a `Triggs`) at `scale = σ̂`, its stops `bundle_stops` (an `LmStops`), its width the strategy's efficiency constant × σ̂, σ̂ the
    noise scale of the verified pairs pooled over the kept ones (`reg.bundle_sigma`, pixels), in one LM run. The bundle refines the rotations and the directions only: the camera's calibration is always
    held, and it takes no keyword that would free a camera parameter. Refining the camera too is the same bundle with the
    camera in the guess ([Autocalibration](#Autocalibration) below).
-7. **Track check** (`check_tracks = true`): the observations whose residual exceeds 3.035 σ̂ (√χ²₂(0.99)) are removed and
-   the bundle re-solved from its rotations, until a solve removes none (at most 10 solves); `reg.track_check` holds each
+7. **Track check** (`bundle = TrackCheck(LevenbergMarquardt(…))`, the default): the observations whose residual exceeds its
+   `cut_multiple` × σ̂ (3.035 σ̂, √χ²₂(0.99)) are removed and the bundle re-solved from its rotations, until a solve removes
+   none (at most its `max_outer_iterations`, 10, solves); `reg.track_check` holds each
    solve's removals, rms and inlier rms (`reg.bundle.metadata.inlier_rms`, the rms over the observations within the loss
    width).
 
@@ -94,7 +97,7 @@ Steps 1–3 are [`verify_pairs`](@ref), whose [`VerifiedPairs`](@ref) hold every
 `register_rotations(pairs::VerifiedPairs, camera; frame_map, …)` runs steps 4–6 from them, so a caller that keeps the verified pairs
 (the example keeps them as a keyed product, `verified_pairs/<key>/verified_pairs.jld2`) reruns the averaging and the bundle alone.
 
-The example's call states every setting: each is a keyword without a default, so a run states its whole configuration
+The example's call states every setting (the algorithms as values), so a run states its whole configuration
 (`say = println` prints one line per frame, pair and step). The result, a [`Registration`](@ref), holds the rotations, the
 view graph, per-pair statistics, the tracks and the bundle's result:
 
@@ -237,8 +240,8 @@ problem = VgtkCore.EstimationProblem(VrtkCore.AbstractVignetting, frames,
 res = VgtkCore.solve(problem, VignettingSelfCalibration(; gain_correction = ChannelGains(), rim_margin_px = 12.0,
                      saturation_margin_px = 4.0, fov_deg = 89.0, plane = 2, chart_spacing_deg = 1.0, penalty_order = 3,
                      penalty_weight = 0.01, vignetting_penalty_weight = 1.0e-6,
-                     solver = ConjugateGradient(; tolerance = 1.0e-9, max_iter = 40_000),   # or SparseCholesky()
-                     observation_noise = nothing))
+                     solver = VgtkCore.NormalCG(),   # or SparseCholesky(), which reads no stops
+                     observation_noise = nothing); stops = VgtkCore.ToleranceStops(; rtol = 1.0e-9, max_iter = 40_000))
 # or observation_noise = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = σ_u)), on frames with variances: σ_u the registration's
 # pooled noise scale reg.bundle_sigma (the bundle's width over its efficiency constant), px
 V = res.u                         # the fitted model: the vignetting keyword of render_panorama

@@ -287,19 +287,20 @@ function _connected_to_first(R::Int, rows)
 end
 
 """
-    additive_level_slope(pc::PairCorrespondences, c; frame_weights = ones(pc.n_frames)) -> Float64
+    additive_level_slope(pc::PairCorrespondences, c[, frame_weights = ones(pc.n_frames)]) -> Float64
 
 The dependence of the pair equation on the scene's brightness at the level `c`: the pooled within-ring-pair least-squares slope of
 the residual `e = ln(I_k − c) − ln(I_l − c) − (v(θ_k) − v(θ_l))` on the brightness `ln(I_k − c) − v(θ_k) + ln(I_l − c) − v(θ_l)`
-(`v` the [`RingPairMedians`](@ref) solution at `c`, linear in the field angle between the ring centres and held beyond: the
+(`v` the [`RingPairMedians`](@ref) solution at `c` — `solve(EstimationProblem(RingVignetting, pc, (; offset = c,
+frame_weights)), RingPairMedians())`, the correspondences weighted by their frames' `frame_weights` — linear in the field angle between the ring centres and held beyond: the
 vignetting's variation inside a ring taken out of both, so neither carries it), each ring pair centred on its own median of `e`
 and mean of the brightness, the correspondences past 5 robust deviations of their pair's median left out. Zero at the true
 level (the log ratio then is the vignetting's, whatever `L`); positive below it (a residual level lifts the dark directions'
 ratio toward 0) and negative above it.
 """
-function additive_level_slope(pc::PairCorrespondences, c::Real; frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
+function additive_level_slope(pc::PairCorrespondences, c::Real, frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
     fw = Float64.(frame_weights)
-    x = _ring_pair_medians(pc, c, fw).u
+    x = VgtkCore.solve(VgtkCore.EstimationProblem(RingVignetting, pc, (; offset = c, frame_weights = fw)), RingPairMedians()).u
     mids = (pc.edges[1:(end - 1)] .+ pc.edges[2:end]) ./ 2
     ok = isfinite.(x); xm = mids[ok]; xv = x[ok]
     length(xv) >= 2 || return NaN
@@ -365,7 +366,7 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCo
     length(pc) > 0 || throw(ArgumentError("LevelBisection: no correspondences"))
     any((view(pc.values, 1, :) .> hi) .& (view(pc.values, 2, :) .> hi)) ||
         throw(ArgumentError("LevelBisection: no correspondence has both values above the upper bound $hi"))
-    f(c) = additive_level_slope(pc, c; frame_weights)
+    f(c) = additive_level_slope(pc, c, frame_weights)
     a, b = lo, hi; fa, fb = f(a), f(b)
     it = 0
     if !(isfinite(fa) && isfinite(fb) && fa * fb <= 0)
@@ -384,6 +385,6 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCo
         c = (a + b) / 2
         code, rule = b - a > tolerance ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
     end
-    r = _ring_pair_medians(pc, c, frame_weights)
+    r = VgtkCore.solve(VgtkCore.EstimationProblem(RingVignetting, pc, (; offset = c, frame_weights)), RingPairMedians())
     return VgtkCore.FitResult(c, code, rule, VgtkCore.SolveStats(; nsteps = it), r.metadata.residual_mad, r.n, (; vignetting = r, slope = f(c)))
 end

@@ -23,11 +23,19 @@ It needs the VisualGeometryToolkit stack and VisualRadiometryToolkitCore (the vi
 names them.
 
 Every setting is in the config — nothing in `run.jl` has a default — and every input path is relative to `$VGTK_DATA_ROOT`.
+The config's tables are named after what they configure (decision 11): `[registration]` the task verb's own settings,
+`[rotation_problem.ransac]` and `[ransac]` the pairs' RANSAC, `[lag_overlap]` the lag pairs, `[rotation_averaging]` the averaging (its view-graph filters' tolerances still
+`[registration]`'s), `[rotation_bundle_problem.levenberg_marquardt]` (and its `.stops`) the bundle,
+`[registration] bundle` its refine by tag (`"track_check"` or `"levenberg_marquardt"`), `[vignetting_self_calibration]` (and its
+`.stops`) the fit, its `solver` by tag (`"normal_cg"` or `"sparse_cholesky"`); `[vignetting]` the V model. A config states its
+`config_version` (2); a config of an earlier layout (no `config_version`: version 1, every registration setting under
+`[registration]`, the fit's under `[vignetting]`) is read through `run.jl`'s converter (`EXAMPLE_CONFIG_VERSIONS`,
+VisualGeometryToolkitCore's `ConfigVersions`), so a stored config keeps loading.
 Everything the run writes goes under VisualGeometryToolkitEval's results root (`$VGTK_RESULTS_ROOT`):
 `<results>/panorama_vignetting/<name>/` holds the decode cache and the set's products: each step is a VisualGeometryToolkitEval
 `Product` (DrWatson's `produce_or_load`: produced once, loaded after), in `<product>/<key>/` with its records (`_config.toml`,
 `_provenance.toml`). The verified pairs are keyed by their settings, the registration by every `[registration]` setting and the
-pairs' output, the run's outputs (`run/<key>/`) by the whole config, `run.jl`'s content and the registration's output; every
+pairs' output (`REGISTRATION_TABLES`), the run's outputs (`run/<key>/`) by the whole config, `run.jl`'s content and the registration's output; every
 key holds the code trees (PanoramaStitching's and the stack's). A produced product is reused: `run.jl <config> --force` (or
 `run_example(config; force = true)`, which returns the run's directory) produces the run again. Products record the code they ran, so a run of record runs on committed code (`VGTK_SCRATCH=1` for scratch work). From a REPL,
 `include("run.jl"); run_example("config_fx3_14mm.toml")` runs everything; each stage is a function and can be rerun alone.
@@ -86,9 +94,10 @@ Under `$VGTK_DATA_ROOT`:
    variance-stabilized green, `"vst"`, decoded again under `[registration] sensor_characterization`: required, as `[decode]`'s, and
    with `"tone"` it must be `[decode]`'s record) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (Estimation's `Ransac` on a `RotationProblem`, the
-   Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), produced as
+   Student-t + uniform score at the outlier half-width `[rotation_problem.ransac] outlier_halfwidth_px`, Jeffreys and flat priors), produced as
    `verified_pairs/<key>/` before anything else runs on them, keyed by the matching and verification settings (every
-   `[registration]` key but the averaging's and the bundle's), the inputs and the RAW files', the sensor records' and the lens's content: changing only the
+   `[registration]` key but the near-duplicates' and the bundle's, the pairs' RANSAC tables, `[lag_overlap]` and, with
+   `pairs = "lag_overlap"`, `[rotation_averaging]`), the inputs and the RAW files', the sensor records' and the lens's content: changing only the
    averaging or the bundle reuses the pairs, and a failure past them loses none of the hour they take. Then
    `register_rotations` on the pairs: robust rotation averaging over VisualGeometryToolkitEstimation's view graph, tracks
    (a near-duplicate pair, one whose frames share at least `near_duplicate_overlap = 0.90` of the smaller footprint by

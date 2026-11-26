@@ -44,6 +44,7 @@ end
     using PanoramaStitching: PanoramaStitching, detect_features, verify_pairs, register_rotations
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitFeatures as VgtkFeatures
+    import VisualGeometryToolkitEstimation as VgtkEstimation
     q = sequence(; K = 1)
     frame = 0.5f0 .* q.frames[1]; Hf, Wf = size(frame, 1), size(frame, 2)
     mosaic = rggb_mosaic(frame)          # the frame as an RGGB mosaic: its :bin2 LinearRaw is the frame
@@ -77,16 +78,16 @@ end
     @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., detection_image = :log)
     @test_throws ArgumentError detect_features(q.cam, L, desc; kw..., selection = :ssc)
     # verify_pairs and register_rotations refuse before any feature is detected
-    vkw = (; kw..., descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all, min_inliers = 10,
-           seed = 1, max_trials = 10, min_trials = 1, execution_provider = :cpu)
+    vkw = (; kw..., descriptor = :b, matcher = :b128, min_score = 0.0, pairs = PanoramaStitching.AllPairs(), min_inliers = 10,
+           seed = 1, ransac = VgtkEstimation.Ransac(; config = VgtkEstimation.RansacConfig(; max_trials = 10, min_trials = 1)),
+           execution_provider = :cpu)
     @test_throws "LinearRaw" verify_pairs([L0.image, L0.image], q.cam; vkw..., detection_image = :vst, sensor_models = [model, model], noise_sigmas = 3.0)
     @test_throws DimensionMismatch verify_pairs([L, L], q.cam; vkw..., detection_image = :vst, sensor_models = [model], noise_sigmas = 3.0)   # one per frame
     @test_throws "needs a gain" verify_pairs([L, L], q.cam; vkw..., detection_image = :vst, noise_sigmas = 3.0)          # no models: absent
     @test_throws "sensor_model" verify_pairs([L, L], q.cam; vkw..., detection_noise = (; noise_sigmas = 3.0))
     @test_throws ArgumentError verify_pairs([L, L], q.cam; vkw..., selection = :ssc)
-    @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst, bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
-                                                   bundle_max_iter = 1,
-                                                  bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
+    @test_throws ArgumentError register_rotations([L, L], q.cam; vkw..., detection_image = :vst,
+                                                  bundle_stops = VgtkCore.LmStops(; max_iter = 1, ftol = 1.0e-8, xtol = 1.0e-8))
 end
 
 @testitem "detect_features: no detection reads a clipped pixel; the tilt schedule by name" setup = [SyntheticSequence, BayerMaps] begin

@@ -31,13 +31,24 @@ function stage_cache_check()
     foreach(n -> write(joinpath(root, "raw", n), n), ("a.ARW", "b.ARW"))
     write(joinpath(root, "lens.json"), "the lens")
     strat(t, l, k, v) = Dict{String, Any}("type" => t, "loss" => l, k => v)
-    cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW", "lens" => "lens.json"),
-                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false, "sensor_characterization" => "none"),
-                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1, "sensor_characterization" => "none",
-                                                                               "detection_image" => "tone",
-                                                                               "averaging_optimization_strategy" => strat("irls", "huber", "max_iter", 100),
-                                                                               "bundle_optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0)),
-                                                             Dict{String, Any}(string(k) => v for (k, v) in kw)))
+    # a config of the current layout (version 2), its [registration] keys overridden by `kw` and its other tables by `tables`
+    # (`"table" => Dict(key => value)`, merged)
+    function cfg(tables::Pair...; kw...)
+        c = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW", "lens" => "lens.json"),
+                              "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false, "sensor_characterization" => "none"),
+                              "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1, "sensor_characterization" => "none",
+                                                                        "detection_image" => "tone", "bundle" => "track_check",
+                                                                        "cycle_tol_deg" => 2.0, "orientation_tol_deg" => 5.0),
+                                                      Dict{String, Any}(string(k) => v for (k, v) in kw)),
+                              "rotation_averaging" => Dict{String, Any}("optimization_strategy" => strat("irls", "huber", "max_iter", 100)),
+                              "rotation_bundle_problem" => Dict{String, Any}("levenberg_marquardt" => Dict{String, Any}(
+                                  "optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0))))
+        for (t, d) in tables
+            c[t] = merge(get(c, t, Dict{String, Any}()), d)
+        end
+        return c
+    end
+    bundle_lm(d) = "rotation_bundle_problem" => Dict{String, Any}("levenberg_marquardt" => Dict{String, Any}("optimization_strategy" => d))
     inp = (; names = ["a.ARW", "b.ARW"])
     # an outermost @testset that records a failure or an error throws Test.TestSetException when it finishes (every Julia):
     # that is the check's false (Test.anynonpass, the earlier test, is not in Julia 1.12's Test)
@@ -68,10 +79,11 @@ function stage_cache_check()
             @test pkey(cfg(); provider = :cpu) != pkey(cfg()) &&
                   rkey(cfg(); provider = :cpu) != rkey(cfg())
             # a changed averaging or bundle setting: a new registration, the SAME pairs (reused: not matched again)
-            for c in (cfg(; averaging_optimization_strategy = strat("irls", "cauchy", "max_iter", 100)),
-                      cfg(; bundle_optimization_strategy = strat("triggs", "cauchy", "efficiency_constant", 2.5)),
-                      cfg(; bundle_optimization_strategy = strat("triggs", "huber", "efficiency_constant", 3.0)),
-                      cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0))
+            for c in (cfg("rotation_averaging" => Dict{String, Any}("optimization_strategy" => strat("irls", "cauchy", "max_iter", 100))),
+                      cfg(bundle_lm(strat("triggs", "cauchy", "efficiency_constant", 2.5))),
+                      cfg(bundle_lm(strat("triggs", "huber", "efficiency_constant", 3.0))),
+                      cfg(; cycle_tol_deg = 1.0), cfg(; orientation_tol_deg = 3.0),
+                      cfg(; bundle = "levenberg_marquardt"), cfg(; near_duplicate_overlap = 0.5))
                 @test rkey(c) != rkey(cfg()) &&
                       pkey(c) == pkey(cfg())
                 stage(c)
@@ -100,8 +112,13 @@ function stage_cache_check()
             write(joinpath(root, "sensor.json"), "the record, measured again"); @test pkey(recorded()) != k && pkey(vst()) != kv
             k = pkey(cfg()); write(joinpath(root, "lens.json"), "the lens, calibrated again"); @test pkey(cfg()) != k
             # pairs = "lag_overlap" aims the pairs past the lag by the rotation averaging: its strategy keys the pairs there
-            @test pkey(cfg(; pairs = "lag_overlap", averaging_optimization_strategy = strat("irls", "cauchy", "max_iter", 100))) !=
-                  pkey(cfg(; pairs = "lag_overlap"))
+            lag = "lag_overlap" => Dict{String, Any}("max_lag" => 1)
+            @test pkey(cfg(lag, "rotation_averaging" => Dict{String, Any}("optimization_strategy" => strat("irls", "cauchy", "max_iter", 100)); pairs = "lag_overlap")) !=
+                  pkey(cfg(lag; pairs = "lag_overlap"))
+            # the pairs' RANSAC tables key the pairs; a version-1 config reads through the converter to the current tables
+            @test pkey(cfg("ransac" => Dict{String, Any}("max_trials" => 500))) != pkey(cfg())
+            v1 = TOML.parsefile(joinpath(@__DIR__, "..", "..", "test", "fixtures", "stored_configs", "panorama_vignetting", "config_fx3_14mm.toml"))
+            @test VgtkCore.migrate_config(v1, EXAMPLE_CONFIG_VERSIONS) == TOML.parsefile(joinpath(@__DIR__, "config_fx3_14mm.toml"))
         end
     end
     true

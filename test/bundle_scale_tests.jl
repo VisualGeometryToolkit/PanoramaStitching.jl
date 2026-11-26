@@ -40,6 +40,7 @@ end
     using Test, Random, LinearAlgebra, StaticArrays
     using PanoramaStitching: PanoramaStitching, register_rotations, RotationBundleProblem, chain_tracks, VerifiedPairs
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
     using VisualGeometryToolkitCore: solve, RefineProblem, LevenbergMarquardt, LmStops, successful_retcode
     rng = MersenneTwister(3)
     R = sweep_rotations(rng, 4)
@@ -65,8 +66,9 @@ end
     vp = VerifiedPairs(feats, verified, matches, stats, scales, (; descriptor = (;), matcher = (;)))
     pooled = (ν = [scales[p].dof for p in ps[1:(end - 1)]]; σ = [scales[p].sigma for p in ps[1:(end - 1)]];
               sqrt(sum(ν .* σ .^ 2) / sum(ν)))
-    bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5), 
-           bundle_max_iter = 1000, bundle_ftol = 1.0e-12, bundle_xtol = 1.0e-6, check_tracks = false)   # one bundle: its width checked
+    bkw = (; frame_map = IDENTITY_MAP, averaging = VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))),
+           bundle = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.WelschShape}(efficiency_constant = 2.5)),
+           bundle_stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-6))   # one bundle (no track check): its width checked
     reg = register_rotations(vp, bcam; bkw...)
     @test isempty(reg.near_duplicates)          # the near-duplicate check ran: these frames share at most 0.88 of a footprint
     @test reg.bundle_sigma ≈ pooled

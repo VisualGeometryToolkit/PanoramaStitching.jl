@@ -42,7 +42,7 @@ VisualGeometryToolkitEstimation's `FilteredRotationAveraging`: the edges' covari
 `view_overlap` under the averaged rotations: averaged, not chained; sorted), `tracks` (of the kept pairs but
 the near-duplicates, as `(frame, detection)` observations, after the track check), `dropped`
 (inconsistent tracks dropped by [`chain_tracks`](@ref)), `track_check` (one entry per solve the track check tested: the
-observations it `removed` past the cut and that solve's `rms` and `inlier_rms`, px; empty with `check_tracks = false`), `bundle` (the rotation bundle's result, [`RotationBundleProblem`](@ref); its `rms` over every kept observation and its metadata's
+observations it `removed` past the cut and that solve's `rms` and `inlier_rms`, px; empty with a plain `LevenbergMarquardt` bundle), `bundle` (the rotation bundle's result, [`RotationBundleProblem`](@ref); its `rms` over every kept observation and its metadata's
 `inlier_rms` over those within its loss width; its
 `retcode`/`stop_rule` (Core's termination record) and its metadata's `n_dropped_start` say how the bundle ended and how many
 observations it left out at its start, [`RotationBundleMetadata`](@ref)), `bundle_sigma` (the
@@ -103,23 +103,52 @@ VerifiedPairs(features::Vector{F}, verified::AbstractDict, args...) where {F} =
     VerifiedPairs{F}(features, Dict{Tuple{Int, Int}, _VerifiedEntry}(verified), args...)
 
 """
+    AllPairs()
+
+The frame pairs [`verify_pairs`](@ref) verifies (its `pairs`): every frame pair. See also [`LagOverlap`](@ref).
+"""
+struct AllPairs end
+
+"""
+    LagOverlap(; max_lag, averaging = RotationAveraging())
+
+The frame pairs [`verify_pairs`](@ref) verifies (its `pairs`): those at most `max_lag` apart in capture order (`max_lag ≥ 1`,
+an `ArgumentError` otherwise); while the verified pairs leave the frames in more than one part, as when a lag pair is
+dropped, the pair between two parts nearest in capture order; then every pair whose frames share any view under `averaging`
+(VisualGeometryToolkitEstimation's `RotationAveraging`, solved on the verified pairs' view graph) —
+VisualGeometryToolkitCore's `view_overlap` of the frames posed by those rotations, a solid angle above zero — with
+`min_inliers` deciding which are kept. See also [`AllPairs`](@ref).
+"""
+struct LagOverlap{A <: VgtkEstimation.RotationAveraging}
+    max_lag::Int
+    averaging::A
+    function LagOverlap(max_lag::Integer, averaging::A) where {A <: VgtkEstimation.RotationAveraging}
+        max_lag >= 1 || throw(ArgumentError("LagOverlap: max_lag = $max_lag is not at least 1"))
+        return new{A}(Int(max_lag), averaging)
+    end
+end
+LagOverlap(; max_lag::Integer, averaging::VgtkEstimation.RotationAveraging = VgtkEstimation.RotationAveraging()) =
+    LagOverlap(max_lag, averaging)
+
+# Whether the lag stage verifies the pair (i, j), i < j: every pair, or those at most `max_lag` apart.
+_lag_pair(::AllPairs, i, j) = true
+_lag_pair(p::LagOverlap, i, j) = j - i <= p.max_lag
+
+"""
     verify_pairs(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
-                 selection = :spread, detection_image = :tone, sensor_models = nothing, noise_sigmas = nothing, saturated = nothing, descriptor, matcher, min_score, pairs, max_lag = nothing, min_inliers, seed,
-                 scoring = ClassDefault(), local_optimization_strategy = ClassDefault(), max_trials, min_trials, averaging_optimization_strategy = ClassDefault(),
+                 selection = :spread, detection_image = :tone, sensor_models = nothing, noise_sigmas = nothing, saturated = nothing,
+                 descriptor, matcher, min_score, pairs::Union{AllPairs, LagOverlap}, min_inliers, seed, ransac::Ransac,
                  execution_provider = :auto, say = _ -> nothing) -> VerifiedPairs
 
 The verified frame pairs of the pure-rotation sequence `frames`: the features,
 the matching and the pairwise rotations of [`register_rotations`](@ref) (its
-keywords of the same names), stopping before the view graph. `max_lag` and
-`averaging_optimization_strategy` are read only by `pairs = :lag_overlap` (its
-rotation averaging of the verified pairs aims the pairs past the lag), which
-needs `max_lag`; giving either with `pairs = :all` is an `ArgumentError`. The
-retired `overlap_deg` is refused by name (an `ArgumentError`: `:lag_overlap`
-tries every pair past the lag that shares any view). A `pairs` other than `:all` or
-`:lag_overlap`, a `max_lag` below 1 with `:lag_overlap`, a detector setting
+keywords of the same names), stopping before the view graph. `pairs` is an
+[`AllPairs`](@ref)`()` or a [`LagOverlap`](@ref) (whose `averaging` aims the pairs
+past the lag). The retired `overlap_deg` is refused by name (an `ArgumentError`:
+`LagOverlap` tries every pair past the lag that shares any view). A detector setting
 [`detect_features`](@ref) refuses (`detection_image = :vst` needs every frame a
 `LinearRaw`), an `execution_provider` other than `:auto`, `:cpu` or `:cuda`
-and, with `:lag_overlap` and a pair past the lag, a camera whose footprint VisualGeometryToolkitCore's
+and, with `LagOverlap` and a pair past the lag, a camera whose footprint VisualGeometryToolkitCore's
 `view_overlap` refuses (a model that is not a `CameraModel`, a region the lens
 cannot back-project, as a bare sensor's corners past a fisheye's fold, a field
 of view within 3° of the backward axis: give the camera its lens coverage)
@@ -130,17 +159,10 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
                       selection::Symbol = :spread, detection_image::Symbol = :tone,
                       sensor_models::Union{Nothing, AbstractVector{<:VgtkCore.SensorModel}} = nothing, noise_sigmas::Union{Nothing, Real} = nothing,
                       saturated::Union{Nothing, AbstractVector} = nothing, descriptor::Symbol, matcher::Symbol,
-                      min_score::Real, pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing,
-                      min_inliers::Integer, seed::Integer,
-                      scoring = VgtkCore.ClassDefault(), local_optimization_strategy = VgtkCore.ClassDefault(), max_trials::Integer,
-                      min_trials::Integer, averaging_optimization_strategy = VgtkCore.ClassDefault(), execution_provider::Symbol = :auto,
-                      say = _ -> nothing, retired...)
+                      min_score::Real, pairs::Union{AllPairs, LagOverlap}, min_inliers::Integer, seed::Integer,
+                      ransac::VgtkEstimation.Ransac, execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("verify_pairs", retired)
-    _check_pair_settings("verify_pairs", pairs, max_lag)
-    _check_view_overlap("verify_pairs", camera, pairs, 0.0; nframes = length(frames), max_lag)
-    pairs === :all && !(averaging_optimization_strategy isa VgtkCore.ClassDefault) &&
-        throw(ArgumentError("verify_pairs: averaging_optimization_strategy is read only by pairs = :lag_overlap (its averaging aims " *
-                            "the pairs past the lag); leave it out with pairs = :all"))
+    _check_view_overlap("verify_pairs", camera, pairs, 0.0; nframes = length(frames))
     _check_frames("verify_pairs", frames, selection, detection_image, sensor_models, noise_sigmas)
     saturated === nothing || length(saturated) == length(frames) ||
         throw(DimensionMismatch("verify_pairs: $(length(frames)) frames and $(length(saturated)) saturation masks"))
@@ -168,7 +190,6 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
             say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches → dropped"); return nothing
         end
         cs, kept = pair_bearings(camera, feats[i], feats[j], ms; frame_map)
-        ransac = VgtkEstimation.Ransac(; scoring, local_optimization_strategy, config = VgtkEstimation.RansacConfig(; max_trials, min_trials))
         res = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkEstimation.RotationProblem(cs)), ransac; rng = _pair_rng(seed, i, j))
         n = count(VgtkCore.inlier_mask(res))
         if !VgtkCore.found_model(res) || n < min_inliers
@@ -188,25 +209,15 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         return nothing
     end
     for i in 1:K, j in (i + 1):K
-        (pairs === :all || j - i <= max_lag::Integer) && verify(i, j)
+        _lag_pair(pairs, i, j) && verify(i, j)
     end
-    pairs === :lag_overlap && _verify_overlap_pairs!(verify, verified, K, max_lag::Integer, camera, averaging_optimization_strategy)
+    _verify_overlap_pairs!(verify, verified, K, pairs, camera)
     loma = (; descriptor = VgtkFeatures.loma_provenance(desc), matcher = VgtkFeatures.loma_provenance(match))
     return VerifiedPairs(feats, verified, inlier_matches, stats, scales, loma)
 end
 
 # The settings every entry checks before any feature is detected.
 # (The execution provider: VisualGeometryToolkitFeatures' `resolve_execution_provider`, which refuses an unknown one.)
-# `max_lag` is read only by `pairs = :lag_overlap`, which needs it; with `:all` giving it is refused (no inert setting).
-function _check_pair_settings(what, pairs, max_lag)
-    pairs in (:all, :lag_overlap) || throw(ArgumentError("$what: pairs = :$pairs is not :all or :lag_overlap"))
-    if pairs === :all
-        max_lag === nothing || throw(ArgumentError("$what: max_lag is read only by pairs = :lag_overlap; leave it out with pairs = :all"))
-    else
-        (max_lag !== nothing && max_lag >= 1) || throw(ArgumentError("$what: pairs = :lag_overlap needs max_lag ≥ 1, got $max_lag"))
-    end
-    return nothing
-end
 # The detector's settings and, with detection_image = :vst, every frame a LinearRaw: before any feature is detected.
 function _check_frames(what, frames, selection, detection_image, sensor_models, noise_sigmas)
     _check_detector_settings(what, selection, detection_image, something(sensor_models, fill(VgtkCore.SensorModel(), length(frames))),
@@ -220,33 +231,33 @@ end
 # `verify_pairs`' keywords and a config's `[registration]` table (the example's, RC's), refused by `refuse_retired_registration`.
 const _SENSOR_NOISE_SUCCESSOR = "the frames' noise is their VisualGeometryToolkitCore sensor model (`sensor_models`), resolved from " *
                                 "the body's characterisation (sensor_characterization)"
-const _BUNDLE_WIDTH_SUCCESSOR = "the bundle's strategy is `bundle_optimization_strategy` (a config's table of that name): its " *
-                                "efficiency constant × the pooled scale"
-const _PAIR_SCORER_SUCCESSOR = "the pairs' scorer is Student-t + uniform (`scoring`; the example's outlier_halfwidth_px), no " *
+const _BUNDLE_WIDTH_SUCCESSOR = "the bundle's strategy is its LevenbergMarquardt's `optimization_strategy` (`bundle`; a config's " *
+                                "`bundle_optimization_strategy` table): its efficiency constant × the pooled scale"
+const _PAIR_SCORER_SUCCESSOR = "the pairs' scorer is Student-t + uniform (`ransac`'s `scoring`; the example's outlier_halfwidth_px), no " *
                                "threshold (the MSAC threshold is retired)"
 const _RETIRED_REGISTRATION_KEYS = (;
     # 0.6: the frames' noise constants, the bundle's iteration count
     electrons_per_dn = _SENSOR_NOISE_SUCCESSOR,
     read_noise_dn = _SENSOR_NOISE_SUCCESSOR,
     detection_noise = _RETIRED_DETECTION_NOISE,
-    bundle_iterations = "the bundle is ONE LM run of its `bundle_optimization_strategy` at the verified pairs' pooled RANSAC " *
+    bundle_iterations = "the bundle is ONE LM run per solve of its `bundle` (a config's `bundle_optimization_strategy`) at the verified pairs' pooled RANSAC " *
                         "noise scale; remove it",
     bundle_camera_free = "the bundle holds the camera's calibration (RotationBundleProblem(camera, tracks)); the autocalibration of " *
                          "a rotating camera is RotationBundleProblem(tracks; fixed) refining the guess (; camera, rotations)",
     bundle_scale_multiple = _BUNDLE_WIDTH_SUCCESSOR,
     bundle_efficiency_constant = _BUNDLE_WIDTH_SUCCESSOR,
-    bundle_loss = "the bundle's robust strategy is `bundle_optimization_strategy = Triggs{Shape}(…)` (a config's table of that " *
-                  "name, its loss)",
-    averaging_loss = "the averaging's robust strategy is `averaging_optimization_strategy = Irls{Shape}(…)` (a config's table of " *
-                     "that name)",
-    local_optimization = "the pairs' RANSAC strategy is `local_optimization_strategy` (a config's table of that name)",
+    bundle_loss = "the bundle's robust strategy is `bundle = LevenbergMarquardt(; optimization_strategy = Triggs{Shape}(…))` (a " *
+                  "config's `bundle_optimization_strategy` table, its loss)",
+    averaging_loss = "the averaging's robust strategy is its RotationAveraging's `optimization_strategy = Irls{Shape}(…)` " *
+                     "(`averaging`; a config's `averaging_optimization_strategy` table)",
+    local_optimization = "the pairs' RANSAC strategy is `ransac`'s `local_optimization_strategy` (a config's table of that name)",
     # the retired names in fragments (check_naming lists them)
     Symbol("bundle_" * "whitening") => "the bundle's observations are the detections' pixels (no detection covariance in this " *
                                        "release)",
     Symbol("scoring_threshold" * "_px") => _PAIR_SCORER_SUCCESSOR,
     scoring_threshold = _PAIR_SCORER_SUCCESSOR,
     # 0.8: the optical-axis angles (the overlap is VisualGeometryToolkitCore's view_overlap, the one estimate)
-    overlap_deg = "pairs = :lag_overlap tries every pair past the lag whose frames share any view (VisualGeometryToolkitCore's " *
+    overlap_deg = "pairs = LagOverlap(; max_lag) tries every pair past the lag whose frames share any view (VisualGeometryToolkitCore's " *
                   "view_overlap under the averaged rotations), min_inliers deciding; no threshold replaces the optical-axis " *
                   "angle: remove it (PanoramaStitching 0.8)",
     near_duplicate_deg = "a near-duplicate pair shares at least `near_duplicate_overlap` of the smaller footprint " *
@@ -271,7 +282,7 @@ The ONE list of PanoramaStitching's retired registration settings, the keywords 
 the autocalibration of [`RotationBundleProblem`](@ref)), `averaging_loss`
 (`averaging_optimization_strategy`), `local_optimization` (`local_optimization_strategy`),
 the whitening switch, the pairs' MSAC thresholds (the Student-t + uniform `scoring`), and
-0.8's `overlap_deg` (`:lag_overlap` tries every pair that shares any view) and
+0.8's `overlap_deg` (`LagOverlap` tries every pair that shares any view) and
 `near_duplicate_deg` (`near_duplicate_overlap`). A config loader calls it on the table it
 reads, before any stage, so a config fails the same way cached or not.
 
@@ -312,24 +323,21 @@ end
 """
     register_rotations(frames, camera::BoundedCamera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections,
                        selection = :spread, detection_image = :tone, sensor_models = nothing, noise_sigmas = nothing, saturated = nothing,
-                       descriptor, matcher, min_score, pairs, max_lag = nothing, min_inliers, seed,
-                       scoring = ClassDefault(), local_optimization_strategy = ClassDefault(), max_trials, min_trials,
-                       averaging_optimization_strategy = ClassDefault(), cycle_tol = deg2rad(2), orientation_tol = deg2rad(5),
-                       bundle_optimization_strategy = ClassDefault(), bundle_max_iter, bundle_ftol,
-                       bundle_xtol, near_duplicate_overlap = 0.90, check_tracks = true, execution_provider = :auto,
-                       say = _ -> nothing) -> Registration
-    register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; frame_map, averaging_optimization_strategy = ClassDefault(),
-                       cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), bundle_optimization_strategy = ClassDefault(),
-                       bundle_max_iter, bundle_ftol, bundle_xtol, near_duplicate_overlap = 0.90, check_tracks = true,
-                       say = _ -> nothing) -> Registration
+                       descriptor, matcher, min_score, pairs::Union{AllPairs, LagOverlap}, min_inliers, seed, ransac::Ransac,
+                       averaging::FilteredRotationAveraging = FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5)),
+                       bundle::Union{LevenbergMarquardt, TrackCheck} = TrackCheck(), bundle_stops::LmStops,
+                       near_duplicate_overlap = 0.90, execution_provider = :auto, say = _ -> nothing) -> Registration
+    register_rotations(pairs::VerifiedPairs, camera::BoundedCamera; frame_map, averaging = <as above>, bundle = TrackCheck(),
+                       bundle_stops, near_duplicate_overlap = 0.90, say = _ -> nothing) -> Registration
 
 The rotations of the pure-rotation sequence `frames` (`H × W × 3` linear images in
 capture order, `frame_map` their map onto the camera's pixels: VisualGeometryToolkitCore's `raw_frame_map`) seen by the calibrated
 `camera` (fixed; a VisualGeometryToolkitCore `BoundedCamera`, whose `imaged_region` bounds the features,
 projected in the bundle through its model's `imaging_transform` — a grid lens's `SplineLens` through its forward spline; see
 [`RotationBundleProblem`](@ref)), with the view graph, the tracks and the bundle's
-statistics. Every setting is the caller's configuration, none defaulted but the
-RANSAC's:
+statistics. Every setting is the caller's configuration, the algorithms it composes given as values
+(`ransac`, `averaging`, `bundle`), none defaulted but the averaging (its tolerances of record) and the bundle's refine (a
+`TrackCheck()`):
 
 - features: inside the camera's `imaged_region`; `tone_percentile`,
   `detector_margin_px`, `asift_tilts` (a Features `tilt_schedule` name, `:imas25`
@@ -345,26 +353,18 @@ RANSAC's:
   warning naming why; `:cpu`; `:cuda`, an error naming why where it cannot run),
   on `Threads.nthreads()` ONNX Runtime threads; `min_score`. The provider used is
   in the result's `loma`.
-- pairs: `pairs = :all` (every frame pair) or `:lag_overlap` (pairs at most
-  `max_lag` apart; while the verified pairs leave the frames in more than one
-  part, as when a lag pair is dropped, the pair between two parts nearest in
-  capture order; then every pair whose frames share any view under the rotation
-  averaging of the verified pairs — VisualGeometryToolkitCore's `view_overlap` of
-  the frames posed by those rotations, a solid angle above zero — with
-  `min_inliers` deciding which are kept; `max_lag` is given with `:lag_overlap`
-  only, refused with `:all`); a pair is verified by VisualGeometryToolkitEstimation's `Ransac` on its `RotationProblem`
-  (its `scoring` and `local_optimization_strategy`, `ClassDefault()` for the rotation class's of record — `nothing` as
-  the strategy is no local optimization; `max_trials`, `min_trials` its `RansacConfig`'s; the sampler, its `rng`,
-  seeded from `seed`) and kept
-  with at least `min_inliers` inliers. Its residuals are in the camera's pixels
-  ([`pair_bearings`](@ref): plain detections).
-- graph: VisualGeometryToolkitEstimation's `FilteredRotationAveraging` of the
-  verified pairs' view graph, its averaging's strategy `averaging_optimization_strategy` (an `Irls{Shape}`, `nothing`
-  the least squares; `ClassDefault()`, VisualGeometryToolkitEstimation's `[rotation_averaging] optimization_strategy`): the pairs off a cycle
-  by more than `cycle_tol` removed (`filter_cycles`), the averaging, then the
-  pairs off the averaged rotations by more than `orientation_tol` removed
-  (`filter_by_orientation`) and the averaging again (radians; `nothing` skips
-  that filter). A periodic scene verifies a pair one period off as well as the
+- pairs: `pairs`, [`AllPairs`](@ref)`()` (every frame pair) or [`LagOverlap`](@ref)`(; max_lag, averaging)` (pairs at
+  most `max_lag` apart, then the pairs that join the parts and those its `averaging` aims past the lag); a pair is
+  verified by `ransac`, VisualGeometryToolkitEstimation's `Ransac` on its `RotationProblem` (its `scoring`,
+  `local_optimization_strategy` and `config`, `ClassDefault()` for the rotation class's of record — `nothing` as the
+  strategy is no local optimization; the sampler, its `rng`, seeded from `seed`) and kept with at least `min_inliers`
+  inliers. Its residuals are in the camera's pixels ([`pair_bearings`](@ref): plain detections).
+- graph: `averaging`, VisualGeometryToolkitEstimation's `FilteredRotationAveraging` of the verified pairs' view graph
+  (its `RotationAveraging`'s strategy an `Irls{Shape}`, `nothing` the least squares; `ClassDefault()`,
+  VisualGeometryToolkitEstimation's `[rotation_averaging] optimization_strategy`): the pairs off a cycle by more than its
+  `cycle_tol` removed (`filter_cycles`), the averaging, then the pairs off the averaged rotations by more than its
+  `orientation_tol` removed (`filter_by_orientation`) and the averaging again (radians; `nothing` skips that filter; the
+  default 2° and 5°). A periodic scene verifies a pair one period off as well as the
   true one, and only the view graph tells them apart. The pairs the filters removed are the
   result's `removed` (a pair with no determined rotation covariance is never an edge: it is
   the result's `no_covariance`, not `removed`); their matches make no track.
@@ -372,13 +372,12 @@ RANSAC's:
   its result: the consensus set's Student-t posterior scale) and the result's degrees
   of freedom, the pairs' `scales` ([`VerifiedPairs`](@ref)), px. No second scale
   estimate.
-- bundle: the rotation bundle, [`RotationBundleProblem`](@ref)`(camera, tracks)` refined by `LevenbergMarquardt(;
-  optimization_strategy = bundle_optimization_strategy)` (a `Triggs{Shape}`; `ClassDefault()`, VisualGeometryToolkitEstimation's
-  pixel bundle's) at `scale` the kept pairs' scales pooled by VisualGeometryToolkitEstimation's
+- bundle: the rotation bundle, [`RotationBundleProblem`](@ref)`(camera, tracks)` refined by `bundle`, Core's
+  `LevenbergMarquardt(; optimization_strategy)` (a `Triggs{Shape}`; `ClassDefault()`, VisualGeometryToolkitEstimation's
+  pixel bundle's) or a [`TrackCheck`](@ref) of one (the default, `TrackCheck()`), at `scale` the kept pairs' scales pooled by VisualGeometryToolkitEstimation's
   `PooledScale` (`σ̂² = Σ νₚŝₚ² / Σ νₚ`, `νₚ` the pair's degrees of freedom;
   the bundle records it as `ScaleUpstream`, its width the strategy's efficiency
-  constant × σ̂), σ̂ the result's `bundle_sigma`; ONE LM run (`bundle_max_iter`,
-  `bundle_ftol`, `bundle_xtol`: its `LmStops`), the width fixed.
+  constant × σ̂), σ̂ the result's `bundle_sigma`; ONE LM run per solve (`bundle_stops`, its `LmStops`), the width fixed.
   No kept pair with a scale is an `ArgumentError`. Every observation is its
   detection's centre in the camera's pixels (through the frames' `frame_map`), the
   residuals in pixels. The bundle holds the camera's calibration; the
@@ -387,17 +386,17 @@ RANSAC's:
   [`RotationBundleProblem`](@ref)`(tracks; fixed)` on the guess `(; camera, rotations)`, the result's rotations and tracks).
 - near-duplicates: a kept pair whose frames share at least `near_duplicate_overlap` of the smaller footprint — the solid
   angle both image, VisualGeometryToolkitCore's `view_overlap` under the averaged rotations, over the smaller frame's own
-  (`max(fraction_i, fraction_j)`): PanoramaStitching's one overlap estimate, as `:lag_overlap`'s — verifies and is averaged
+  (`max(fraction_i, fraction_j)`): PanoramaStitching's one overlap estimate, as `LagOverlap`'s — verifies and is averaged
   but seeds no track: two near-identical views match their repeated structure as well as their scene, and a wrong match
   through them chains far. The result's `near_duplicates`. Always on: `near_duplicate_overlap` defaults to 0.90 (the owner's
   value, owner ruling 2026-11-14); `0` turns the check off (every kept pair chained); a value outside `[0, 1]` is an
   `ArgumentError`. The camera's footprint is its `imaged_region` (its lens coverage), and `view_overlap`'s refusals apply
   (a grid model that is not a `CameraModel`, a field of view within 3° of the backward axis).
-- track check (`check_tracks = true`): after the bundle, the observations whose residual exceeds 3.035 σ̂ (σ̂ the pooled
-  scale above; √χ²₂(0.99): 1 % of the inliers at the true scale) are removed — a track left in fewer than two frames with
-  them — and the bundle re-solved from its rotations, until a solve leaves none to remove or 10 solves have removed some
-  (COLMAP's `filter_max_reproj_error` loop, Hugin's cpclean). The result's `track_check` holds each tested solve's
-  removals, plain rms and inlier rms.
+- track check (`bundle` a [`TrackCheck`](@ref), the default): after the bundle, the observations whose residual exceeds its
+  `cut_multiple` × σ̂ (3.035 σ̂ by default, √χ²₂(0.99): 1 % of the inliers at the true scale) are removed — a track left in
+  fewer than two frames with them — and the bundle re-solved from its rotations, until a solve leaves none to remove or its
+  `max_outer_iterations` solves (10) have removed some. The result's `track_check` holds each tested solve's removals, plain
+  rms and inlier rms (empty with a plain `LevenbergMarquardt`), its `tracks` the observations the last solve kept.
 
 `say` receives one line per frame, pair and step.
 
@@ -408,12 +407,11 @@ the first form is `register_rotations(verify_pairs(frames, camera; frame_map, �
 
 A task verb: it composes the estimators above and does none of its own. Each
 pair's RANSAC sampler is seeded from `seed` and the pair's frame indices, a
-stream of its own per `(seed, i, j)`. A `pairs` other than `:all` or
-`:lag_overlap`, a `max_lag` below 1 or none with `:lag_overlap` or one given with `:all`, a `near_duplicate_overlap` outside
+stream of its own per `(seed, i, j)`. A `near_duplicate_overlap` outside
 `[0, 1]`, the retired `overlap_deg` and `near_duplicate_deg` (PanoramaStitching 0.7's optical-axis angles, refused by name
 naming their successors), and an `execution_provider` other
 than `:auto`, `:cpu` or `:cuda`, and a camera whose footprint `view_overlap` refuses wherever the registration reads it
-(the near-duplicates, unless `near_duplicate_overlap = 0`; `:lag_overlap`'s pairs past the lag) are an `ArgumentError`
+(the near-duplicates, unless `near_duplicate_overlap = 0`; `LagOverlap`'s pairs past the lag) are an `ArgumentError`
 before any feature is detected. With either `pairs`, a view graph that is not connected once the
 pairs with fewer than `min_inliers` inliers are dropped (its frames have no
 common frame; VisualGeometryToolkitEstimation's `require_connected`) is an `ArgumentError` too.
@@ -424,43 +422,33 @@ function register_rotations(frames::AbstractVector, camera::VgtkCore.BoundedCame
                             sensor_models::Union{Nothing, AbstractVector{<:VgtkCore.SensorModel}} = nothing, noise_sigmas::Union{Nothing, Real} = nothing,
                             saturated::Union{Nothing, AbstractVector} = nothing,
                             descriptor::Symbol, matcher::Symbol, min_score::Real,
-                            pairs::Symbol, max_lag::Union{Nothing, Integer} = nothing,
-                            min_inliers::Integer, seed::Integer,
-                            scoring = VgtkCore.ClassDefault(), local_optimization_strategy = VgtkCore.ClassDefault(), max_trials::Integer, min_trials::Integer,
-                            averaging_optimization_strategy = VgtkCore.ClassDefault(), cycle_tol::Union{Nothing, Real} = deg2rad(2),
-                            orientation_tol::Union{Nothing, Real} = deg2rad(5), bundle_optimization_strategy = VgtkCore.ClassDefault(),
-                            bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real,
-                            near_duplicate_overlap::Real = _NEAR_DUPLICATE_OVERLAP, check_tracks::Bool = true,
+                            pairs::Union{AllPairs, LagOverlap}, min_inliers::Integer, seed::Integer, ransac::VgtkEstimation.Ransac,
+                            averaging::VgtkEstimation.FilteredRotationAveraging =
+                                VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5)),
+                            bundle::Union{VgtkCore.LevenbergMarquardt, TrackCheck} = TrackCheck(), bundle_stops::VgtkCore.LmStops,
+                            near_duplicate_overlap::Real = _NEAR_DUPLICATE_OVERLAP,
                             execution_provider::Symbol = :auto, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("register_rotations", retired)
-    _check_pair_settings("register_rotations", pairs, max_lag)
-    _check_tolerances("register_rotations", cycle_tol, orientation_tol)
     _check_near_duplicate("register_rotations", near_duplicate_overlap)
-    _check_view_overlap("register_rotations", camera, pairs, near_duplicate_overlap; nframes = length(frames), max_lag)
+    _check_view_overlap("register_rotations", camera, pairs, near_duplicate_overlap; nframes = length(frames))
     vp = verify_pairs(frames, camera; frame_map, tone_percentile, detector_margin_px, asift_tilts, max_detections, selection,
                       detection_image, sensor_models, noise_sigmas, saturated, descriptor, matcher,
-                      min_score, pairs, max_lag, min_inliers, seed, scoring, local_optimization_strategy, max_trials, min_trials,
-                      averaging_optimization_strategy = pairs === :lag_overlap ? averaging_optimization_strategy : VgtkCore.ClassDefault(),
-                      execution_provider, say)
-    return register_rotations(vp, camera; frame_map, averaging_optimization_strategy, cycle_tol, orientation_tol, bundle_optimization_strategy,
-                              bundle_max_iter, bundle_ftol, bundle_xtol, near_duplicate_overlap, check_tracks, say)
+                      min_score, pairs, min_inliers, seed, ransac, execution_provider, say)
+    return register_rotations(vp, camera; frame_map, averaging, bundle, bundle_stops, near_duplicate_overlap, say)
 end
 
-function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; frame_map, averaging_optimization_strategy = VgtkCore.ClassDefault(),
-                            cycle_tol::Union{Nothing, Real} = deg2rad(2), orientation_tol::Union{Nothing, Real} = deg2rad(5),
-                            bundle_optimization_strategy = VgtkCore.ClassDefault(),
-                            bundle_max_iter::Integer, bundle_ftol::Real, bundle_xtol::Real,
-                            near_duplicate_overlap::Real = _NEAR_DUPLICATE_OVERLAP, check_tracks::Bool = true,
-                            say = _ -> nothing, retired...)
+function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; frame_map,
+                            averaging::VgtkEstimation.FilteredRotationAveraging =
+                                VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5)),
+                            bundle::Union{VgtkCore.LevenbergMarquardt, TrackCheck} = TrackCheck(), bundle_stops::VgtkCore.LmStops,
+                            near_duplicate_overlap::Real = _NEAR_DUPLICATE_OVERLAP, say = _ -> nothing, retired...)
     _refuse_retired_registration_keywords("register_rotations", retired)
     _check_near_duplicate("register_rotations", near_duplicate_overlap)
-    _check_view_overlap("register_rotations", camera, :all, near_duplicate_overlap)
+    _check_view_overlap("register_rotations", camera, AllPairs(), near_duplicate_overlap)
     feats = vp.features; K = length(feats)
     no_covariance = _no_covariance_pairs(vp.verified)
     isempty(no_covariance) || say("  rotation averaging: $(length(no_covariance)) verified pair(s) with no determined rotation covariance, " *
                                   "not edges: " * join(["$(i - 1)-$(j - 1)" for (i, j) in no_covariance], ", "))
-    averaging = VgtkEstimation.FilteredRotationAveraging(; cycle_tol, orientation_tol,
-                                                         averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = averaging_optimization_strategy))
     avg = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkCore.AbsoluteRotations, _view_graph(K, vp.verified)), averaging)
     graph = avg.metadata.graph
     # removed by the filters: the edges of the averaged graph it no longer holds (a pair with no covariance was never an edge)
@@ -486,40 +474,18 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
     say("  scale: σ̂ $(round(σ; sigdigits = 3)) pooled over $(pooled.metadata.pooled) kept pairs' RANSAC scales, px, the bundle's scale")
     # every observation its detection's centre in the camera's pixels, through the frame map
     pixel(k, kp) = frame_map(SVector{2, Float64}(VgtkCore.centroid(VgtkCore.feature_frame(feats[k][kp]))))
-    lm = VgtkCore.LevenbergMarquardt(; optimization_strategy = bundle_optimization_strategy)
-    stops = VgtkCore.LmStops(; max_iter = bundle_max_iter, ftol = bundle_ftol, xtol = bundle_xtol)
-    observations(ts) = [[k => pixel(k, kp) for (k, kp) in t] for t in ts]
-    refine(rotations, ts) = VgtkCore.solve(VgtkCore.RefineProblem(RotationBundleProblem(camera, observations(ts)), rotations), lm; scale = pooled, stops)
-    bundle = refine(A, ts)
-    # the track check: remove the observations past k·σ̂ and re-solve from the last rotations, until none is removed (or the cap)
-    history = NamedTuple{(:removed, :rms, :inlier_rms), Tuple{Int, Float64, Float64}}[]
-    if check_tracks
-        cut = _TRACK_CHECK_K * σ
-        for _ in 1:_TRACK_CHECK_CAP
-            kept = [[o for (o, r) in zip(t, rt) if !(r > cut)] for (t, rt) in zip(ts, bundle.metadata.residuals)]   # NaN: left out, kept
-            kept = filter(t -> length(unique(first.(t))) >= 2, kept)
-            nrem = sum(length, ts; init = 0) - sum(length, kept; init = 0)
-            push!(history, (; removed = nrem, rms = bundle.rms, inlier_rms = bundle.metadata.inlier_rms))
-            say("  track check $(length(history)): $nrem observations past $(round(cut; digits = 3)) px ($(_TRACK_CHECK_K) σ̂) removed; " *
-                "bundle rms $(round(bundle.rms; digits = 3)) px, inlier rms $(round(bundle.metadata.inlier_rms; digits = 3)) px")
-            nrem == 0 && break
-            ts = kept
-            bundle = refine(bundle.u, ts)
-        end
+    problem = VgtkCore.RefineProblem(RotationBundleProblem(camera, [[k => pixel(k, kp) for (k, kp) in t] for t in ts]), A)
+    res = VgtkCore.solve(problem, bundle; scale = pooled, stops = bundle_stops)
+    bundle_result, ts, history = _bundle_record(res, ts, bundle)
+    for (n, h) in enumerate(history)
+        say("  track check $n: $(h.removed) observations past $(round(bundle.cut_multiple * σ; digits = 3)) px ($(bundle.cut_multiple) σ̂) " *
+            "removed; bundle rms $(round(h.rms; digits = 3)) px, inlier rms $(round(h.inlier_rms; digits = 3)) px")
     end
+    bundle = bundle_result
     say("  bundle: $(bundle.n) observations, $(bundle.stats.nsteps) iterations, rms $(round(bundle.rms; digits = 3)) px (inliers $(round(bundle.metadata.inlier_rms; digits = 3)) px), loss width $(round(bundle.metadata.loss_width; digits = 3)) px, " *
         "$(bundle.retcode) ($(bundle.stop_rule)), $(bundle.metadata.n_dropped_start) observations dropped at the start (not imaged there)")
     Rs = [RotMatrix{3, Float64, 9}(bundle.u[k]) for k in 1:K]
     return Registration(Rs, graph, removed, no_covariance, vp.stats, avg, near, ts, dropped, history, bundle, σ, feats, vp.loma)
-end
-
-# The view-graph filters' tolerances (radians): positive, or nothing (that filter skipped). Checked before any feature is detected;
-# from the verified pairs, VisualGeometryToolkitEstimation's `FilteredRotationAveraging` refuses them itself.
-function _check_tolerances(what, cycle_tol, orientation_tol)
-    for (name, t) in (("cycle_tol", cycle_tol), ("orientation_tol", orientation_tol))
-        t === nothing || (isfinite(t) && t > 0) || throw(ArgumentError("$what: $name = $t is not positive (radians; nothing skips the filter)"))
-    end
-    return nothing
 end
 
 # The near-duplicate threshold of record: a kept pair whose frames share at least this fraction of the smaller footprint
@@ -528,14 +494,14 @@ end
 const _NEAR_DUPLICATE_OVERLAP = 0.90
 
 # The camera's footprint, checked before any feature is detected: the registration reads VisualGeometryToolkitCore's
-# view_overlap through `camera` (the near-duplicates, unless `near_duplicate_overlap` is 0; `:lag_overlap`'s pairs past the
+# view_overlap through `camera` (the near-duplicates, unless `near_duplicate_overlap` is 0; `LagOverlap`'s pairs past the
 # lag), so its refusals of the footprint (a model that is not a CameraModel, a region the lens cannot back-project, a field
 # of view within 3° of the backward axis) come at the entry, not after every pair was matched. Where nothing can read it
 # (the near-duplicate check off; no pair past the lag: `nframes ≤ max_lag + 1`), nothing is refused; a near-duplicate check
 # that is on may read it (whether a kept pair is left to test is known only after the matching), so it is checked.
-function _check_view_overlap(what, camera, pairs, near_duplicate_overlap; nframes = typemax(Int), max_lag = 0)
+function _check_view_overlap(what, camera, pairs, near_duplicate_overlap; nframes = typemax(Int))
     readers = String[]
-    pairs === :lag_overlap && nframes > something(max_lag, 0) + 1 && push!(readers, "pairs = :lag_overlap (its pairs past the lag)")
+    pairs isa LagOverlap && nframes > pairs.max_lag + 1 && push!(readers, "pairs = LagOverlap (its pairs past the lag)")
     near_duplicate_overlap > 0 && push!(readers, "near_duplicate_overlap = $near_duplicate_overlap (the near-duplicate pairs)")
     isempty(readers) && return nothing
     # one frame's footprint (Core's view_overlap builds it, and refuses it, before any pair): a stopgap until Core exposes the
@@ -555,14 +521,11 @@ _check_near_duplicate(what, f) = (isfinite(f) && 0 <= f <= 1) ||
     throw(ArgumentError("$what: near_duplicate_overlap = $f is not a fraction in [0, 1] (of the smaller footprint; 0 turns the " *
                         "check off)"))
 
-# The track check's outlier cut and its cap (`register_rotations`, `check_tracks`): an observation whose bundle residual exceeds
-# _TRACK_CHECK_K × σ̂ (σ̂ the kept pairs' pooled robust scale, the bundle's) is removed and the bundle re-solved, until none is
-# removed or _TRACK_CHECK_CAP solves have removed some. The cut: a residual is 2-D, ‖r‖²/σ² ~ χ²₂ for an inlier, so
-# P(‖r‖ > kσ) = exp(−k²/2); k = √χ²₂(0.99) = √9.21 = 3.035 removes 1 % of the inliers at the true σ (COLMAP's
-# filter_max_reproj_error and Hugin's cpclean loop, at a stated quantile). The cap: each solve after the first only re-fits
-# the observations that remain, so the removals shrink geometrically; 10 bounds a sweep whose removals do not.
-const _TRACK_CHECK_K = 3.035
-const _TRACK_CHECK_CAP = 10
+# The registration's bundle, its tracks and its track check's history from the bundle's solve: a plain LevenbergMarquardt's
+# result is the bundle (every track kept, no check); a TrackCheck's holds its last bundle, the observations it kept (per kept
+# track, `j => indices` into the registration's track `j`) and its history.
+_bundle_record(res, ts, ::VgtkCore.LevenbergMarquardt) = (res, ts, NamedTuple{(:removed, :rms, :inlier_rms), Tuple{Int, Float64, Float64}}[])
+_bundle_record(res, ts, ::TrackCheck) = (res.metadata.bundle, [ts[j][idx] for (j, idx) in res.metadata.kept], res.metadata.history)
 
 # A verified pair's rotation covariance (rad², the so(3) chart of R_ij): VisualGeometryToolkitEstimation's
 # `uncertain_rotation` of the pair's own RotationProblem and RANSAC result — its scorer's `noise_scale`² × the
@@ -584,7 +547,7 @@ _no_covariance_pairs(verified) = sort!([p for (p, e) in verified if e.covariance
 # rotation `R_ij` (`f_j = R_ij·f_i`) with its absolute covariance, weighted by its inlier count:
 # `Attributed(Uncertain(R_ij, CovMat(Σ_R)), (; weight))`. A pair with no determined covariance is no edge; a drop that splits
 # the frames is refused naming the dropped pairs (the averaging of a partial graph would hide them); `check = false` skips that
-# refusal (`:lag_overlap`'s joining loop, which may yet bridge the split with a pair past the lag).
+# refusal (`LagOverlap`'s joining loop, which may yet bridge the split with a pair past the lag).
 function _view_graph(K::Integer, verified::AbstractDict; check::Bool = true)
     edges = Dict(p => VgtkCore.Attributed(VgtkCore.Uncertain(e.rotation, VgtkCore.CovMat(e.covariance)), (; weight = Float64(e.inliers)))
                  for (p, e) in verified if e.covariance !== nothing)
@@ -603,13 +566,16 @@ end
 # decimal text, so no two (seed, i, j) share a stream) seeding a StableRNG (its stream fixed across Julia versions).
 _pair_rng(seed::Integer, i::Integer, j::Integer) = StableRNG(VgtkCore.stable_seed(seed, i, j))
 
-# The pairs of `pairs = :lag_overlap` past the lag, after the lag pairs: `verify(i, j)` adds a pair it keeps to `verified`.
+# The pairs of `pairs = LagOverlap(…)` past the lag, after the lag pairs (none for `AllPairs()`): `verify(i, j)` adds a pair it
+# keeps to `verified`.
 # While the verified pairs leave the frames in more than one part (a lag pair dropped), the untried pair between two parts
 # nearest in capture order is tried, since no verified rotation relates their frames; when no such pair is left the graph stays
 # disconnected (the rotation averaging refuses it). Then the rotation averaging of every verified pair aims the rest: a pair whose
 # frames share any view through `camera` (`_shared_views`: a solid angle above zero) is tried, in (i, j) order; `verify` keeps it
 # with `min_inliers` inliers.
-function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_lag::Integer, camera::VgtkCore.BoundedCamera, averaging_strategy)
+_verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, ::AllPairs, camera::VgtkCore.BoundedCamera) = nothing
+function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, pairs::LagOverlap, camera::VgtkCore.BoundedCamera)
+    max_lag = pairs.max_lag
     tried = Set{Tuple{Int, Int}}()                               # pairs past the lag: no lag pair comes up again
     attempt(p) = (push!(tried, p); verify(p...))
     while true
@@ -626,7 +592,7 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, max_
     K > 1 || return nothing
     K > max_lag + 1 || return nothing                            # no pair past the lag
     A = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkCore.AbsoluteRotations, _view_graph(K, verified; check = false)),
-                       VgtkEstimation.RotationAveraging(; optimization_strategy = averaging_strategy)).u
+                       pairs.averaging).u
     shared = _shared_views(camera, [A[k] for k in 1:K])
     for i in 1:K, j in (i + max_lag + 1):K
         ((i, j) ∉ tried && shared[(i, j)] > 0) && attempt((i, j))
@@ -636,7 +602,7 @@ end
 
 # PanoramaStitching's ONE spherical view-overlap estimate: VisualGeometryToolkitCore's `view_overlap` of the frames of `camera`
 # posed by the rotations `A` (camera → common frame, `d = R_k·f_k`), per pair `(i, j)`, i < j, the solid angle both frames image
-# as a fraction of the smaller footprint (`max(fraction_i, fraction_j)`). `:lag_overlap` tries the pairs past the lag that share
+# as a fraction of the smaller footprint (`max(fraction_i, fraction_j)`). `LagOverlap` tries the pairs past the lag that share
 # any view; the registration's chaining leaves out the pairs that share at least `near_duplicate_overlap`.
 function _shared_views(camera::VgtkCore.BoundedCamera, A::AbstractVector)
     rows = VgtkCore.view_overlap([_oriented_frame(camera, R) for R in A])

@@ -37,6 +37,46 @@ const CT = PNGFiles.ColorTypes
 # Every input path is relative to the data root: VisualGeometryToolkitEval.Experiments' `data_root` ($VGTK_DATA_ROOT, README "Inputs").
 input_path(rel) = joinpath(VgtkEval.Experiments.data_root(), rel)
 
+# The example's configuration versions (VisualGeometryToolkitCore's ConfigVersions; decision 11: a table is named after the
+# algorithm or problem it configures). A config states its `config_version`; one without it is version 1 (PanoramaStitching 0.11
+# and earlier: every registration setting in [registration], the fit's in [vignetting]), read through the step below, so the code
+# reads the current tables only and a stored config keeps loading.
+const EXAMPLE_CONFIG_VERSIONS = VgtkCore.ConfigVersions("panorama_vignetting",
+    # version 1 → 2 (PanoramaStitching 0.12): the pairs' RANSAC, the lag pairs, the averaging, the bundle and the fit in their own
+    # tables; the bundle (check_tracks) and the fit's solver by tag
+    VgtkCore.ConfigMigration(; tables = ["name", "inputs", "compute", "decode", "registration", "domain", "vignetting", "seams", "render"],
+        renames = ["registration.outlier_halfwidth_px" => "rotation_problem.ransac.outlier_halfwidth_px",
+                   "registration.local_optimization_strategy" => "rotation_problem.ransac.local_optimization_strategy",
+                   "registration.max_trials" => "ransac.max_trials", "registration.min_trials" => "ransac.min_trials",
+                   "registration.max_lag" => "lag_overlap.max_lag",
+                   "registration.averaging_optimization_strategy" => "rotation_averaging.optimization_strategy",
+                   "registration.bundle_optimization_strategy" => "rotation_bundle_problem.levenberg_marquardt.optimization_strategy",
+                   "registration.bundle_max_iter" => "rotation_bundle_problem.levenberg_marquardt.stops.max_iter",
+                   "registration.bundle_ftol" => "rotation_bundle_problem.levenberg_marquardt.stops.ftol",
+                   "registration.bundle_xtol" => "rotation_bundle_problem.levenberg_marquardt.stops.xtol",
+                   "vignetting.chart_spacing_deg" => "vignetting_self_calibration.chart_spacing_deg",
+                   "vignetting.penalty_order" => "vignetting_self_calibration.penalty_order",
+                   "vignetting.penalty_weight" => "vignetting_self_calibration.penalty_weight",
+                   "vignetting.vignetting_penalty_weight" => "vignetting_self_calibration.vignetting_penalty_weight",
+                   "vignetting.gain_correction" => "vignetting_self_calibration.gain_correction",
+                   "vignetting.observation_noise" => "vignetting_self_calibration.observation_noise",
+                   "vignetting.observation_noise_iterations" => "vignetting_self_calibration.observation_noise_iterations",
+                   "vignetting.cg_tolerance" => "vignetting_self_calibration.stops.rtol",
+                   "vignetting.cg_max_iter" => "vignetting_self_calibration.stops.max_iter"],
+        values = ["registration.check_tracks" => t -> ("registration.bundle" => t ? "track_check" : "levenberg_marquardt"),
+                  "vignetting.solver" => s -> ("vignetting_self_calibration.solver" => get(Dict("cg" => "normal_cg", "cholesky" => "sparse_cholesky"), s, s))]);
+    tables = ["name", "inputs", "compute", "decode", "registration", "domain", "vignetting", "seams", "render", "rotation_problem", "ransac",
+              "lag_overlap", "rotation_averaging", "rotation_bundle_problem", "vignetting_self_calibration"])
+
+# The algorithms a config names by tag (the tag rule: VisualGeometryToolkitCore's TagRegistry): the pairs verified, the bundle's
+# refine (a TrackCheck of the LevenbergMarquardt, or that LevenbergMarquardt alone) and the fit's linear solver.
+const PAIR_SELECTIONS = VgtkCore.TagRegistry(:pair_selection, "Pairs", "all" => AllPairs, "lag_overlap" => LagOverlap;
+                                             paths = [r"registration\.pairs"])
+const BUNDLE_REFINES = VgtkCore.TagRegistry(:bundle_refine, "", "track_check" => TrackCheck, "levenberg_marquardt" => VgtkCore.LevenbergMarquardt;
+                                            paths = [r"registration\.bundle"])
+const LINEAR_SOLVERS = VgtkCore.TagRegistry(:linear_solver, "", "normal_cg" => VgtkCore.NormalCG, "sparse_cholesky" => SparseCholesky;
+                                            paths = [r"vignetting_self_calibration\.solver"])
+
 # The vignetting keys of earlier releases (PanoramaStitching 0.4 renamed the weights, 0.7 the noise: an observation's, the
 # terminology's word): a table that holds one is refused by name, never read as the new setting. The 0.4–0.6 key is spelled in
 # fragments (check_naming retires its word from every identifier).
@@ -68,12 +108,12 @@ function refuse_circle(inputs, where)
     return inputs
 end
 
-# The key only `pairs = "lag_overlap"` reads (PanoramaStitching refuses it with "all": no inert setting), refused when the
-# config is read, so a config fails the same way whether or not its stages are cached.
-function refuse_inert_pair_keys(table, where)
-    table["pairs"] == "all" && haskey(table, "max_lag") &&
-        throw(ArgumentError("$where: max_lag is read only by pairs = \"lag_overlap\"; remove it with pairs = \"all\""))
-    return table
+# The table only `pairs = "lag_overlap"` reads ([lag_overlap]: its max_lag), refused with "all" when the config is read (no inert
+# setting), so a config fails the same way whether or not its stages are cached.
+function refuse_inert_pair_keys(cfg, where)
+    cfg["registration"]["pairs"] == "all" && haskey(cfg, "lag_overlap") &&
+        throw(ArgumentError("$where: [lag_overlap] is read only by pairs = \"lag_overlap\"; remove it with pairs = \"all\""))
+    return cfg
 end
 
 # The output folder of earlier releases (`output`, relative to the config): the results go under Eval's results root, keyed by
@@ -100,10 +140,11 @@ end
 function refuse_config(cfg, where)
     refuse_output(cfg, where)
     refuse_renamed_keys(cfg["vignetting"], "$where [vignetting]")
+    refuse_renamed_keys(get(cfg, "vignetting_self_calibration", Dict{String, Any}()), "$where [vignetting_self_calibration]")
     refuse_circle(cfg["inputs"], "$where [inputs]")
     # the retired [registration] keys: PanoramaStitching's one list, the keywords' (refused by name, never read)
     PanoramaStitching.refuse_retired_registration(cfg["registration"], "$where [registration]")
-    refuse_inert_pair_keys(cfg["registration"], "$where [registration]")
+    refuse_inert_pair_keys(cfg, where)
     dec = refuse_undeclared_sensor_record(cfg["decode"], "$where [decode]")
     reg = refuse_undeclared_sensor_record(cfg["registration"], "$where [registration]")
     reg["detection_image"] == "tone" && reg["sensor_characterization"] != dec["sensor_characterization"] &&
@@ -118,7 +159,11 @@ end
 # cache), `code` the code trees every product is keyed by (Eval's `current_code_trees`: PanoramaStitching's and every stack
 # package's this environment loads; computed once: a `Product` would compute them again each time).
 function load_config(path)
-    cfg = refuse_config(TOML.parsefile(path), path)
+    # the keys of earlier releases refused by name first (a version-1 file holds them where that version did), then the file read
+    # through the example's converter at the current version, and refused again there
+    raw = TOML.parsefile(path)
+    refuse_renamed_keys(get(raw, "vignetting", Dict{String, Any}()), "$path [vignetting]")
+    cfg = refuse_config(VgtkCore.migrate_config(raw, EXAMPLE_CONFIG_VERSIONS; source = path), path)
     experiment = "panorama_vignetting/" * cfg["name"]
     out = joinpath(VgtkEval.Experiments.results_root(), experiment)
     return (; cfg, out, experiment, code = VgtkEval.Experiments.current_code_trees(), path = abspath(path))
@@ -220,11 +265,11 @@ end
 # ----------------------------------------------------------------------------- registration (cached by its settings)
 
 # The averaging's and the bundle's strategies: their [registration] tables, read by Estimation's one strategy reader.
-averaging_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["averaging_optimization_strategy"];
-                                                                      class = :rotation_averaging,
-                                                                      section = "registration.averaging_optimization_strategy")
-bundle_strategy(r) = VgtkEstimation.optimization_strategy_from_toml(r["bundle_optimization_strategy"]; class = :rotation_bundle_problem,
-                                                                   section = "registration.bundle_optimization_strategy")
+averaging_strategy(cfg) = VgtkEstimation.optimization_strategy_from_toml(cfg["rotation_averaging"]["optimization_strategy"];
+                                                                        class = :rotation_averaging, section = "rotation_averaging.optimization_strategy")
+bundle_strategy(cfg) = VgtkEstimation.optimization_strategy_from_toml(cfg["rotation_bundle_problem"]["levenberg_marquardt"]["optimization_strategy"];
+                                                                     class = :rotation_bundle_problem,
+                                                                     section = "rotation_bundle_problem.levenberg_marquardt.optimization_strategy")
 
 # The stages' records (the verified pairs, the registration): each an Eval `Product` of the set (`stage_product`), its record
 # `<name>.jld2` in its keyed directory, reused while its key — a SHA-256 of the record's format, the stage's settings, the ONNX
@@ -279,7 +324,10 @@ stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for the position noise.
 const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v17 (the near-duplicate pairs by view_overlap's shared fraction of the smaller footprint; the kept pairs; the near-duplicate pairs not chained; the track check, per solve its removals and rms; the bundle's inlier rms; pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
-registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTRATION_FORMAT, C.cfg["registration"], provider)
+# The registration's settings: its own table and those of the algorithms it composes.
+const REGISTRATION_TABLES = ("registration", "rotation_problem", "ransac", "lag_overlap", "rotation_averaging", "rotation_bundle_problem")
+registration_settings(C, inp, provider::Symbol) =
+    stage_settings(C, inp, REGISTRATION_FORMAT, Dict{String, Any}(t => C.cfg[t] for t in REGISTRATION_TABLES if haskey(C.cfg, t)), provider)
 
 # The verified pairs' key: the [registration] settings of the features, the matching and the verification — every one but the
 # rotation averaging's and the bundle's, so changing those reuses the pairs. With pairs = "lag_overlap" the averaging loss aims
@@ -303,17 +351,24 @@ registration_settings(C, inp, provider::Symbol) = stage_settings(C, inp, REGISTR
 # residuals whitened by them (scoring_threshold in sigmas of the unit noise; the px threshold retired), per pair its rms and σ̂
 # in those sigmas.
 const PAIRS_FORMAT = "panorama_vignetting/verified_pairs/v12 (:lag_overlap's pairs past the lag by view_overlap; the terminology's words; plain detections, pixel residuals of the correspondences; Student-t + uniform pair scorer at outlier_halfwidth_px; per pair its RANSAC scorer's ŝ and dof; Features' described features, the detector's covariances; the pairs' residuals in sigmas of their unit noise; per pair its absolute rotation covariance (uncertain_rotation, the detections' covariance shapes in its residuals); the clip mask; Features' canonical detection order; per pair its SIMFIT++ scale; the detector's selection and detection image; LoMa's provider in the key and its provenance; features' pixels and covariances; per pair its rotation, counts and inlier matches)"
-const AVERAGING_BUNDLE_KEYS = ("averaging_optimization_strategy", "cycle_tol_deg", "orientation_tol_deg", "bundle_optimization_strategy", "bundle_max_iter",
-                               "bundle_ftol", "bundle_xtol", "near_duplicate_overlap", "check_tracks")
-function pairs_settings(r)
-    drop = r["pairs"] == "lag_overlap" ? filter(!=("averaging_optimization_strategy"), AVERAGING_BUNDLE_KEYS) : AVERAGING_BUNDLE_KEYS
-    return Dict(k => v for (k, v) in r if k ∉ drop)
+# The verified pairs' settings: [registration] but the keys of the steps after them (the view-graph filters, the near-duplicates,
+# the bundle), the pairs'
+# RANSAC ([rotation_problem], [ransac]), the lag pairs ([lag_overlap]) and, with "lag_overlap", the averaging that aims them.
+const AFTER_PAIRS_KEYS = ("cycle_tol_deg", "orientation_tol_deg", "near_duplicate_overlap", "bundle")
+function pairs_settings(cfg)
+    r = cfg["registration"]
+    s = Dict{String, Any}("registration" => Dict(k => v for (k, v) in r if k ∉ AFTER_PAIRS_KEYS))
+    for t in ("rotation_problem", "ransac", "lag_overlap")
+        haskey(cfg, t) && (s[t] = cfg[t])
+    end
+    r["pairs"] == "lag_overlap" && (s["rotation_averaging"] = cfg["rotation_averaging"])
+    return s
 end
 # The detector's characterisation keys the pairs by its content too (its artifacts' SHA-256s are in it), beside its path in the
 # settings; with "vst" only: with "tone" it is [decode]'s (`refuse_config`), whose content `stage_settings` keys already.
 function pairs_stage_settings(C, inp, provider::Symbol)
     r = C.cfg["registration"]
-    st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(r), provider)
+    st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(C.cfg), provider)
     r["detection_image"] == "vst" && r["sensor_characterization"] != "none" &&
         (st["sensor_characterization_sha256"] = sensor_record_sha256(r["sensor_characterization"]))
     return st
@@ -385,8 +440,31 @@ end
 # The pairs' RANSAC local optimization, `[registration] local_optimization_strategy`: an Estimation strategy table
 # (`{ type = "triggs", loss = "welsch", efficiency_constant = 2.5 }`, `{ type = "irls", loss = "tls" }`), read by Estimation's own
 # loader (an unknown type, loss or key refused).
-rotation_local_optimization(r) = VgtkEstimation.optimization_strategy_from_toml(r["local_optimization_strategy"]; class = :rotation,
-                                                                                section = "registration.local_optimization_strategy")
+rotation_local_optimization(cfg) = VgtkEstimation.optimization_strategy_from_toml(cfg["rotation_problem"]["ransac"]["local_optimization_strategy"];
+                                                                                  class = :rotation, section = "rotation_problem.ransac.local_optimization_strategy")
+# The pairs' RANSAC ([rotation_problem.ransac], [ransac]): the Student-t + uniform scorer at `outlier_halfwidth_px` (Jeffreys scale
+# and flat label priors), the local optimization above and the trial budget.
+pair_ransac(cfg) = VgtkEstimation.Ransac(; scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem,
+                                                                                    Float64(cfg["rotation_problem"]["ransac"]["outlier_halfwidth_px"]);
+                                                                                    scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior()),
+                                         local_optimization_strategy = rotation_local_optimization(cfg),
+                                         config = VgtkEstimation.RansacConfig(; max_trials = cfg["ransac"]["max_trials"], min_trials = cfg["ransac"]["min_trials"]))
+# The pairs verified (`registration.pairs`, PAIR_SELECTIONS): AllPairs, or LagOverlap at [lag_overlap] max_lag, its averaging
+# aiming the pairs past the lag the registration's [rotation_averaging].
+pair_selection(cfg) = _pair_selection(PAIR_SELECTIONS[cfg["registration"]["pairs"]], cfg)
+_pair_selection(::Type{AllPairs}, cfg) = AllPairs()
+_pair_selection(::Type{LagOverlap}, cfg) = LagOverlap(; max_lag = cfg["lag_overlap"]["max_lag"], averaging = rotation_averaging(cfg))
+rotation_averaging(cfg) = VgtkEstimation.RotationAveraging(; optimization_strategy = averaging_strategy(cfg))
+# The view-graph filters ([registration] cycle_tol_deg, orientation_tol_deg: the averaging's tolerances, degrees; their table is
+# [registration] until the naming gate accepts an upstream algorithm's tag as a table name) and the averaging, and the bundle ([rotation_bundle_problem.
+# levenberg_marquardt]; `registration.bundle`, BUNDLE_REFINES: a TrackCheck of it, or it alone) at its stops.
+filtered_averaging(cfg) = VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(cfg["registration"]["cycle_tol_deg"]),
+                                                                   orientation_tol = deg2rad(cfg["registration"]["orientation_tol_deg"]),
+                                                                   averaging = rotation_averaging(cfg))
+bundle_algorithm(cfg) = _bundle_algorithm(BUNDLE_REFINES[cfg["registration"]["bundle"]], VgtkCore.LevenbergMarquardt(; optimization_strategy = bundle_strategy(cfg)))
+_bundle_algorithm(::Type{TrackCheck}, lm) = TrackCheck(lm)
+_bundle_algorithm(::Type{<:VgtkCore.LevenbergMarquardt}, lm) = lm
+bundle_stops(cfg) = (s = cfg["rotation_bundle_problem"]["levenberg_marquardt"]["stops"]; VgtkCore.LmStops(; max_iter = s["max_iter"], ftol = s["ftol"], xtol = s["xtol"]))
 
 # The verified pairs' product (verified_pairs/<key>/verified_pairs.jld2): the hour of ASIFT, LoMa and RANSAC of a set is spent
 # once per matching setting, and produced before the view graph is built, so a failure past it (the averaging, the bundle)
@@ -402,15 +480,8 @@ function produce_pairs(C, inp, lens, provider::Symbol; log)
         vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
                           max_detections = r["max_detections"], det.selection, det.detection_image, sensor_models = models, det.noise_sigmas, descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
-                          min_score = r["min_score"], pairs = Symbol(r["pairs"]), max_lag = get(r, "max_lag", nothing),
-                          min_inliers = r["min_inliers"], seed = r["seed"],
-                          scoring = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, Float64(r["outlier_halfwidth_px"]);
-                                                                     scale_prior = VgtkCore.JeffreysPrior(), label_prior = VgtkCore.FlatLabelPrior()),
-                          local_optimization_strategy = rotation_local_optimization(r),
-                          max_trials = r["max_trials"], min_trials = r["min_trials"],
-                          # the averaging aims :lag_overlap's pairs past the lag; :all reads none (verify_pairs refuses it)
-                          (r["pairs"] == "lag_overlap" ? (; averaging_optimization_strategy = averaging_strategy(r)) : (;))...,
-                          execution_provider = provider, say = m -> say(log, m))
+                          min_score = r["min_score"], pairs = pair_selection(C.cfg), min_inliers = r["min_inliers"], seed = r["seed"],
+                          ransac = pair_ransac(C.cfg), execution_provider = provider, say = m -> say(log, m))
         merge!(pairs_record(vp), Dict{String, Any}("frames" => inp.names, "seconds" => time() - t0))
     end
 end
@@ -427,11 +498,8 @@ function registration(C, inp, lens; log)
         rp = stage_record(pp)
         vp = (; pairs = pairs_from_record(rp), seconds = Float64(rp["seconds"]))
         t0 = time()
-        reg = register_rotations(vp.pairs, lens; frame_map = inp.frame_map, averaging_optimization_strategy = averaging_strategy(r),
-                                 cycle_tol = deg2rad(r["cycle_tol_deg"]), orientation_tol = deg2rad(r["orientation_tol_deg"]),
-                                 bundle_optimization_strategy = bundle_strategy(r),
-                                 bundle_max_iter = r["bundle_max_iter"], bundle_ftol = r["bundle_ftol"], bundle_xtol = r["bundle_xtol"],
-                                 near_duplicate_overlap = r["near_duplicate_overlap"], check_tracks = r["check_tracks"], say = m -> say(log, m))
+        reg = register_rotations(vp.pairs, lens; frame_map = inp.frame_map, averaging = filtered_averaging(C.cfg), bundle = bundle_algorithm(C.cfg),
+                                 bundle_stops = bundle_stops(C.cfg), near_duplicate_overlap = r["near_duplicate_overlap"], say = m -> say(log, m))
         Rs = [SMatrix{3, 3, Float64, 9}(R) for R in reg.rotations]
         Dict{String, Any}("convention" => "d = R_k·f_k, the first frame's camera frame the common frame; R row by row",
                           "frames" => inp.names, "rotations" => [[collect(R[i, :]) for i in 1:3] for R in Rs],
@@ -460,7 +528,7 @@ function registration(C, inp, lens; log)
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                           # the bundle's robust loss width and scale (px) and its strategy
                           "bundle_loss_width" => reg.bundle.metadata.loss_width,
-                          "bundle_optimization_strategy" => VgtkEstimation.config_dict(bundle_strategy(r)),
+                          "bundle_optimization_strategy" => VgtkEstimation.config_dict(bundle_strategy(C.cfg)),
                           "bundle_scale" => VgtkCore.noise_scale(reg.bundle),
                           # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the detections' covariances) and the LM
                           # iterations its one run took
@@ -540,15 +608,19 @@ function fit_observation_noise(v, point_scale_px)
     return PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = point_scale_px), iterations = v["observation_noise_iterations"])
 end
 
+# The CG's stops ([vignetting_self_calibration.stops]: rtol, max_iter); a Cholesky solve reads none, and a stops table with it is
+# refused (no inert setting).
+fit_stops(::VgtkCore.NormalCG, v) = VgtkCore.ToleranceStops(; rtol = v["stops"]["rtol"], max_iter = v["stops"]["max_iter"])
+fit_stops(::SparseCholesky, v) = haskey(v, "stops") ?
+    error("vignetting_self_calibration.stops: read only by solver = \"normal_cg\"; remove it with \"sparse_cholesky\"") : nothing
 # One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
 # `point_scale_px` the sensor point's σ of PositionNoise (camera pixels).
 function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_scale_px = nothing)
-    v = C.cfg["vignetting"]; d = C.cfg["domain"]
+    v = C.cfg["vignetting_self_calibration"]; d = C.cfg["domain"]
     m, Z = vignetting === nothing ? vignetting_space(kind, C, lens, W, H) :
            (vignetting, zeros(0, 0))                                      # any vignetting held fixed (a Core model or a callable)
-    s = v["solver"]
-    solver = s == "cg" ? ConjugateGradient(; tolerance = v["cg_tolerance"], max_iter = v["cg_max_iter"]) :
-             s == "cholesky" ? SparseCholesky() : error("vignetting.solver = $s is not \"cg\" or \"cholesky\"")
+    solver = LINEAR_SOLVERS[v["solver"]]()                                # "normal_cg" or "sparse_cholesky" (an ArgumentError otherwise)
+    stops = fit_stops(solver, v)
     gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
     problem = VgtkCore.EstimationProblem(VrtkCore.AbstractVignetting, dev.frames,
                                          (; camera = lens, rotations, saturated = dev.saturated, frame_map = dev.frame_map,
@@ -557,10 +629,10 @@ function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_sc
                           rim_margin_px = d["rim_margin_px"], saturation_margin_px = d["saturation_margin_px"], fov_deg = d["fov_deg"], plane = d["plane"],
                           chart_spacing_deg = v["chart_spacing_deg"], penalty_order = v["penalty_order"], penalty_weight = v["penalty_weight"],
                           vignetting_penalty_weight = v["vignetting_penalty_weight"], solver,
-                          observation_noise = fit_observation_noise(v, point_scale_px)))
+                          observation_noise = fit_observation_noise(v, point_scale_px)); stops)
 end
 # The frames' exposure gains of a fit (K × 3), for the seam score and the renders: its metadata's when it fitted them, else none.
-fit_gains(C, res) = C.cfg["vignetting"]["gain_correction"] == "none" ? nothing : res.metadata.gains
+fit_gains(C, res) = C.cfg["vignetting_self_calibration"]["gain_correction"] == "none" ? nothing : res.metadata.gains
 # A K × 3 gain matrix as text, one frame per row: g_k,R / g_k,G / g_k,B.
 gains_text(G; d = 4) = join([join(round.(G[k, :]; digits = d), " / ") for k in axes(G, 1)], ", ")
 
@@ -582,7 +654,7 @@ end
 
 # A run's results of record (a fit's): PanoramaStitching's vgio/panorama/v2.0 record (`save_panorama`) — the camera, the frames' rotations camera → world
 # (d = R_k·f_k, the world the first frame's camera frame; zero translations: the camera only rotates; each frame's RAW file
-# its image), the fitted V, the frames' gains (none when vignetting.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
+# its image), the fitted V, the frames' gains (none when vignetting_self_calibration.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
 # `load_panorama`; and V over the frame's pixels (one value per frame pixel, at its centre in the camera's pixels: the
 # frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`. The panorama record's provenance states the sensor record
 # the frames were decoded under (`sensor_characterization_sha256`, `nothing` for "none": `decoded_frames`).
@@ -668,8 +740,8 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
              "MAD $(round(m.residual_mad; digits = 4)), $(res.n) rows, $(m.n_pixels) pixels, chart $(m.chart.n)², $(m.n_active) active")
     say(log, "  observation noise $(m.observation_noise) (the model's log I moved by $(m.log_change) in the last solve); " *
              "stages (s): $(m.seconds)")
-    C.cfg["vignetting"]["gain_correction"] == "none" ||
-        say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
+    C.cfg["vignetting_self_calibration"]["gain_correction"] == "none" ||
+        say(log, "  gains ($(C.cfg["vignetting_self_calibration"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
     write_results(C, "panorama", lens, inp.names, reg.rotations, reg.bundle_fit, res, inp.frame_map, (Hf, Wf); inp.sensor_characterization_sha256)
 
     # the seam scores, before and after
@@ -739,7 +811,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated or defect quads (all frames): $(sum(count, inp.saturated)).")
         println(io, "- Sensor record of the frames' decode (and of the seam scores): $(something(inp.sensor_characterization_sha256, "none (the file's black, no defects)")) ([decode] sensor_characterization = $(C.cfg["decode"]["sensor_characterization"])).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
-               "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the detections' covariances)"
+               "$(C.cfg["rotation_bundle_problem"]["levenberg_marquardt"]["optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the detections' covariances)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *
                     "covariance, not averaged$(isempty(reg.pairs_no_covariance) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_no_covariance], ", "))" *
                     "; $(length(reg.pairs_removed)) removed by the view-graph filters" *
@@ -771,8 +843,8 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                         "$(f(v.V_min; d = 3)) / $(f(v.V_max; d = 3)) | ($(f(v.max_at[1]; d = 0)), $(f(v.max_at[2]; d = 0))) | " *
                         "$(f(v.max_offset_px; d = 0)) | $(f(100v.asymmetry; d = 1)) % |")
         end
-        println(io, "\nFrame gains (vignetting.gain_correction = $(C.cfg["vignetting"]["gain_correction"])): " *
-                    (C.cfg["vignetting"]["gain_correction"] != "none" ? "g_k R / G / B of the fit of record (g₁ = 1) $(gains_text(rows[1][2].metadata.gains)); the seam score and the corrected renders divide them out." :
+        println(io, "\nFrame gains (vignetting_self_calibration.gain_correction = $(C.cfg["vignetting_self_calibration"]["gain_correction"])): " *
+                    (C.cfg["vignetting_self_calibration"]["gain_correction"] != "none" ? "g_k R / G / B of the fit of record (g₁ = 1) $(gains_text(rows[1][2].metadata.gains)); the seam score and the corrected renders divide them out." :
                      "none fitted, the frames taken at one exposure."))
         println(io, "\nStage times of the fit of record (s): $(rows[1][2].metadata.seconds)\n")
         println(io, "## Wall times (s)\n")

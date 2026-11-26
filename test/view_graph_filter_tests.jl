@@ -6,7 +6,7 @@
 
 @testitem "register_rotations: the view-graph filters remove a pair one period off, and its tracks" setup = [SweepScene, BayerMaps] begin
     using Test, Random, LinearAlgebra, StaticArrays
-    using PanoramaStitching: register_rotations, VerifiedPairs
+    using PanoramaStitching: PanoramaStitching, register_rotations, VerifiedPairs
     using VisualGeometryToolkitCore: BoundedCamera, Size2, exp_so3
     import VisualGeometryToolkitCore as VgtkCore
     import VisualGeometryToolkitEstimation as VgtkEstimation
@@ -45,23 +45,27 @@
     end
     vp, R = aliased_pairs()
     @test haskey(vp.verified, (2, 4)) && length(vp.verified) > 8
-    bkw = (; frame_map = IDENTITY_MAP, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), 
-           bundle_max_iter = 1000, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+    averaging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5)) =
+        VgtkEstimation.FilteredRotationAveraging(; cycle_tol, orientation_tol, averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)))
+    bkw = (; frame_map = IDENTITY_MAP, averaging = averaging(),
+           bundle = PanoramaStitching.TrackCheck(VgtkCore.LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0))),
+           bundle_stops = VgtkCore.LmStops(; max_iter = 1000, ftol = 1.0e-10, xtol = 1.0e-10))
     err(reg) = maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * R[k]))), 1:6)
     # the defaults: cycle_tol 2°, orientation_tol 5°
     reg = register_rotations(vp, BCAM; bkw...)
+    @test register_rotations(vp, BCAM; Base.structdiff(bkw, NamedTuple{(:averaging,)})...).removed == reg.removed   # register_rotations' default averaging
     @test isempty(reg.near_duplicates)          # the near-duplicate check ran: these frames share at most 0.88 of a footprint
     @test reg.removed == [(2, 4)]
     @test !haskey(reg.graph, 2, 4) && VgtkEstimation.nedges(reg.graph) == length(vp.verified) - 1
     @test length(reg.pairs) == length(vp.verified)                    # every verified pair's numbers, the removed one's too
     # no track holds the aliased matches: every track is one scene point's
     @test reg.bundle.rms < 1.0 && err(reg) < 0.05
-    @test register_rotations(vp, BCAM; bkw..., cycle_tol = deg2rad(2), orientation_tol = deg2rad(5)).rotations == reg.rotations
+    @test register_rotations(vp, BCAM; bkw..., averaging = averaging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5))).rotations == reg.rotations
     # either filter alone removes it here
-    @test register_rotations(vp, BCAM; bkw..., orientation_tol = nothing).removed == [(2, 4)]
-    @test register_rotations(vp, BCAM; bkw..., cycle_tol = nothing).removed == [(2, 4)]
+    @test register_rotations(vp, BCAM; bkw..., averaging = averaging(; orientation_tol = nothing)).removed == [(2, 4)]
+    @test register_rotations(vp, BCAM; bkw..., averaging = averaging(; cycle_tol = nothing)).removed == [(2, 4)]
     # both skipped: the pair stays, its aliased matches in the tracks
-    off = register_rotations(vp, BCAM; bkw..., cycle_tol = nothing, orientation_tol = nothing)
+    off = register_rotations(vp, BCAM; bkw..., averaging = averaging(; cycle_tol = nothing, orientation_tol = nothing))
     @test isempty(off.removed) && haskey(off.graph, 2, 4)
     # the aliased matches chain true tracks of frames 2 and 4 into inconsistent ones (two detections of a frame), which chain_tracks
     # drops: with the filters none is
@@ -73,23 +77,16 @@
                                          vp.inlier_matches, vp.stats, vp.scales, vp.loma)
     rn = register_rotations(vn, BCAM; bkw...)
     @test rn.no_covariance == [p0] && rn.removed == [(2, 4)]
-    # a tolerance must be positive (radians) or nothing
-    @test_throws ArgumentError register_rotations(vp, BCAM; bkw..., cycle_tol = 0.0)
-    @test_throws ArgumentError register_rotations(vp, BCAM; bkw..., orientation_tol = -1.0)
+    # a tolerance must be positive (radians) or nothing: refused where the averaging is built (Estimation's)
+    @test_throws ArgumentError averaging(; cycle_tol = 0.0)
+    @test_throws ArgumentError averaging(; orientation_tol = -1.0)
 end
 
-@testitem "register_rotations: a filter tolerance is refused before any feature is detected" setup = [BayerMaps] begin
-    using Test, StaticArrays
-    using PanoramaStitching: register_rotations
-    import VisualGeometryToolkitCore as VgtkCore
-    cam = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[64.0VgtkCore.px, 64.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
-                                 VgtkCore.Size2(128, 128))
-    kw = (; frame_map = IDENTITY_MAP, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = :imas25,
-          max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :all,
-          min_inliers = 10, seed = 1, max_trials = 10, min_trials = 1, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
-          bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 1,
-          bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
-    frames = [rand(128, 128, 3) for _ in 1:2]
-    @test_throws ArgumentError register_rotations(frames, cam; kw..., cycle_tol = 0.0)
-    @test_throws ArgumentError register_rotations(frames, cam; kw..., orientation_tol = NaN)
+@testitem "register_rotations: a filter tolerance is refused where the averaging is built, before any feature is detected" begin
+    # the view-graph filters are the `averaging` value's (Estimation's FilteredRotationAveraging): a tolerance that is not positive
+    # is refused when it is built, so no registration with it starts
+    using Test
+    import VisualGeometryToolkitEstimation as VgtkEstimation
+    @test_throws ArgumentError VgtkEstimation.FilteredRotationAveraging(; cycle_tol = 0.0)
+    @test_throws ArgumentError VgtkEstimation.FilteredRotationAveraging(; orientation_tol = NaN)
 end

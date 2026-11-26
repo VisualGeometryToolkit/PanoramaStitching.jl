@@ -555,6 +555,71 @@ function _rotation_bundle(camera, rotations::AbstractDict{K}, tracks::AbstractVe
                               RotationBundleMetadata(dirs, rn, width, _rms(filter(≤(width), flat)), scale, scale_source, nobs, nobs - nkept, unconstrained, calib))
 end
 
+# =============================================================================
+# The track check — the bundle re-solved after its far observations are removed
+# =============================================================================
+
+"""
+    TrackCheck(refine = LevenbergMarquardt(); cut_multiple = 3.035, max_outer_iterations = 10)
+
+A VisualGeometryToolkitCore `RefineKind`: the rotation bundle refined by `refine` (Core's `LevenbergMarquardt`), then its
+observations whose residual exceeds `cut_multiple` × σ̂ removed — a track left in fewer than two frames with them — and the
+bundle refined again from its result, until a solve leaves none past the cut or `max_outer_iterations` solves have removed
+some (COLMAP's `filter_max_reproj_error` loop, Hugin's cpclean):
+
+    solve(RefineProblem(RotationBundleProblem(camera, tracks), rotations), TrackCheck(LevenbergMarquardt(; optimization_strategy));
+          scale, stops) -> FitResult
+
+σ̂ is the solve's `scale` (the bundle's noise scale, its `noise_scale`; a `width` alone gives none: an `ArgumentError`), `stops`
+the bundle's `LmStops`. The cut: a residual is 2-D, ‖r‖²/σ² ~ χ²₂ for an inlier, so P(‖r‖ > kσ) = exp(−k²/2); the default
+k = √χ²₂(0.99) = √9.21 = 3.035 removes 1 % of the inliers at the true σ. The cap: each solve after the first refits only the
+observations that remain, so the removals shrink geometrically; 10 bounds a sweep whose removals do not.
+
+The result is the last bundle's (`u`, termination record, `stats`, `rms`, `n`, `resid`) with `metadata = (; bundle, history,
+kept)`: `bundle` that last bundle's own result (its [`RotationBundleMetadata`](@ref)), `history` per solve the check tested
+its `removed` count, `rms` and `inlier_rms` (px), and `kept` the observations the last bundle solved, `j => indices` per
+track `j` of the problem's `tracks` it kept (the tracks left out absent). `cut_multiple` must be positive and
+`max_outer_iterations` at least 1 (an `ArgumentError`).
+"""
+struct TrackCheck{A <: VgtkCore.LevenbergMarquardt} <: VgtkCore.AbstractEstimationAlgorithm
+    refine::A
+    cut_multiple::Float64
+    max_outer_iterations::Int
+    function TrackCheck(refine::A, cut_multiple::Float64, max_outer_iterations::Int) where {A <: VgtkCore.LevenbergMarquardt}
+        (isfinite(cut_multiple) && cut_multiple > 0) ||
+            throw(ArgumentError("TrackCheck: cut_multiple = $cut_multiple is not positive (a multiple of the bundle's noise scale)"))
+        max_outer_iterations >= 1 || throw(ArgumentError("TrackCheck: max_outer_iterations = $max_outer_iterations is not at least 1"))
+        return new{A}(refine, cut_multiple, max_outer_iterations)
+    end
+end
+TrackCheck(refine::VgtkCore.LevenbergMarquardt = VgtkCore.LevenbergMarquardt(); cut_multiple::Real = 3.035,
+           max_outer_iterations::Integer = 10) = TrackCheck(refine, Float64(cut_multiple), Int(max_outer_iterations))
+VgtkCore.estimator_kind(::TrackCheck) = VgtkCore.RefineKind()
+
+function VgtkCore.__solve(prob::VgtkCore.RefineProblem{<:RotationBundleProblem}, alg::TrackCheck; kwargs...)
+    f = prob.f
+    tracks = f.tracks
+    sub(kept) = RotationBundleProblem(f.camera, [tracks[j][idx] for (j, idx) in kept], f.fixed, f.eliminate)
+    kept = [j => collect(eachindex(t)) for (j, t) in enumerate(tracks)]
+    bundle = VgtkCore.solve(VgtkCore.RefineProblem(f, prob.u0, prob.p), alg.refine; kwargs...)
+    σ = VgtkCore.scale_source(bundle) == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(bundle))
+    isfinite(σ) || throw(ArgumentError("TrackCheck: the cut is a multiple of the bundle's noise scale: give the solve its `scale`"))
+    cut = alg.cut_multiple * σ
+    history = NamedTuple{(:removed, :rms, :inlier_rms), Tuple{Int, Float64, Float64}}[]
+    for _ in 1:alg.max_outer_iterations
+        # NaN (an observation left out at the bundle's start) is not past the cut: kept
+        next = [j => [i for (i, r) in zip(idx, rt) if !(r > cut)] for ((j, idx), rt) in zip(kept, bundle.metadata.residuals)]
+        next = filter(((j, idx),) -> length(unique(first.(tracks[j][idx]))) >= 2, next)
+        nrem = sum(p -> length(p.second), kept; init = 0) - sum(p -> length(p.second), next; init = 0)
+        push!(history, (; removed = nrem, rms = bundle.rms, inlier_rms = bundle.metadata.inlier_rms))
+        nrem == 0 && break
+        kept = next
+        bundle = VgtkCore.solve(VgtkCore.RefineProblem(sub(kept), bundle.u, prob.p), alg.refine; kwargs...)
+    end
+    return VgtkCore.FitResult(bundle.u, bundle.retcode, bundle.stop_rule, bundle.stats, bundle.rms, bundle.n,
+                              (; bundle, history, kept); resid = bundle.resid)
+end
+
 # The rms of residual norms: the result's `rms` over every kept observation (0 with none, as before), and its inliers' (those
 # within the loss width; NaN with none)
 _plain_rms(r) = sqrt(sum(abs2, r; init = 0.0) / max(length(r), 1))

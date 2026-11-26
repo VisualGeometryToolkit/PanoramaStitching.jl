@@ -57,11 +57,11 @@ import VisualRadiometryToolkitIO as VrtkIO
 using JSON: JSON                                                # src/panorama_record.jl: the bodies lowered and lifted on VgtkIO's style
 using PrecompileTools: @setup_workload, @compile_workload       # src/precompile.jl
 
-export register_rotations, Registration, verify_pairs, VerifiedPairs
+export register_rotations, Registration, verify_pairs, VerifiedPairs, AllPairs, LagOverlap, TrackCheck
 export chain_tracks, RotationBundleProblem, RotationBundleMetadata
 export world_direction, FrameSamples, sample_frames, fibonacci_directions
 export true_up, up_frame, SweepUp, RollFreeUp, PanoramaView, panorama_view, render_panorama, render_cube_map, coverage_extent
-export VignettingSelfCalibration, AzimuthalChart, VignettingMetadata, ConjugateGradient, SparseCholesky, PositionNoise
+export VignettingSelfCalibration, AzimuthalChart, VignettingMetadata, SparseCholesky, PositionNoise
 export IntensityGains, ChannelGains
 export score_seams, vignetting_summary
 export save_panorama, load_panorama

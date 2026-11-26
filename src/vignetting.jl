@@ -23,7 +23,7 @@
 # of a tensor surface's, none for a V held fixed — then any vignetting enters as the fixed numbers
 # log V(u): gain compensation under a given V). The normal equations are accumulated on the frames'
 # backend by atomic scatter-add (KernelAbstractions; GPU arrays or the host, one code path) and solved
-# by Jacobi-preconditioned conjugate gradients on that backend (Core's `normal_cg`: `ConjugateGradient`) or by a sparse
+# by Jacobi-preconditioned conjugate gradients on that backend (Core's `NormalCG()` on its `NormalEquationsProblem`) or by a sparse
 # Cholesky factorization on the host (`SparseCholesky`).
 #
 # A row is the implicit constraint g(θ; x) = log I − log L(R_k·f(u)) − log V(u) − γ_k on the
@@ -73,22 +73,6 @@ function vignetting_summary(v, center::AbstractVector, frame_map, frame_size::Tu
     end
     return (; V_min = exp(minimum(lv)), V_max = exp(lv[imax]), max_at = pts[imax], max_offset_px = norm(pts[imax] - c), asymmetry = asym)
 end
-
-"""
-    ConjugateGradient(; tolerance, max_iter)
-
-[`VignettingSelfCalibration`](@ref)'s solve by Jacobi-preconditioned conjugate gradients
-on the frames' backend (VisualGeometryToolkitCore's `normal_cg` on the applied
-normal equations), to the relative residual `tolerance` (`‖g − N x‖ ≤
-tolerance·‖g‖`, `g` the right-hand side) within `max_iter` iterations
-(its termination `MaxIters` with `IterationCap` when the budget ends first,
-`Success` with `ToleranceMet` otherwise: VisualGeometryToolkitCore's `ReturnCode`).
-"""
-struct ConjugateGradient
-    tolerance::Float64
-    max_iter::Int
-end
-ConjugateGradient(; tolerance::Real, max_iter::Integer) = ConjugateGradient(Float64(tolerance), Int(max_iter))
 
 """
     SparseCholesky()
@@ -242,7 +226,7 @@ log I of the fitted `plane` over the rows
 (`residual_rms` unweighted, `residual_mad` StatsBase's normalized `mad`, the
 1.4826·MAD, `residual_quantiles` the 1 %, 50 % and 99 % quantiles; the
 result's `rms` is the one weighted by the last solve's weights),
-`relative_residual` (the last solve's ‖r‖/‖b‖), `solver`, `value_variance`
+`relative_residual` (the last solve's ‖r‖/‖b‖), `value_variance`
 (`true` when the frames' images carried each value's variance, the weights
 I²/var(I); `false` for plain images, the read-noise fallback, weights I²),
 `observation_noise` (`nothing` or the [`PositionNoise`](@ref) of the fit: the
@@ -264,7 +248,6 @@ struct VignettingMetadata{T <: NamedTuple, W <: Union{Nothing, PositionNoise}, C
     residual_mad::Float64
     residual_quantiles::NTuple{3, Float64}
     relative_residual::Float64
-    solver::Symbol
     value_variance::Bool
     observation_noise::W
     log_change::Float64
@@ -272,9 +255,7 @@ struct VignettingMetadata{T <: NamedTuple, W <: Union{Nothing, PositionNoise}, C
     n_active::Int
     seconds::T
 end
-# One linear solve's termination: Cholesky closed form; the CG at its relative-residual tolerance, or its iteration budget.
-_cg_termination(converged::Bool) =
-    converged ? (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet) : (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap)
+# One Cholesky solve's termination: a closed form (a CG's is its own solve's record, Core's NormalCG).
 const _CHOLESKY_TERMINATION = (VgtkCore.ReturnCode.Success, VgtkCore.ClosedForm)
 
 # ----------------------------------------------------------------------------- device helpers
@@ -712,7 +693,7 @@ tolerance and budget):
 
     solve(EstimationProblem(AbstractVignetting, frames, (; camera, rotations, saturated, frame_map[, plane_maps],
                                                          vignetting, free_directions)),
-          VignettingSelfCalibration(; …)) -> FitResult{<:VisualRadiometryToolkitCore.AbstractVignetting, VignettingMetadata}
+          VignettingSelfCalibration(; …)[; stops]) -> FitResult{<:VisualRadiometryToolkitCore.AbstractVignetting, VignettingMetadata}
 
 The vignetting V and the exposure gains of a camera that only rotated, from
 its frames alone (no flat field): every pixel of every frame is the scene's
@@ -801,9 +782,12 @@ The algorithm's settings are every other keyword above and below (each required)
   the previous solve's model; it needs the frames' variances). The row weights
   are always the whitening of the log-I constraint by the whole noise (Core's
   `whitening_factor`). TOML: [`OBSERVATION_NOISES`](@ref).
-- The solve: `solver`, a [`ConjugateGradient`](@ref) (Jacobi-preconditioned, on
-  the frames' backend) or a [`SparseCholesky`](@ref) (the same system assembled
-  sparse and factored on the host).
+- The solve: `solver`, VisualGeometryToolkitCore's `NormalCG()` (Jacobi-preconditioned conjugate gradients on the
+  applied normal equations, its `NormalEquationsProblem`, on the frames' backend) or a [`SparseCholesky`](@ref) (the same
+  system assembled sparse and factored on the host). The CG's stops are the solve keyword `stops`, Core's
+  `ToleranceStops(; rtol, max_iter)` (required with `NormalCG()`: the relative residual `‖g − N x‖ ≤ rtol·‖g‖`, `g` the
+  right-hand side, within `max_iter` iterations; a solve that ends at its budget is `MaxIters` with `IterationCap`,
+  `Success` with `ToleranceMet` otherwise); a Cholesky solve reads none, and `stops` with it is an `ArgumentError`.
 
 Every stage runs on the backend that owns `frames` (GPU arrays: KernelAbstractions
 kernels and atomic scatter-add; host arrays, the same kernels on the CPU). The
@@ -823,7 +807,7 @@ weights, and
 `gains` keyword of [`score_seams`](@ref) and [`render_panorama`](@ref); the
 residuals and the solves are the fitted `plane`'s).
 """
-struct VignettingSelfCalibration{G <: Union{Nothing, IntensityGains, ChannelGains}, S <: Union{ConjugateGradient, SparseCholesky},
+struct VignettingSelfCalibration{G <: Union{Nothing, IntensityGains, ChannelGains}, S <: Union{VgtkCore.NormalCG, SparseCholesky},
                                  N <: Union{Nothing, PositionNoise}} <: VgtkCore.AbstractEstimationAlgorithm
     gain_correction::G
     plane::Int
@@ -839,7 +823,7 @@ struct VignettingSelfCalibration{G <: Union{Nothing, IntensityGains, ChannelGain
 end
 VignettingSelfCalibration(; gain_correction::Union{Nothing, IntensityGains, ChannelGains}, plane::Integer, rim_margin_px::Real,
                           saturation_margin_px::Real, fov_deg::Real, chart_spacing_deg::Real, penalty_order::Integer,
-                          penalty_weight::Real, vignetting_penalty_weight::Real, solver::Union{ConjugateGradient, SparseCholesky},
+                          penalty_weight::Real, vignetting_penalty_weight::Real, solver::Union{VgtkCore.NormalCG, SparseCholesky},
                           observation_noise::Union{Nothing, PositionNoise}) =
     VignettingSelfCalibration(gain_correction, Int(plane), Float64(rim_margin_px), Float64(saturation_margin_px), Float64(fov_deg),
                               Float64(chart_spacing_deg), Int(penalty_order), Float64(penalty_weight),
@@ -850,7 +834,8 @@ VgtkCore.estimator_kind(::VignettingSelfCalibration) = VgtkCore.FitKind()
 const _VIGNETTING_CONTEXT = (:camera, :rotations, :saturated, :frame_map, :vignetting, :free_directions)
 
 function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{VrtkCore.AbstractVignetting, <:AbstractVector, <:NamedTuple},
-                          alg::VignettingSelfCalibration)
+                          alg::VignettingSelfCalibration; stops::Union{Nothing, VgtkCore.ToleranceStops} = nothing)
+    _check_stops(alg.solver, stops)
     ctx = VgtkCore.read_context(prob.p, _VIGNETTING_CONTEXT, (; plane_maps = nothing), "VignettingSelfCalibration")
     frames = prob.f
     split = map(_frame_values, frames)
@@ -863,7 +848,7 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{VrtkCore.AbstractVign
           plane_maps = something(ctx.plane_maps, ntuple(_ -> ctx.frame_map, 3)), rim_margin_px = alg.rim_margin_px,
           saturation_margin_px = alg.saturation_margin_px, fov_deg = alg.fov_deg, chart_spacing_deg = alg.chart_spacing_deg,
           penalty_order = alg.penalty_order, penalty_weight = alg.penalty_weight,
-          vignetting_penalty_weight = alg.vignetting_penalty_weight, solver = alg.solver, observation_noise = alg.observation_noise,
+          vignetting_penalty_weight = alg.vignetting_penalty_weight, solver = alg.solver, stops, observation_noise = alg.observation_noise,
           variances)
     r = _fit_plane(ctx.vignetting, camera, frames, rotations; gains = alg.gain_correction !== nothing, plane, kw...)::VgtkCore.FitResult
     if alg.gain_correction isa ChannelGains
@@ -873,24 +858,29 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{VrtkCore.AbstractVign
         term = (r.retcode, r.stop_rule); iters = r.stats.nsteps
         for c in axes(r.metadata.gains, 2)
             c == plane && continue
-            g, tc, it = _fit_plane(r.u, camera, frames, rotations; gains = true, plane = c, gains_only = true,
-                                   held...)::Tuple{Vector{Float64}, Tuple{VgtkCore.ReturnCode.T, VgtkCore.StopRule}, Int}
-            r.metadata.gains[:, c] .= g; iters += it
-            term = VgtkCore.worst_retcode(term, tc)                        # an unconverged plane's gains are not hidden
+            gr = _fit_plane(r.u, camera, frames, rotations; gains = true, plane = c, gains_only = true, held...)::VgtkCore.FitResult
+            r.metadata.gains[:, c] .= gr.u; iters += gr.stats.nsteps
+            term = VgtkCore.worst_retcode(term, (gr.retcode, gr.stop_rule))   # an unconverged plane's gains are not hidden
         end
         return VgtkCore.FitResult(r.u, term..., VgtkCore.SolveStats(; nsteps = iters), r.rms, r.n, r.metadata)
     end
     return r
 end
 
+# The CG's stops are the solve's; a Cholesky solve reads none (no inert setting).
+_check_stops(::VgtkCore.NormalCG, stops) = stops === nothing &&
+    throw(ArgumentError("VignettingSelfCalibration: solver = NormalCG() needs the solve keyword `stops = ToleranceStops(; rtol, max_iter)`"))
+_check_stops(::SparseCholesky, stops) = stops === nothing ||
+    throw(ArgumentError("VignettingSelfCalibration: solver = SparseCholesky() reads no `stops` (a closed form); leave it out"))
+
 # One plane's fit (`VignettingSelfCalibration`'s system), its gains in every column of the K × C metadata gains (`gains`: K − 1 free,
-# g₁ = 1; else all 1). `gains_only`: the K gains, the worst termination of its solves and the CG iterations alone, without the residuals'
-# statistics (ChannelGains' other planes).
+# g₁ = 1; else all 1). `gains_only`: a FitResult of the K gains alone, the worst termination of its solves and the CG iterations,
+# without the residuals' statistics (ChannelGains' other planes).
 function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::AbstractVector;
                     free_directions::AbstractMatrix, gains::Bool, saturated::AbstractVector, frame_map,
                     rim_margin_px::Real, saturation_margin_px::Real, fov_deg::Real, plane::Integer, plane_maps = ntuple(_ -> frame_map, 3), chart_spacing_deg::Real,
                     penalty_order::Integer, penalty_weight::Real, vignetting_penalty_weight::Real,
-                    solver::Union{ConjugateGradient, SparseCholesky},
+                    solver::Union{VgtkCore.NormalCG, SparseCholesky}, stops::Union{Nothing, VgtkCore.ToleranceStops},
                     observation_noise::Union{Nothing, PositionNoise}, variances::Union{Nothing, AbstractVector},
                     gains_only::Bool = false)
     penalty_order in (2, 3) || throw(ArgumentError("VignettingSelfCalibration: penalty_order must be 2 or 3, got $penalty_order"))
@@ -1050,16 +1040,16 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         rhs = vcat(bL, VgtkCore.ka_upload(Float64, be, bVz))
 
         t0 = time_ns()
-        if solver isa ConjugateGradient
+        if solver isa VgtkCore.NormalCG
             N = _NormalOperator(be, S, Pen, BVz, AVVz, ch.n)
             diagonal = vcat(S[:, 3 * 7 + 3 + 1] .+ VgtkCore.ka_upload(Float64, be, Vector(LinearAlgebra.diag(Pen))),
                             VgtkCore.ka_upload(Float64, be, LinearAlgebra.diag(AVVz)))
             # warm start after the first solve: the scene and the gains as solved (absolute unknowns), V's increment 0
             x0 = it == 1 ? nothing : VgtkCore.ka_upload(Float64, be, vcat(cL, zeros(mV), xh[(end - nG + 1):end]))
-            # Core's conjugate gradients on the applied normal operator (Jacobi, cgls's stopping rule ‖g − N x‖ ≤ tolerance·‖g‖)
-            sol = VgtkCore.normal_cg(N, rhs; diagonal, x0, rtol = solver.tolerance, max_iter = solver.max_iter)
-            x = sol.x; rel = sol.relres; iters += sol.iterations
-            t = _cg_termination(sol.converged)
+            # Core's conjugate gradients on the applied normal operator (Jacobi, cgls's stopping rule ‖g − N x‖ ≤ rtol·‖g‖)
+            sol = VgtkCore.solve(VgtkCore.NormalEquationsProblem(N, rhs; diagonal, u0 = x0), solver; stops)
+            x = sol.u; rel = sol.metadata.relres; iters += sol.stats.nsteps
+            t = (sol.retcode, sol.stop_rule)
             term = it == 1 ? t : VgtkCore.worst_retcode(term, t)            # every solve's, not the last one's alone
         else
             xh = _cholesky_solve(Array(S), Pen, Array(BVz), AVVz, Array(rhs), ch.n)
@@ -1098,7 +1088,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
         weight_of = k -> _PositionWeight(models[k], upix, rays, rayJ, Σu, lin, variances[k], poff)
     end
     log_gains = vcat(0.0, xh[(end - nG + 1):end], zeros(K - 1 - nG))
-    gains_only && return exp.(log_gains), term, iters
+    gains_only && return VgtkCore.FitResult(exp.(log_gains), term..., VgtkCore.SolveStats(; nsteps = iters), NaN, 0, nothing)
     cLd = VgtkCore.ka_upload(Float64, be, reshape(cL, ch.n, ch.n))
 
     # the residuals
@@ -1116,7 +1106,7 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
     seconds[:total] = (time_ns() - t_all) / 1.0e9
     scene = reshape(copy(cL), ch.n, ch.n); scene[reshape(.!active, ch.n, ch.n)] .= NaN
     meta = VignettingMetadata(ch, scene, repeat(exp.(log_gains), 1, C), sqrt(Statistics.mean(abs2, Float64.(R_all))), StatsBase.mad(Float64.(R_all); normalize = true),
-                              (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel, solver isa ConjugateGradient ? :cg : :cholesky,
+                              (Float64(q[1]), Float64(q[2]), Float64(q[3])), rel,
                               variances !== nothing, observation_noise, change, P, count(active), NamedTuple{_STAGES}(map(s -> seconds[s], _STAGES)))
     return VgtkCore.FitResult(v, term..., VgtkCore.SolveStats(; nsteps = iters), sqrt(swr / sw), length(R_all), meta)
 end
@@ -1126,7 +1116,7 @@ const _STAGES = (:backproject, :chart, :saturation, :accumulate, :vignetting_blo
 # The fit's normal operator N = [S + Pen  BVz; BVzᵀ  AVVz] on the stacked unknowns (the scene's nL = n² controls, then the m
 # coordinates of V and the gains), held on the backend `be`: the scene block through the stencil kernel over `S`'s 49-point
 # rows and the penalty `Pen` as Core's CSR matrix, BVzᵀ through the tall transposed product. One operator for both solvers:
-# Core's `normal_cg` applies it (`mul!`), the Cholesky solve reads its relative residual through it.
+# Core's NormalCG applies it (`mul!`), the Cholesky solve reads its relative residual through it.
 struct _NormalOperator{TS, TP, TB, TA, TV, K1, K2}
     S::TS
     Pen::TP

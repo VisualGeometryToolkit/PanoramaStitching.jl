@@ -119,9 +119,11 @@ end
     K = length(q.frames)
     reg = register_rotations(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5,
                              detector_margin_px = 20.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
-                             min_score = 0.0, pairs = :all, min_inliers = 40, seed = 1, max_trials = 10000,
-                             min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
-                              bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+                             min_score = 0.0, pairs = PanoramaStitching.AllPairs(), min_inliers = 40, seed = 1,
+                             ransac = VgtkEstimation.Ransac(; config = VgtkEstimation.RansacConfig(; max_trials = 10000, min_trials = 100)),
+                             averaging = VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5), averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))),
+                             bundle = PanoramaStitching.TrackCheck(VgtkCore.LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0))),
+                             bundle_stops = VgtkCore.LmStops(; max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10))
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:K]
     @info "synthetic register: rotation errors (deg) $(round.(errs; digits = 4)), bundle rms $(round(reg.bundle.rms; digits = 3)) px"
     @test maximum(errs) < 0.02                                  # 1 px ≈ 0.19° at f = 300 px; thousands of tracks in the bundle
@@ -169,33 +171,37 @@ end
     # lag pair 0-1 shares no detection's scene and is dropped, which leaves frame 0 a part of its own; the pair 0-2, between the
     # two parts, is verified and joins them (with the 20 px margin of the sweep above, the ~13° rim of 0-1 is verified)
     using Test, LinearAlgebra, StaticArrays
-    using PanoramaStitching: register_rotations, verify_pairs, VerifiedPairs
+    using PanoramaStitching: register_rotations, verify_pairs, VerifiedPairs, LagOverlap, TrackCheck
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
     q = sequence(; K = 3, yaw_deg = [0.0, 180.0, 90.0])
+    averaging(strategy) = VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5),
+                                                                   averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = strategy))
+    lag = LagOverlap(; max_lag = 1, averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)))
+    ransac = VgtkEstimation.Ransac(; config = VgtkEstimation.RansacConfig(; max_trials = 10000, min_trials = 100))
+    bundle = TrackCheck(VgtkCore.LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0)))
     reg = register_rotations(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5,
                              detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128,
-                             min_score = 0.0, pairs = :lag_overlap, max_lag = 1, min_inliers = 40, seed = 1,
-                             max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0),
-                              bundle_max_iter = 100, bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
+                             min_score = 0.0, pairs = lag, min_inliers = 40, seed = 1, ransac, averaging = averaging(VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)),
+                             bundle, bundle_stops = VgtkCore.LmStops(; max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10))
     @test sort(collect(keys(reg.pairs))) == [(1, 3), (2, 3)]
     errs = [rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg.rotations[k])' * q.R[k]))) for k in 1:3]
     @info "a dropped lag pair: rotation errors (deg) $(round.(errs; digits = 4))"
     @test maximum(errs) < 0.05
     # the verified pairs kept apart: verify_pairs, then the rest from them, is the registration exactly
     vp = verify_pairs(q.frames, q.cam; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = 60.0, asift_tilts = [(1.0, 0.0)],
-                      max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = :lag_overlap, max_lag = 1,
-                      min_inliers = 40, seed = 1, max_trials = 10000, min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
+                      max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0, pairs = lag,
+                      min_inliers = 40, seed = 1, ransac)
     @test vp isa VerifiedPairs && vp.stats == reg.pairs && length(vp.features) == 3
     @test all(p -> vp.inlier_matches[p] isa Vector{Tuple{Int, Int}} && length(vp.inlier_matches[p]) == vp.verified[p].inliers, keys(vp.verified))
-    bkw = (; frame_map = FRAME_MAP, bundle_optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}(efficiency_constant = 3.0), bundle_max_iter = 100,
-           bundle_ftol = 1.0e-10, bundle_xtol = 1.0e-10)
-    reg2 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw...)
+    bkw = (; frame_map = FRAME_MAP, bundle, bundle_stops = VgtkCore.LmStops(; max_iter = 100, ftol = 1.0e-10, xtol = 1.0e-10))
+    reg2 = register_rotations(vp, q.cam; averaging = averaging(VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)), bkw...)
     @test reg2.rotations == reg.rotations && reg2.tracks == reg.tracks && reg2.pairs == reg.pairs
     # another averaging loss from the same pairs: no feature detected again, the rotations as good
-    reg3 = register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 100), bkw...)
+    reg3 = register_rotations(vp, q.cam; averaging = averaging(VgtkCore.Irls{VgtkCore.CauchyShape}(max_iter = 100)), bkw...)
     @test maximum(k -> rad2deg(norm(VgtkCore.log_so3(SMatrix{3, 3}(reg3.rotations[k])' * q.R[k]))), 1:3) < 0.05
     # the bundle always whitens by the detections' covariances: the retired whitening switch is refused by name
-    @test_throws Regex("bundle_" * "whitening. is retired") register_rotations(vp, q.cam; averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100), bkw..., Symbol("bundle_" * "whitening") => :none)
+    @test_throws Regex("bundle_" * "whitening. is retired") register_rotations(vp, q.cam; averaging = averaging(VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)), bkw..., Symbol("bundle_" * "whitening") => :none)
 end
 
 @testitem "register_rotations: the overlap pairs of :lag_overlap, and the pairs' samplers" begin
@@ -210,6 +216,7 @@ end
     pinhole(half_deg) = VgtkCore.BoundedCamera(VgtkCore.CameraModel((500.0 / tand(half_deg))VgtkCore.px, SA[500.0VgtkCore.px, 200.0VgtkCore.px];
                                                                     lens = VgtkCore.Lens(VgtkCore.Perspective())), VgtkCore.Size2(1000, 400))
     WIDE, NARROW = pinhole(40.0), pinhole(25.0)
+    LAG = PanoramaStitching.LagOverlap(; max_lag = 1, averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100)))
     function tried_pairs(K, dropped; camera = WIDE)
         R = [SMatrix{3, 3, Float64, 9}(VgtkCore.exp_so3(SVector(0.0, deg2rad(30.0 * (k - 1)), 0.0))) for k in 1:K]
         verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
@@ -217,8 +224,7 @@ end
         verify(i, j) = ((i, j) in dropped || (verified[(i, j)] = (rotation = R[j]' * R[i], inliers = 100,
                                                                          covariance = SMatrix{3, 3, Float64, 9}(1.0e-6, 0, 0, 0, 1.0e-6, 0, 0, 0, 1.0e-6))); nothing)
         foreach(k -> verify(k, k + 1), 1:(K - 1))
-        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, 1, camera,
-                                                 VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
+        PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried, (i, j)); verify(i, j)), verified, K, LAG, camera)
         return tried, verified
     end
     @test first(tried_pairs(6, [])) == [(1, 3), (2, 4), (3, 5), (4, 6)]                # connected: the aimed pairs only
@@ -244,13 +250,13 @@ end
         (2, 3) => (rotation = R3[3]' * R3[2], inliers = 100, covariance = Σ3))
     tried3 = Tuple{Int, Int}[]
     PanoramaStitching._verify_overlap_pairs!((i, j) -> (push!(tried3, (i, j)); v3[(i, j)] = (rotation = R3[j]' * R3[i], inliers = 100, covariance = Σ3); nothing),
-                                             v3, 3, 1, WIDE, VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))
+                                             v3, 3, LAG, WIDE)
     @test tried3 == [(1, 3)] && VgtkEstimation.components(PanoramaStitching._view_graph(3, v3)) == [collect(1:3)]
-    # the pair settings: max_lag is :lag_overlap's, which needs it; :all refuses it (no inert setting)
-    @test PanoramaStitching._check_pair_settings("f", :all, nothing) === nothing
-    @test PanoramaStitching._check_pair_settings("f", :lag_overlap, 1) === nothing
-    @test_throws "read only by pairs = :lag_overlap" PanoramaStitching._check_pair_settings("f", :all, 1)
-    @test_throws "needs max_lag" PanoramaStitching._check_pair_settings("f", :lag_overlap, nothing)
+    # the pair selections: LagOverlap's max_lag at least 1; AllPairs verifies every pair and aims none past the lag
+    @test LAG.max_lag == 1 && PanoramaStitching._lag_pair(LAG, 1, 2) && !PanoramaStitching._lag_pair(LAG, 1, 3)
+    @test PanoramaStitching._lag_pair(PanoramaStitching.AllPairs(), 1, 6)
+    @test_throws "max_lag = 0 is not at least 1" PanoramaStitching.LagOverlap(; max_lag = 0)
+    @test PanoramaStitching._verify_overlap_pairs!(error, Dict(), 6, PanoramaStitching.AllPairs(), WIDE) === nothing
     # overlap_deg (the optical-axis angle of PanoramaStitching 0.7) is retired, refused by name naming its replacement
     @test_throws r"`overlap_deg` is retired: .*view_overlap.*remove it" PanoramaStitching._refuse_retired_registration_keywords("f", (; overlap_deg = 60.0))
     # the samplers: one stream per (seed, i, j), reproducible
@@ -329,6 +335,7 @@ end
     using Test, LinearAlgebra, StaticArrays
     using PanoramaStitching: PanoramaStitching, register_rotations, RotationBundleProblem
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
     q = sequence(; K = 3, lit = :sensor)
     bare = VgtkCore.BoundedCamera(VgtkCore.model(q.model), VgtkCore.Size2(1000, 1000))
     @test PanoramaStitching._imaged_less_rim(bare, 30.0) == VgtkCore.imaged_region(bare)
@@ -338,10 +345,12 @@ end
            xtol = 1.0e-10)
     reg(margin) = register_rotations(q.frames, bare; frame_map = FRAME_MAP, tone_percentile = 99.5, detector_margin_px = margin,
                                      asift_tilts = [(1.0, 0.0)], max_detections = 1024, descriptor = :b, matcher = :b128, min_score = 0.0,
-                                     pairs = :all, min_inliers = 40, seed = 1, max_trials = 10000,
-                                     min_trials = 100, averaging_optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100),
-                                     bundle_optimization_strategy = bkw.optimization_strategy,
-                                     bundle_max_iter = bkw.max_iter, bundle_ftol = bkw.ftol, bundle_xtol = bkw.xtol)
+                                     pairs = PanoramaStitching.AllPairs(), min_inliers = 40, seed = 1,
+                                     ransac = VgtkEstimation.Ransac(; config = VgtkEstimation.RansacConfig(; max_trials = 10000, min_trials = 100)),
+                                     averaging = VgtkEstimation.FilteredRotationAveraging(; cycle_tol = deg2rad(2), orientation_tol = deg2rad(5),
+                                                                                          averaging = VgtkEstimation.RotationAveraging(; optimization_strategy = VgtkCore.Irls{VgtkCore.HuberShape}(max_iter = 100))),
+                                     bundle = PanoramaStitching.TrackCheck(VgtkCore.LevenbergMarquardt(; bkw.optimization_strategy)),
+                                     bundle_stops = VgtkCore.LmStops(; bkw.max_iter, bkw.ftol, bkw.xtol))
     a, b = reg(0.0), reg(30.0)
     px = detection_pixels
     @test [px(f) for f in a.features] == [px(f) for f in b.features]
@@ -482,7 +491,7 @@ end
 
 # The Student-t keyword rule (owner ruling 2026-11-11): each scorer takes its own keyword, the Student-t + uniform scorer its
 # `outlier_halfwidth` and never a `threshold`, a threshold scorer its `threshold` and never an `outlier_halfwidth`. A pair's
-# rotation is scored by the Student-t + uniform score at the example's `[registration] outlier_halfwidth_px` (Core 0.10's
+# rotation is scored by the Student-t + uniform score at the example's `[rotation_problem.ransac] outlier_halfwidth_px` (Core 0.10's
 # heterogeneous covariances); that value reaches the scorer exactly, and neither scorer takes the other's keyword.
 @testitem "the rotation's scorer: Student-t + uniform at its outlier half-width, no threshold" begin
     using TOML
@@ -491,7 +500,7 @@ end
     using PanoramaStitching: PanoramaStitching
     dir = joinpath(pkgdir(PanoramaStitching), "examples", "panorama_vignetting")
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
-        reg = TOML.parsefile(joinpath(dir, f))["registration"]
+        reg = TOML.parsefile(joinpath(dir, f))["rotation_problem"]["ransac"]
         @test !any(k -> occursin("thres" * "hold", k), keys(reg))
         a = Float64(reg["outlier_halfwidth_px"])
         s = VgtkCore.StudentTUniformScoring(VgtkEstimation.RotationProblem, a; scale_prior = VgtkCore.JeffreysPrior(),
@@ -608,24 +617,25 @@ end
     # not after every pair was matched (`say` hears no frame's detections); with no view_overlap to run (`pairs = :all` and the
     # near-duplicate check off, or no pair past the lag) there is nothing to refuse
     using Test, StaticArrays
-    using PanoramaStitching: PanoramaStitching, register_rotations, verify_pairs
+    using PanoramaStitching: PanoramaStitching, register_rotations, verify_pairs, AllPairs, LagOverlap
     import VisualGeometryToolkitCore as VgtkCore
+    import VisualGeometryToolkitEstimation as VgtkEstimation
     bare = VgtkCore.BoundedCamera(VgtkCore.CameraModel(300.0VgtkCore.px, SA[600.0VgtkCore.px, 600.0VgtkCore.px]; lens = VgtkCore.KannalaBrandt(-0.02)),
                                   VgtkCore.Size2(1200, 1200))
     @test_throws r"back-project" VgtkCore.view_overlap([PanoramaStitching._oriented_frame(bare, one(SMatrix{3, 3, Float64, 9}))])
     frames = [rand(1200, 1200, 3) for _ in 1:3]                                 # three: a pair past the lag of 1
     kw = (; frame_map = IDENTITY_MAP, tone_percentile = 99.0, detector_margin_px = 0.0, asift_tilts = [(1.0, 0.0)],
-          max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, min_inliers = 10, seed = 1, max_trials = 10,
-          min_trials = 1)
-    bkw = (; bundle_max_iter = 1, bundle_ftol = 1.0e-8, bundle_xtol = 1.0e-8)
+          max_detections = 16, descriptor = :b, matcher = :b128, min_score = 0.0, min_inliers = 10, seed = 1,
+          ransac = VgtkEstimation.Ransac(; config = VgtkEstimation.RansacConfig(; max_trials = 10, min_trials = 1)))
+    bkw = (; bundle_stops = VgtkCore.LmStops(; max_iter = 1, ftol = 1.0e-8, xtol = 1.0e-8))
     heard = String[]
-    @test_throws r"register_rotations: .*near_duplicate_overlap.*back-project" register_rotations(frames, bare; kw..., bkw..., pairs = :all,
+    @test_throws r"register_rotations: .*near_duplicate_overlap.*back-project" register_rotations(frames, bare; kw..., bkw..., pairs = AllPairs(),
                                                                                                    say = m -> push!(heard, m))
-    @test_throws r"register_rotations: .*:lag_overlap.*back-project" register_rotations(frames, bare; kw..., bkw..., pairs = :lag_overlap, max_lag = 1,
+    @test_throws r"register_rotations: .*LagOverlap.*back-project" register_rotations(frames, bare; kw..., bkw..., pairs = LagOverlap(; max_lag = 1),
                                                                                          near_duplicate_overlap = 0.0, say = m -> push!(heard, m))
-    @test_throws r"verify_pairs: .*:lag_overlap.*back-project" verify_pairs(frames, bare; kw..., pairs = :lag_overlap, max_lag = 1,
+    @test_throws r"verify_pairs: .*LagOverlap.*back-project" verify_pairs(frames, bare; kw..., pairs = LagOverlap(; max_lag = 1),
                                                                            say = m -> push!(heard, m))
     @test isempty(heard)                                                        # no frame's detections: refused before them
-    @test PanoramaStitching._check_view_overlap("f", bare, :all, 0.0) === nothing   # nothing runs view_overlap: nothing refused
-    @test PanoramaStitching._check_view_overlap("f", bare, :lag_overlap, 0.0; nframes = 2, max_lag = 1) === nothing   # no pair past the lag
+    @test PanoramaStitching._check_view_overlap("f", bare, AllPairs(), 0.0) === nothing   # nothing runs view_overlap: nothing refused
+    @test PanoramaStitching._check_view_overlap("f", bare, LagOverlap(; max_lag = 1), 0.0; nframes = 2) === nothing   # no pair past the lag
 end
