@@ -32,8 +32,8 @@ function stage_cache_check()
     write(joinpath(root, "lens.json"), "the lens")
     strat(t, l, k, v) = Dict{String, Any}("type" => t, "loss" => l, k => v)
     cfg(; kw...) = Dict{String, Any}("inputs" => Dict{String, Any}("raw_dir" => "raw", "raw_extension" => ".ARW", "lens" => "lens.json"),
-                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false, "sensor_characterisation" => "none"),
-                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1, "sensor_characterisation" => "none",
+                                     "decode" => Dict{String, Any}("mode" => "bin2", "gain" => 1.0, "cache" => false, "sensor_characterization" => "none"),
+                                     "registration" => merge(Dict{String, Any}("pairs" => "all", "min_inliers" => 25, "seed" => 1, "sensor_characterization" => "none",
                                                                                "detection_image" => "tone",
                                                                                "averaging_optimization_strategy" => strat("irls", "huber", "max_iter", 100),
                                                                                "bundle_optimization_strategy" => strat("triggs", "cauchy", "efficiency_constant", 3.0)),
@@ -93,9 +93,9 @@ function stage_cache_check()
             end
             # the files the frames and the camera are read from key the pairs by content: the decode's sensor record, the lens
             write(joinpath(root, "sensor.json"), "a record")
-            recorded() = (c = cfg(); c["decode"]["sensor_characterisation"] = c["registration"]["sensor_characterisation"] = "sensor.json"; c)
+            recorded() = (c = cfg(); c["decode"]["sensor_characterization"] = c["registration"]["sensor_characterization"] = "sensor.json"; c)
             # "vst": the detector decodes again under its own record, its content keyed by itself ([decode]'s here "none")
-            vst() = (c = cfg(; detection_image = "vst", noise_sigmas = 3); c["registration"]["sensor_characterisation"] = "sensor.json"; c)
+            vst() = (c = cfg(; detection_image = "vst", noise_sigmas = 3); c["registration"]["sensor_characterization"] = "sensor.json"; c)
             k, kv = pkey(recorded()), pkey(vst()); @test k != pkey(cfg())
             write(joinpath(root, "sensor.json"), "the record, measured again"); @test pkey(recorded()) != k && pkey(vst()) != kv
             k = pkey(cfg()); write(joinpath(root, "lens.json"), "the lens, calibrated again"); @test pkey(cfg()) != k

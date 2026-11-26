@@ -85,12 +85,12 @@ function refuse_output(cfg, where)
     return cfg
 end
 
-# The frames' sensor records are stated (no default): `[decode] sensor_characterisation` (the frames') and `[registration]
-# sensor_characterisation` (the detector's), each a vgio/sensor_characterisation file under the data root or "none" — a config
+# The frames' sensor records are stated (no default): `[decode] sensor_characterization` (the frames') and `[registration]
+# sensor_characterization` (the detector's), each a vgio/sensor_characterization file under the data root or "none" — a config
 # without either is refused when it is read, before any file is.
 function refuse_undeclared_sensor_record(table, where)
-    haskey(table, "sensor_characterisation") ||
-        throw(ArgumentError("$where sensor_characterisation: required — the body's characterisation (a vgio/sensor_characterisation file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects); [registration]'s, with detection_image = \"tone\", is [decode]'s"))
+    haskey(table, "sensor_characterization") ||
+        throw(ArgumentError("$where sensor_characterization: required — the body's characterisation (a vgio/sensor_characterization file under the data root) the frames are decoded under, or \"none\" (the file's black, no defects); [registration]'s, with detection_image = \"tone\", is [decode]'s"))
     return table
 end
 
@@ -106,9 +106,9 @@ function refuse_config(cfg, where)
     refuse_inert_pair_keys(cfg["registration"], "$where [registration]")
     dec = refuse_undeclared_sensor_record(cfg["decode"], "$where [decode]")
     reg = refuse_undeclared_sensor_record(cfg["registration"], "$where [registration]")
-    reg["detection_image"] == "tone" && reg["sensor_characterisation"] != dec["sensor_characterisation"] &&
-        throw(ArgumentError("$where [registration] sensor_characterisation = $(repr(reg["sensor_characterisation"])): with detection_image = \"tone\" " *
-                            "the detector reads the decoded frames, decoded under [decode] sensor_characterisation = $(repr(dec["sensor_characterisation"])); state that record"))
+    reg["detection_image"] == "tone" && reg["sensor_characterization"] != dec["sensor_characterization"] &&
+        throw(ArgumentError("$where [registration] sensor_characterization = $(repr(reg["sensor_characterization"])): with detection_image = \"tone\" " *
+                            "the detector reads the decoded frames, decoded under [decode] sensor_characterization = $(repr(dec["sensor_characterization"])); state that record"))
     detector_settings(reg)                                            # the detector's keys: refused here, not after the decode
     return cfg
 end
@@ -138,21 +138,21 @@ say(io, msg) = (println(msg); println(io, msg); flush(io))
 # file loads no JLD2 itself: VisualGeometryToolkitEval (imported above) depends on it, so it is loaded with Eval and Features'
 # extension with it — a caller that includes this file needs no JLD2 of its own.
 """
-    decoded_frames(C; masks, log = devnull) -> (; names, frames, saturated, frame_map, plane_maps, daylight_wb, models, sensor_characterisation_sha256)
+    decoded_frames(C; masks, log = devnull) -> (; names, frames, saturated, frame_map, plane_maps, daylight_wb, models, sensor_characterization_sha256)
 
 The frames as linear images (H × W × 3 Float32), their saturation masks with `masks = true`, their maps and the daylight white
-balance; each RAW decoded once (cached), under its frame's sensor model: `[decode] sensor_characterisation` (required, no default) is
-the body's characterisation (a vgio/sensor_characterisation file under the data root) or `"none"`. Each frame's model is
+balance; each RAW decoded once (cached), under its frame's sensor model: `[decode] sensor_characterization` (required, no default) is
+the body's characterisation (a vgio/sensor_characterization file under the data root) or `"none"`. Each frame's model is
 VisualGeometryToolkitCore's resolver `sensor_model` (a lookup) at the frame's capture settings (Features' `extract_capture_settings`,
 the RAW files' EXIF): Features' `load_raw` subtracts its black (a dark per exposure, the measured channel black, or — `"none"` — the
 file's) and joins its defects to `saturated`; the frames are the values (an uncertain image's `value_of`). `models` are the frames'
-models; `sensor_characterisation_sha256` the record's file's SHA-256 (`nothing` for `"none"`), which the fit's and the seams' records
+models; `sensor_characterization_sha256` the record's file's SHA-256 (`nothing` for `"none"`), which the fit's and the seams' records
 state, so a consumer can check that the frames were decoded under the record its own calibration used.
 """
 function decoded_frames(C; masks::Bool, log = devnull)
     dec = C.cfg["decode"]; mode = dec["mode"]; gain = Float64(dec["gain"])
     mode == "bin2" || error("decode.mode = $mode: the example runs on bin2's three planes")
-    char = String(dec["sensor_characterisation"])
+    char = String(dec["sensor_characterization"])
     dir = joinpath(C.out, "decoded"); mkpath(dir)
     raw_dir = input_path(C.cfg["inputs"]["raw_dir"])
     raws = sort([f for f in readdir(raw_dir) if endswith(f, C.cfg["inputs"]["raw_extension"])])
@@ -176,16 +176,16 @@ function decoded_frames(C; masks::Bool, log = devnull)
     lin1 = first(lins)
     return (; names = raws, frames = [Float32.(VgtkCore.value_of.(l.image)) for l in lins], saturated = masks ? [l.saturated for l in lins] : BitMatrix[],
             frame_map = VgtkCore.raw_frame_map(lin1), plane_maps = ntuple(c -> VgtkCore.bayer_plane_map(lin1, c), 3),
-            daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)), models, sensor_characterisation_sha256 = sha)
+            daylight_wb = collect(Float64.(lin1.metadata.daylight_wb)), models, sensor_characterization_sha256 = sha)
 end
 
 # The frames' sensor models: per frame VisualGeometryToolkitCore's `sensor_model` (the ONE resolver, a lookup) of the body's
-# characterisation `char` (IO's `load` of the vgio/sensor_characterisation file under the data root, or "none": the absent model)
+# characterisation `char` (IO's `load` of the vgio/sensor_characterization file under the data root, or "none": the absent model)
 # at the frame's capture settings (Features' `extract_capture_settings` of `sources()`, frame index => its RAW metadata or mosaic).
 # "none" reads no capture (the absent model needs none, and a set whose EXIF Features cannot read decodes as before).
 function sensor_models(sources, char::AbstractString, n::Integer)
     char == "none" && return fill(VgtkCore.SensorModel(), n)
-    record = VgtkIO.load(VgtkCore.SensorCharacterisation, input_path(char))
+    record = VgtkIO.load(VgtkCore.SensorCharacterization, input_path(char))
     capture = VgtkFeatures.extract_capture_settings(sources())
     return [VgtkCore.sensor_model(record, capture, k) for k in 1:n]
 end
@@ -237,7 +237,7 @@ function stage_settings(C, inp, format, settings, provider::Symbol)
     return Dict{String, Any}("format" => format, "settings" => settings, "provider" => string(provider),
                              "inputs" => C.cfg["inputs"], "decode" => C.cfg["decode"],
                              "raw_sha256" => [VgtkEval.Experiments.file_sha256(raw) for raw in raw_paths(C, inp)],
-                             "decode_sensor_characterisation_sha256" => something(sensor_record_sha256(C.cfg["decode"]["sensor_characterisation"]), "none"),
+                             "decode_sensor_characterization_sha256" => something(sensor_record_sha256(C.cfg["decode"]["sensor_characterization"]), "none"),
                              "lens_sha256" => VgtkEval.Experiments.file_sha256(input_path(C.cfg["inputs"]["lens"])))
 end
 raw_paths(C, inp) = [joinpath(input_path(C.cfg["inputs"]["raw_dir"]), n) for n in inp.names]
@@ -314,8 +314,8 @@ end
 function pairs_stage_settings(C, inp, provider::Symbol)
     r = C.cfg["registration"]
     st = stage_settings(C, inp, PAIRS_FORMAT, pairs_settings(r), provider)
-    r["detection_image"] == "vst" && r["sensor_characterisation"] != "none" &&
-        (st["sensor_characterisation_sha256"] = sensor_record_sha256(r["sensor_characterisation"]))
+    r["detection_image"] == "vst" && r["sensor_characterization"] != "none" &&
+        (st["sensor_characterization_sha256"] = sensor_record_sha256(r["sensor_characterization"]))
     return st
 end
 
@@ -356,27 +356,27 @@ asift_tilts(t::AbstractString) = Symbol(t)
 asift_tilts(t::AbstractVector) = [Tuple(Float64.(p)) for p in t]
 
 # The detector's settings of [registration]: `selection` ("spread", Features' SSC), `detection_image` ("tone" or "vst") and, with
-# "vst" only, the threshold `noise_sigmas` and the record its frames are decoded again under, `sensor_characterisation` (always
+# "vst" only, the threshold `noise_sigmas` and the record its frames are decoded again under, `sensor_characterization` (always
 # stated, never defaulted: with "tone" it is [decode]'s, `refuse_config`, and the detector reads the decoded frames), their models
 # VisualGeometryToolkitCore's resolver's (`frame_models`). `noise_sigmas` with "tone" is refused, never read; the 0.6 constants
 # `electrons_per_dn` and `read_noise_dn` are refused by name (PanoramaStitching.refuse_retired_registration). `refuse_config`
 # runs it when the config is read.
 function detector_settings(r)
     if r["detection_image"] == "vst"
-        noise_sigmas = Float64(r["noise_sigmas"]); characterisation = String(r["sensor_characterisation"])
+        noise_sigmas = Float64(r["noise_sigmas"]); characterization = String(r["sensor_characterization"])
     else
         haskey(r, "noise_sigmas") && throw(ArgumentError("[registration] noise_sigmas: read only by detection_image = \"vst\", not \"$(r["detection_image"])\"; remove"))
-        noise_sigmas = characterisation = nothing
+        noise_sigmas = characterization = nothing
     end
-    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, characterisation)
+    return (; selection = Symbol(r["selection"]), detection_image = Symbol(r["detection_image"]), noise_sigmas, characterization)
 end
 
 # The frames' sensor models (`sensor_models`, of the detector's characterisation) and their LinearRaws decoded with them (the one
 # black subtraction, Core's `LinearRaw`).
-function frame_models(C, inp, characterisation::AbstractString)
+function frame_models(C, inp, characterization::AbstractString)
     dir = input_path(C.cfg["inputs"]["raw_dir"])
     mosaics = Dict(k => VgtkFeatures.load_raw_mosaic(joinpath(dir, n)) for (k, n) in enumerate(inp.names))
-    models = sensor_models(() -> mosaics, characterisation, length(inp.names))
+    models = sensor_models(() -> mosaics, characterization, length(inp.names))
     frames = [VgtkFeatures.load_raw(mosaics[k]; mode = Symbol(C.cfg["decode"]["mode"]), gain = Float64(C.cfg["decode"]["gain"]),
                                     sensor_model = models[k]) for k in eachindex(inp.names)]
     return frames, models
@@ -398,7 +398,7 @@ function produce_pairs(C, inp, lens, provider::Symbol; log)
     produce_stage(pairs_product(C, inp, provider), C; log, what = "verified pairs", inputs = raw_paths(C, inp)) do
         t0 = time()
         det = detector_settings(r)
-        frames, models = det.detection_image === :vst ? frame_models(C, inp, det.characterisation) : (inp.frames, nothing)
+        frames, models = det.detection_image === :vst ? frame_models(C, inp, det.characterization) : (inp.frames, nothing)
         vp = verify_pairs(frames, lens; frame_map = inp.frame_map, tone_percentile = r["tone_percentile"], detector_margin_px = r["detector_margin_px"],
                           asift_tilts = asift_tilts(r["asift_tilts"]), saturated = det.detection_image === :vst ? nothing : inp.saturated,
                           max_detections = r["max_detections"], det.selection, det.detection_image, sensor_models = models, det.noise_sigmas, descriptor = Symbol(r["descriptor"]), matcher = Symbol(r["matcher"]),
@@ -585,15 +585,15 @@ end
 # its image), the fitted V, the frames' gains (none when vignetting.gain_correction = "none") and the bundle's termination record (`fit`) — read back by
 # `load_panorama`; and V over the frame's pixels (one value per frame pixel, at its centre in the camera's pixels: the
 # frames' map), a Float32 `vgio/raster` read back by `VgtkIO.load_raster`. The panorama record's provenance states the sensor record
-# the frames were decoded under (`sensor_characterisation_sha256`, `nothing` for "none": `decoded_frames`).
-function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf); sensor_characterisation_sha256)
+# the frames were decoded under (`sensor_characterization_sha256`, `nothing` for "none": `decoded_frames`).
+function write_results(C, stem, lens, names, rotations, bundle_fit, res, frame_map, (Hf, Wf); sensor_characterization_sha256)
     v = res.u
     tr = VgtkCore.Trajectory(VgtkCore.CameraFrame, VgtkCore.WorldFrame,
                              Dict(k => VgtkCore.EuclideanMap(R, zero(SVector{3, Float64}) .* VgtkCore.m) for (k, R) in enumerate(rotations));
                              images = Dict(enumerate(names)))
     # (the file's generator names PanoramaStitching beside IO: `save_panorama` states it)
     save_panorama(joinpath(C.run, stem * ".json"), lens, tr, v, fit_gains(C, res), bundle_fit;
-                  provenance = (; sensor_characterisation_sha256 = something(sensor_characterisation_sha256, "none")))
+                  provenance = (; sensor_characterization_sha256 = something(sensor_characterization_sha256, "none")))
     # V over the frame's pixel grid (each frame pixel's centre through the frames' map): a DATA result, IO's Float32
     # `vgio/raster` (owner ruling "RAW + results only"), `values[r, c]` the frame's pixel at row r, column c
     M = Float32[v(frame_map(SVector(j - 0.5, i - 0.5))) for i in 1:Hf, j in 1:Wf]
@@ -670,7 +670,7 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
              "stages (s): $(m.seconds)")
     C.cfg["vignetting"]["gain_correction"] == "none" ||
         say(log, "  gains ($(C.cfg["vignetting"]["gain_correction"]); g_k R / G / B, g₁ = 1): $(gains_text(m.gains))")
-    write_results(C, "panorama", lens, inp.names, reg.rotations, reg.bundle_fit, res, inp.frame_map, (Hf, Wf); inp.sensor_characterisation_sha256)
+    write_results(C, "panorama", lens, inp.names, reg.rotations, reg.bundle_fit, res, inp.frame_map, (Hf, Wf); inp.sensor_characterization_sha256)
 
     # the seam scores, before and after
     sc = C.cfg["seams"]; d = C.cfg["domain"]
@@ -723,7 +723,7 @@ function run_outputs(C, inp, lens, reg, T, W, H; log)
     for k in C.cfg["vignetting"]["compare_models"]
         t = time(); r2 = fit(k, C, lens, dev, reg.rotations, W, H); T["VignettingSelfCalibration ($k, compare)"] = time() - t
         s2 = score_seams(lens, dev.frames, reg.rotations, sview; vignetting = r2.u, gains = fit_gains(C, r2), skw...)
-        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf); inp.sensor_characterisation_sha256)
+        write_results(C, "panorama_compare_$k", lens, inp.names, reg.rotations, reg.bundle_fit, r2, inp.frame_map, (Hf, Wf); inp.sensor_characterization_sha256)
         push!(rows, (k, r2, s2, vignetting_summary(r2.u, pp, inp.frame_map, (Hf, Wf); mask = in_domain)))
         say(log, "compare $k: $(r2.retcode), weighted rms $(round(r2.rms; digits = 4)), seams rms $(round(s2.rms; digits = 4)) MAD $(round(s2.mad; digits = 4))")
     end
@@ -737,7 +737,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "# $(C.cfg["name"]): panorama vignetting\n")
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated or defect quads (all frames): $(sum(count, inp.saturated)).")
-        println(io, "- Sensor record of the frames' decode (and of the seam scores): $(something(inp.sensor_characterisation_sha256, "none (the file's black, no defects)")) ([decode] sensor_characterisation = $(C.cfg["decode"]["sensor_characterisation"])).")
+        println(io, "- Sensor record of the frames' decode (and of the seam scores): $(something(inp.sensor_characterization_sha256, "none (the file's black, no defects)")) ([decode] sensor_characterization = $(C.cfg["decode"]["sensor_characterization"])).")
         bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
                "$(C.cfg["registration"]["bundle_optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the detections' covariances)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *

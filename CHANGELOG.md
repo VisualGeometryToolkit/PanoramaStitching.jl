@@ -12,6 +12,13 @@ worktrees until they are registered).
 
 ### Breaking (retired names, each with its replacement)
 
+- American in identifiers (owner decision 11): the example's config key `sensor_characterisation` (`[decode]`,
+  `[registration]`) → `sensor_characterization`, the provenance and cache key `sensor_characterisation_sha256` →
+  `sensor_characterization_sha256` (`decode_sensor_characterization_sha256`), the detector settings' field and the locals
+  `characterisation` → `characterization`; Core's `SensorCharacterisation` → `SensorCharacterization` and IO's kind
+  `vgio/sensor_characterization/v3.0` (a former-kind record reads through IO's steps). The example's stage cache keys change
+  with the key's name, so a cached decode is recomputed once; no number moves.
+
 - `refine_rotations(camera, rotations, tracks; optimization_strategy, scale | width, max_iter, ftol, xtol, eliminate)` →
   `solve(RefineProblem(RotationBundleProblem(camera, tracks; eliminate), rotations), LevenbergMarquardt(; optimization_strategy);
   scale | width, stops = LmStops(; max_iter, ftol, xtol))`. `RotationBundleProblem` is a block problem (Core's

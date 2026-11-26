@@ -560,7 +560,7 @@ end
     using PanoramaStitching: PanoramaStitching, refuse_retired_registration
     @test Base.ispublic(PanoramaStitching, :refuse_retired_registration)
     # every retired key and a word of its successor (the retired names in fragments: check_naming lists them)
-    successors = Dict("electrons_per_dn" => "sensor_characterisation", "read_noise_dn" => "sensor_characterisation",
+    successors = Dict("electrons_per_dn" => "sensor_characterization", "read_noise_dn" => "sensor_characterization",
                       "detection_noise" => "noise_sigmas", "bundle_iterations" => "bundle_optimization_strategy",
                       "bundle_scale_multiple" => "bundle_optimization_strategy", "bundle_efficiency_constant" => "bundle_optimization_strategy",
                       "bundle_loss" => "bundle_optimization_strategy", "averaging_loss" => "averaging_optimization_strategy",

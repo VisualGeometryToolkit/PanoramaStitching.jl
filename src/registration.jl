@@ -219,7 +219,7 @@ end
 # The registration's retired keys, each with its successor or migration: ONE list for `register_rotations`' and
 # `verify_pairs`' keywords and a config's `[registration]` table (the example's, RC's), refused by `refuse_retired_registration`.
 const _SENSOR_NOISE_SUCCESSOR = "the frames' noise is their VisualGeometryToolkitCore sensor model (`sensor_models`), resolved from " *
-                                "the body's characterisation (sensor_characterisation)"
+                                "the body's characterisation (sensor_characterization)"
 const _BUNDLE_WIDTH_SUCCESSOR = "the bundle's strategy is `bundle_optimization_strategy` (a config's table of that name): its " *
                                 "efficiency constant × the pooled scale"
 const _PAIR_SCORER_SUCCESSOR = "the pairs' scorer is Student-t + uniform (`scoring`; the example's outlier_halfwidth_px), no " *

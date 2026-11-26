@@ -25,7 +25,7 @@ function write_results_check()
     @testset "write_results: the results of record end to end" begin
         sha = "0"^64                                                  # the sensor record the frames were decoded under
         @test write_results(C, "panorama", lens, names, rotations, bundle_fit, res, frame_map, (400, 400);
-                            sensor_characterisation_sha256 = sha) === nothing
+                            sensor_characterization_sha256 = sha) === nothing
         b = load_panorama(joinpath(C.run, "panorama.json"))
         @test all(maximum(abs, SMatrix{3, 3, Float64, 9}(b.rotations[k].R) - rotations[k]) < 1.0e-15 for k in 1:3)
         @test all(iszero, b.rotations[k].t for k in 1:3)

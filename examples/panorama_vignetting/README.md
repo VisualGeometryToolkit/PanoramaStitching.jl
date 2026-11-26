@@ -75,15 +75,15 @@ Under `$VGTK_DATA_ROOT`:
    pixel of linear R, mean G and B (`1.0` = the white level), at half the sensor's resolution (the frames' map onto the
    camera's pixels is VisualGeometryToolkitCore's `raw_frame_map`, x ↦ 2x), each plane with its own map (`bayer_plane_map`: G at the quad
    centre, R and B ¼ px off) and a per-quad saturation mask (any of the four photosites at the white level). Each frame is decoded under
-   its sensor model: `[decode] sensor_characterisation` (required) names the body's vgio/sensor_characterisation file under the data
+   its sensor model: `[decode] sensor_characterization` (required) names the body's vgio/sensor_characterization file under the data
    root — VisualGeometryToolkitCore's resolver `sensor_model` picks, per frame by its EXIF, the dark of its exposure (or the measured
    channel black) and the defects, which `load_raw` subtracts and joins to the mask — or states `"none"` (the file's black, no defects:
-   the frames as before). The fit's panorama record and the summary state the record's SHA-256 (`sensor_characterisation_sha256`), so
+   the frames as before). The fit's panorama record and the summary state the record's SHA-256 (`sensor_characterization_sha256`), so
    a consumer comparing a camera calibrated under a record can check that the frames were decoded under the same one. With `[decode] cache = true`
    (opt-in; the configs of record set it) each RAW is decoded once and cached (below); with `false` every run decodes.
 2. **Register** (`produce_pairs`, `registration`). `verify_pairs`: ASIFT detections (none within three scales of a saturated
    pixel: Features' detection mask; on the decoded frames' tone map, `detection_image = "tone"`, or on the RAW's
-   variance-stabilized green, `"vst"`, decoded again under `[registration] sensor_characterisation`: required, as `[decode]`'s, and
+   variance-stabilized green, `"vst"`, decoded again under `[registration] sensor_characterization`: required, as `[decode]`'s, and
    with `"tone"` it must be `[decode]`'s record) described by DeDoDe and matched by LoMa,
    the rotation of every frame pair by RANSAC on bearings (Estimation's `Ransac` on a `RotationProblem`, the
    Student-t + uniform score at the outlier half-width `outlier_halfwidth_px`, Jeffreys and flat priors), produced as

@@ -474,7 +474,7 @@ end
     @test err isa ArgumentError && occursin("bundle_iterations", err.msg)
     # the 0.6 noise constants are refused by name: the frames' noise is Core's resolver's
     for k in ("electrons_per_dn", "read_noise_dn")
-        @test_throws "sensor_characterisation" PanoramaStitching.refuse_retired_registration(Dict{String, Any}(k => 1.0), "config [registration]")
+        @test_throws "sensor_characterization" PanoramaStitching.refuse_retired_registration(Dict{String, Any}(k => 1.0), "config [registration]")
     end
     # `max_lag` with pairs = "all" is refused when the config is read (no inert setting, cached or not)
     inert(t) = Base.invokelatest(m.refuse_inert_pair_keys, Dict{String, Any}(t), "config [registration]")
@@ -484,26 +484,26 @@ end
     retired(t) = PanoramaStitching.refuse_retired_registration(Dict{String, Any}(t), "config [registration]")
     @test_throws r"`overlap_deg` is retired: .*any view.*min_inliers" retired(("pairs" => "lag_overlap", "max_lag" => 1, "overlap_deg" => 120.0))
     @test_throws r"`near_duplicate_deg` is retired: .*near_duplicate_overlap" retired(("near_duplicate_deg" => 4.0,))
-    # the frames' decode states its sensor record: a [decode] without `sensor_characterisation` is refused when the config is read
+    # the frames' decode states its sensor record: a [decode] without `sensor_characterization` is refused when the config is read
     # (`load_config`), before any file is
     undeclared(t) = Base.invokelatest(m.refuse_undeclared_sensor_record, Dict{String, Any}(t), "config [decode]")
-    @test_throws "[decode] sensor_characterisation: required" undeclared(("mode" => "bin2", "gain" => 1.0, "cache" => false))
-    @test undeclared(("sensor_characterisation" => "none",))["sensor_characterisation"] == "none"
+    @test_throws "[decode] sensor_characterization: required" undeclared(("mode" => "bin2", "gain" => 1.0, "cache" => false))
+    @test undeclared(("sensor_characterization" => "none",))["sensor_characterization"] == "none"
     # so does the registration's (no default "none"): a config without either is refused by `load_config`'s `refuse_config`;
     # with detection_image = "tone" the detector reads the decoded frames, so its record is [decode]'s
     of_record = TOML.parsefile(joinpath(dir, "config_fx3_14mm.toml"))
     config(edit!) = (c = deepcopy(of_record); edit!(c); Base.invokelatest(m.refuse_config, c, "config"))
     @test config(identity) isa AbstractDict
-    @test_throws "[registration] sensor_characterisation: required" config(c -> delete!(c["registration"], "sensor_characterisation"))
-    @test_throws "[decode] sensor_characterisation: required" config(c -> delete!(c["decode"], "sensor_characterisation"))
-    @test_throws "state that record" config(c -> c["registration"]["sensor_characterisation"] = "another_record.json")
+    @test_throws "[registration] sensor_characterization: required" config(c -> delete!(c["registration"], "sensor_characterization"))
+    @test_throws "[decode] sensor_characterization: required" config(c -> delete!(c["decode"], "sensor_characterization"))
+    @test_throws "state that record" config(c -> c["registration"]["sensor_characterization"] = "another_record.json")
     @test_throws "noise_sigmas: read only by" config(c -> c["registration"]["noise_sigmas"] = 3)   # the detector's keys, when read
     G = PanoramaStitching.GAIN_CORRECTIONS; N = PanoramaStitching.OBSERVATION_NOISES
     for f in ("config_fx3_14mm.toml", "config_fx3_8mm_rooftop.toml")
         inputs = TOML.parsefile(joinpath(dir, f))["inputs"]
         @test TOML.parsefile(joinpath(dir, f))["decode"]["cache"] isa Bool                      # the decode cache, opt-in, stated
-        @test TOML.parsefile(joinpath(dir, f))["decode"]["sensor_characterisation"] isa String   # the frames' sensor record, stated (no default)
-        @test TOML.parsefile(joinpath(dir, f))["registration"]["sensor_characterisation"] isa String   # the detector's, stated too
+        @test TOML.parsefile(joinpath(dir, f))["decode"]["sensor_characterization"] isa String   # the frames' sensor record, stated (no default)
+        @test TOML.parsefile(joinpath(dir, f))["registration"]["sensor_characterization"] isa String   # the detector's, stated too
         @test Base.invokelatest(m.refuse_inert_pair_keys, TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test PanoramaStitching.refuse_retired_registration(TOML.parsefile(joinpath(dir, f))["registration"], f) isa AbstractDict
         @test TOML.parsefile(joinpath(dir, f))["registration"]["near_duplicate_overlap"] == 0.90   # the owner's value, stated
@@ -551,11 +551,11 @@ end
     # the detector's settings: "vst" reads its threshold and its sensor record, "tone" refuses the threshold (never read; its record
     # is [decode]'s, which refuse_config checks)
     det(r) = call(:detector_settings, Dict{String, Any}(r))
-    @test det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_characterisation" => "none")) ==
-          (; selection = :spread, detection_image = :tone, noise_sigmas = nothing, characterisation = nothing)
-    v = det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3, "sensor_characterisation" => "none"))
-    @test v == (; selection = :spread, detection_image = :vst, noise_sigmas = 3.0, characterisation = "none")
-    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3, "sensor_characterisation" => "none"))
+    @test det(Dict("selection" => "spread", "detection_image" => "tone", "sensor_characterization" => "none")) ==
+          (; selection = :spread, detection_image = :tone, noise_sigmas = nothing, characterization = nothing)
+    v = det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3, "sensor_characterization" => "none"))
+    @test v == (; selection = :spread, detection_image = :vst, noise_sigmas = 3.0, characterization = "none")
+    @test_throws ArgumentError det(Dict("selection" => "spread", "detection_image" => "tone", "noise_sigmas" => 3, "sensor_characterization" => "none"))
     @test_throws KeyError det(Dict("selection" => "spread", "detection_image" => "vst", "noise_sigmas" => 3))
 end
 
