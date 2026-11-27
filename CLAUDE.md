@@ -34,7 +34,7 @@ from the registries (CauRegistry; General for those it holds).
 - `src/rotation_bundle.jl` — `RotationBundleProblem`, a block problem (Core's `AbstractBlockProblem`) refined by Core's
   `LevenbergMarquardt`: `RotationBundleProblem(camera, tracks)` refining the rotations (the calibration held) and
   `RotationBundleProblem(tracks; fixed)` refining `(; camera, rotations)` (autocalibration: the camera refined too, `fixed` the
-  held parameters), one shared bundle (`block_refit`): NLLSsolver, one `SO3Manifold` per frame and one
+  held parameters), one shared bundle (the block contract: `block_structure`, `block_result`): NLLSsolver, one `SO3Manifold` per frame and one
   `SphereManifold` per track.
 - `src/sampling.jl` — `sample_frames` and `fibonacci_directions`; the camera's forward map, the frame region and masks the
   render shares.
@@ -42,7 +42,7 @@ from the registries (CauRegistry; General for those it holds).
   `EstimationProblem(SweepUp, rotations)`).
 - `src/vignetting.jl` — `VignettingSelfCalibration` (a fit on `EstimationProblem(AbstractVignetting, frames, p)`): the spline spaces (VisualRadiometryToolkitCore's `RadialVignetting`, `TensorProductVignetting`), the scene's
   `AzimuthalChart`, the scatter-add kernels of the normal equations (KernelAbstractions + Atomix), the scene penalty Core's
-  `difference_rows`, device CG (Core's `normal_cg`) or host
+  `difference_rows`, device CG (Core's `NormalCG`) or host
   Cholesky (SparseArrays).
 - `src/seams.jl` — `score_seams`: the seam ratio per raster pixel through `sample_frames`.
 - `src/pair_vignetting.jl` — the model-free vignetting of a sweep, the pair equation on rings of a field angle:
@@ -72,7 +72,7 @@ before changing code here; this file carries no copy. Where the folder is:
 - from Julia, the installed copy: `VisualGeometryToolkitCore.conventions_dir()`.
 
 How they land here: every estimator is `solve(problem, algorithm)` (Core's front end; this package adds `__solve` methods for
-its own algorithms and `block_refit` for its block problem, never a `solve` method); `register_rotations` is a task verb on
+its own algorithms and the block contract (`block_structure`, `block_result`) for its block problem, never a `solve` method); `register_rotations` is a task verb on
 images (it composes the estimators — `Ransac`, `FilteredRotationAveraging`, `PooledScale`, the rotation bundle's
 `LevenbergMarquardt` — and does no estimation of its own); every residual is in the camera's pixels
 (bearings carry their back-projection Jacobians), whitened by the detections' covariances (the detector's, Features'
