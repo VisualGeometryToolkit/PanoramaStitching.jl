@@ -34,9 +34,8 @@
 # where a block asserts it (check_naming R20: no constant names one concrete type).
 
 # A track's direction is a 2-dof sphere chart held as Core's `Eliminable{E}`: `E` says whether NLLSsolver eliminates it, which
-# needs the installed NLLSsolver's Schur system (`MultiVariateLSschur` and `iseliminable`, upstream pull request #60); `eliminate`
-# defaults to it, and `eliminate = true` without it is refused (no inert setting).
-const _SCHUR = isdefined(NLLSsolver, :MultiVariateLSschur) && isdefined(NLLSsolver, :iseliminable)
+# needs the loaded NLLSsolver's Schur system (`MultiVariateLSschur`, upstream pull request #60: Core's `has_nlls_schur()`, the
+# stack's one detection); `eliminate` defaults to it, and `eliminate = true` without it is refused (no inert setting).
 
 # The camera the bundle reads (`_BundleCamera`): its model (the back-projection and its Jacobian) and where that model's
 # projection is defined, its `valid_domain` (a grid lens's lattice; the whole plane for a lens without a limit), computed once.
@@ -385,9 +384,9 @@ struct RotationBundleProblem{C, T <: AbstractVector, F} <: VgtkCore.AbstractBloc
     fixed::F                     # the autocalibration's held parameters; nothing with a held camera
     eliminate::Bool
 end
-RotationBundleProblem(camera::Union{VgtkCore.CameraModel, VgtkCore.BoundedCamera}, tracks::AbstractVector; eliminate::Bool = _SCHUR) =
+RotationBundleProblem(camera::Union{VgtkCore.CameraModel, VgtkCore.BoundedCamera}, tracks::AbstractVector; eliminate::Bool = VgtkCore.has_nlls_schur()) =
     RotationBundleProblem(camera, tracks, nothing, eliminate)
-RotationBundleProblem(tracks::AbstractVector; fixed::Tuple{Vararg{Symbol}} = (), eliminate::Bool = _SCHUR) =
+RotationBundleProblem(tracks::AbstractVector; fixed::Tuple{Vararg{Symbol}} = (), eliminate::Bool = VgtkCore.has_nlls_schur()) =
     RotationBundleProblem(nothing, tracks, fixed, eliminate)
 
 # VisualGeometryToolkitEstimation's configuration of record (its configs/default.toml, read through its version converter):
@@ -458,10 +457,10 @@ function _rotation_bundle_structure(camera, rotations::AbstractDict{K}, tracks::
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
     frames = sort!(collect(keys(rotations)))
     fid = Dict(k => v for (v, k) in enumerate(frames))
-    eliminate && !_SCHUR && throw(ArgumentError(
+    eliminate && !VgtkCore.has_nlls_schur() && throw(ArgumentError(
         "$what: eliminate = true needs NLLSsolver's Schur system (MultiVariateLSschur), which the loaded NLLSsolver does not " *
         "have; leave `eliminate` out (every unknown solved together)"))
-    E = eliminate && _SCHUR                                        # = eliminate after the refusal; a constant false without Schur
+    E = eliminate && VgtkCore.has_nlls_schur()   # = eliminate after the refusal; a constant false without Schur
     cv = chc === nothing ? nothing : _CameraVariable(chc)
     V = chc === nothing ? Union{VgtkCore.SO3Manifold{Float64}, VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}} :
         Union{VgtkCore.SO3Manifold{Float64}, VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}, typeof(cv)}

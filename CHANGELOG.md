@@ -34,7 +34,10 @@ worktrees until they are registered).
 - `ring_pair_vignetting(pc; offset, frame_weights)` → `solve(EstimationProblem(RingVignetting, pc[, (; offset,
   frame_weights)]), RingPairMedians())` (a `ClosedFormKind`; `RingVignetting` a model tag).
 - `fit_additive_level(pc; bounds, tolerance, frame_weights, max_iter)` → `solve(EstimationProblem(AdditiveLevel, pc[, (;
-  frame_weights)]), LevelBisection(; bounds, tolerance, max_iter))` (a `FitKind`; `AdditiveLevel` a model tag).
+  frame_weights)]), LevelBisection(; bounds); stops = ToleranceStops(; max_iter, rtol = 0, atol = tolerance))` (a
+  `FitKind`; `AdditiveLevel` a model tag). The bisection's stops are Core's one stops type of a tolerance iteration, a
+  required solve keyword: it stops at a bracket width `≤ max(atol, rtol · (hi − lo))`, the scale the width of `bounds`
+  (`atol` the old `tolerance`, bit for bit); `LevelBisection`'s `tolerance` and `max_iter` fields are gone.
 - `sweep_up(rotations) -> (; up, eigenvalues)` → `solve(EstimationProblem(SweepUp, rotations), RollFreeUp())`: `u` the up
   direction, `metadata.eigenvalues` (a `ClosedFormKind`; `SweepUp` a model tag).
 - Results are read by field: `r.u`, `r.retcode`, `r.stop_rule`, `r.stats.nsteps` (was `iterations`), `successful_retcode(r)`.
@@ -101,8 +104,8 @@ worktrees until they are registered).
   its free variables once at the guess: the gauge frame, the tracks left out at the start and the frames left with no
   kept observation are no variables of the LM, and a block of the held gauge frame carries its rotation. The loss width
   and the scale record come from the summary's parsed refine. Same observations kept, same LM, same result, bit for bit.
-- `eliminate`'s default reads NLLSsolver's Schur system directly (`MultiVariateLSschur` and `iseliminable`), since Core's
-  `nlls_features` is internal now.
+- `eliminate`'s default is VisualGeometryToolkitCore's `has_nlls_schur()` (Core 0.14, set 3: the stack's one detection of
+  NLLSsolver's Schur system); the package's own `isdefined` test (`_SCHUR`) is gone. Same default, same refusal.
 - The example's results record drops `bundle_retcode`, the legacy Symbol (Core retired `retcode_symbol`). The bundle's
   termination record is `bundle_return_code` and `bundle_stop_rule`, as before.
 - Core's `pixel_centre` is `pixel_center` (decision 11), in `render_panorama`'s pixel map and the seams test.

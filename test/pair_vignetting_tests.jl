@@ -59,12 +59,18 @@ end
     ok = findall(isfinite, x0)
     @test flat[ok[end]] > x0[ok[end]] + 0.02                                # the level flattens V at the rim
     @test additive_level_slope(pc, 0.0) > 0 && additive_level_slope(pc, 2level) < 0   # positive below the level, negative above
-    f = VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009), tolerance = 1e-5))
+    f = VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009)); stops = VgtkCore.ToleranceStops(; max_iter = 100, rtol = 0.0, atol = 1e-5))
     @test (f.retcode, f.stop_rule) == (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
     @test abs(f.u - level) < 3e-4
+    # the stops are Core's ToleranceStops: a relative bound reads the width of `bounds` (the same bracket, the same
+    # halvings), the stops a required solve keyword, the bounds checked at construction
+    fr = VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009)); stops = VgtkCore.ToleranceStops(; max_iter = 100, rtol = 1e-5 / 0.019 * 1.0000001))
+    @test fr.stats.nsteps == f.stats.nsteps && fr.u === f.u
+    @test_throws UndefKeywordError VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009)))
+    @test_throws r"lo < hi" LevelBisection(; bounds = (0.01, 0.0))
     xr = f.metadata.vignetting.u
     @test maximum(abs, xr[ok] .- x0[ok]) < 5e-3
-    @test_throws r"LevelBisection: no correspondence has both values above" VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (0.0, 1.0e3), tolerance = 1e-5))   # no correspondence above the bound
+    @test_throws r"LevelBisection: no correspondence has both values above" VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (0.0, 1.0e3)); stops = VgtkCore.ToleranceStops(; max_iter = 100, rtol = 0.0, atol = 1e-5))   # no correspondence above the bound
     # saturation: one frame clipped over a patch; symmetric drops those directions from every frame, per-frame only from it
     sat = [falses(size(F, 1), size(F, 2)) for F in q.frames]; sat[2][150:250, 150:250] .= true
     ps = ring_correspondences(q.camera, q.frames, q.R, D; kw..., saturated = sat)

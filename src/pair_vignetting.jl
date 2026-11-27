@@ -327,42 +327,42 @@ function additive_level_slope(pc::PairCorrespondences, c::Real, frame_weights::A
 end
 
 """
-    LevelBisection(; bounds, tolerance, max_iter = 100)
+    LevelBisection(; bounds)
 
 A VisualGeometryToolkitCore `FitKind` (iterative: a bisection to a tolerance, within a budget):
 
     solve(EstimationProblem(AdditiveLevel, pc::PairCorrespondences[, (; frame_weights = ones(pc.n_frames))]),
-          LevelBisection(; bounds, tolerance, max_iter)) -> FitResult{Float64}
+          LevelBisection(; bounds); stops::ToleranceStops) -> FitResult{Float64}
 
 The additive level `c` of the sweep's frames (`I = L·V + c`, the plane `pc` read): the root in `bounds = (lo, hi)` (the frames'
 units; a correspondence with a value at or below a level is no row at it) of [`additive_level_slope`](@ref) — the level at which the pair equation's log ratio no longer depends on the scene's
-brightness — by bisection to a bracket of `tolerance`. The estimate is `c`; the termination record `(Success, ToleranceMet)` when
-the bracket closed within `max_iter` iterations (`stats.nsteps`; `(MaxIters, IterationCap)` otherwise; `(Failure, NoRule)` when the slope does not
-change sign over `bounds`: no root there, the estimate the end of the smaller slope); `rms` the robust residual scale of
-[`RingPairMedians`](@ref) at `c`, `n` its correspondences, the metadata `(; vignetting, slope)`: that solution at `c` and the
-slope there. The context's one key, `frame_weights`, is optional (Core's `read_context`). `bounds` with `lo ≥ hi` or a
-non-positive `tolerance` is an `ArgumentError` at construction; no correspondence, or none with both values above `hi`, at
-the solve.
+brightness — by bisection. `stops` (Core's `ToleranceStops(; max_iter, rtol, atol)`, a required solve keyword) ends it
+once the bracket's width is at most `max(atol, rtol · (hi − lo))` — the scale the width of `bounds` — or after `max_iter`
+halvings (`ToleranceStops(; max_iter = 100, rtol = 0, atol = 1e-5)`: a bracket of 1e-5 in the frames' units). The estimate is
+`c`; the termination record `(Success, ToleranceMet)` when the bracket closed within `max_iter` iterations (`stats.nsteps`;
+`(MaxIters, IterationCap)` otherwise; `(Failure, NoRule)` when the slope does not change sign over `bounds`: no root there,
+the estimate the end of the smaller slope); `rms` the robust residual scale of [`RingPairMedians`](@ref) at `c`, `n` its
+correspondences, the metadata `(; vignetting, slope)`: that solution at `c` and the slope there. The context's one key,
+`frame_weights`, is optional (Core's `read_context`). `bounds` with `lo ≥ hi` is an `ArgumentError` at construction; no
+correspondence, or none with both values above `hi`, at the solve.
 """
 struct LevelBisection <: VgtkCore.AbstractEstimationAlgorithm
     bounds::Tuple{Float64, Float64}
-    tolerance::Float64
-    max_iter::Int
-    function LevelBisection(bounds::Tuple{Float64, Float64}, tolerance::Float64, max_iter::Int)
-        bounds[1] < bounds[2] && tolerance > 0 ||
-            throw(ArgumentError("LevelBisection: bounds must be (lo, hi) with lo < hi and tolerance > 0, got $bounds, $tolerance"))
-        return new(bounds, tolerance, max_iter)
+    function LevelBisection(bounds::Tuple{Float64, Float64})
+        bounds[1] < bounds[2] || throw(ArgumentError("LevelBisection: bounds must be (lo, hi) with lo < hi, got $bounds"))
+        return new(bounds)
     end
 end
-LevelBisection(; bounds::Tuple{Real, Real}, tolerance::Real, max_iter::Integer = 100) =
-    LevelBisection(Float64.(bounds), Float64(tolerance), Int(max_iter))
+LevelBisection(; bounds::Tuple{Real, Real}) = LevelBisection(Float64.(bounds))
 VgtkCore.estimator_kind(::LevelBisection) = VgtkCore.FitKind()
 
-function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCorrespondences}, alg::LevelBisection)
+function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCorrespondences}, alg::LevelBisection;
+                          stops::VgtkCore.ToleranceStops)
     pc = prob.f
     frame_weights = something(VgtkCore.read_context(prob.p, (), (; frame_weights = nothing), "LevelBisection").frame_weights,
                               ones(pc.n_frames))
-    lo, hi = alg.bounds; tolerance = alg.tolerance; max_iter = alg.max_iter
+    lo, hi = alg.bounds; max_iter = stops.max_iter
+    tolerance = max(stops.atol, stops.rtol * (hi - lo))          # ToleranceStops' rule, its scale the width of `bounds`
     length(pc) > 0 || throw(ArgumentError("LevelBisection: no correspondences"))
     any((view(pc.values, 1, :) .> hi) .& (view(pc.values, 2, :) .> hi)) ||
         throw(ArgumentError("LevelBisection: no correspondence has both values above the upper bound $hi"))

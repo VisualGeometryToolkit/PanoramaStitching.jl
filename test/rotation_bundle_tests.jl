@@ -82,7 +82,7 @@ end
     @test err(start) > 0.5
     lm = LevenbergMarquardt(; optimization_strategy = VgtkCore.Triggs{VgtkCore.CauchyShape}())
     kw = (; width = 1.5, stops = LmStops(; max_iter = 1000, ftol = 1.0e-12, xtol = 1.0e-10))
-    bundle(start, tracks, alg = lm; eliminate = PanoramaStitching._SCHUR, kws...) =
+    bundle(start, tracks, alg = lm; eliminate = VgtkCore.has_nlls_schur(), kws...) =
         solve(RefineProblem(RotationBundleProblem(CAM, tracks; eliminate), start), alg; kw..., kws...)
     obs0 = [[k => x for (k, x) in t] for t in ts]
     res = bundle(start, obs0)
@@ -125,7 +125,7 @@ end
     @test sqrt(dot(Δ, sa.H * Δ)) <= sa.radius + sb.radius
     # `eliminate = true` needs NLLSsolver's Schur system (MultiVariateLSschur): without it, it is refused by name (no inert
     # setting); left out, the default solves every unknown together
-    if !PanoramaStitching._SCHUR
+    if !VgtkCore.has_nlls_schur()
         @test_throws r"eliminate = true.*MultiVariateLSschur" bundle(start, obs0; eliminate = true)
         @test_throws r"eliminate = true.*MultiVariateLSschur" solve(RefineProblem(RotationBundleProblem(obs0; eliminate = true), (; camera = CAM, rotations = start)), lm; kw...)
     else   # with the Schur system the eliminated and the joint solve are two paths to one minimum: within their radii
