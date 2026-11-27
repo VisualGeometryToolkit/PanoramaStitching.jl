@@ -33,7 +33,7 @@ VisualGeometryToolkitEstimation = {path = "/home/jbpritts/src/_wt-solve-core014/
 VisualGeometryToolkitEval = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitEval"}
 VisualGeometryToolkitFeatures = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitFeatures"}
 VisualGeometryToolkitIO = {path = "/home/jbpritts/src/_wt-solve-core014/VisualGeometryToolkitIO"}
-VisualRadiometryToolkitCore = {path = "/home/jbpritts/src/_wt-vrtk-solve/VisualRadiometryToolkitCore"}
+VisualRadiometryToolkitCore = {path = "/home/jbpritts/src/_wt-vrtk-020/VisualRadiometryToolkitCore"}
 
 [compat]
 CUDA = "5"
@@ -49,5 +49,5 @@ VisualGeometryToolkitEstimation = "0.13"
 VisualGeometryToolkitEval = "0.12"
 VisualGeometryToolkitFeatures = "0.10"
 VisualGeometryToolkitIO = "0.12"
-VisualRadiometryToolkitCore = "0.1.2"
+VisualRadiometryToolkitCore = "0.2"
 julia = "1.13"

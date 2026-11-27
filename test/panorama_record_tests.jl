@@ -19,7 +19,7 @@ end
 @testitem "panorama: every field round trips, Float64 and Float32" setup = [PanoramaRecordFixtures] begin
     using Rotations: params
     using VisualGeometryToolkitCore: Trajectory, CameraFrame, WorldFrame, Rect, Circle, Point2, Sensor, lens_coverage, model, sensor, μm
-    using VisualRadiometryToolkitCore: AbstractVignetting, TensorProductVignetting, RadialVignetting, LogVignetting, with_control_points, control_points, knot_vectors
+    using VisualRadiometryToolkitCore: AbstractVignetting, TensorProductVignetting, RadialVignetting, LogVignetting, with_control_points, control_points, knot_vectors, ProjectiveChart
     w(i, j) = 0.5 + 0.0371 * i + 0.0193 * j * j
     K = CameraCalibrationMat(SMatrix{3, 3, Float64}(1210.5, 0, 0, 0, 1209.25, 0, 2120.375, 1415.625, 1))
     cams = (
@@ -33,7 +33,7 @@ end
     rots = Trajectory(CameraFrame, WorldFrame, Dict(k => EuclideanMap(r, z) for (k, r) in R);
                       images = Dict(k => "DSC0000$(k).ARW" for k in 1:3), times = Dict(k => 0.5k for k in 1:3), time_origin = "2026-11-13T10:00:00+01:00")
     tv = with_control_points(TensorProductVignetting((5, 4), Rect(0.0, 0.0, 4240.0, 2832.0); degree = (2, 3)), [w(i, j) for i in 1:5, j in 1:4])
-    rv = with_control_points(RadialVignetting(7, SVector(2120.3, 1416.7), 2551.25; chart = :projective), [w(i, 1) for i in 1:7])
+    rv = with_control_points(RadialVignetting(7, SVector(2120.3, 1416.7), 2551.25; chart = ProjectiveChart()), [w(i, 1) for i in 1:7])
     G = [1.0 1.0 1.0; 1.0213 0.9987 1.0441; 0.9712 0.9655 0.9801]
     mktempdir() do dir
         p = joinpath(dir, "panorama.json")

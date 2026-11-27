@@ -7,8 +7,9 @@ A breaking minor on VisualGeometryToolkitCore 0.14's estimation interface: every
 estimators it calls are their new forms. Numerics are those of the stack's 0.14 branch (see "Changed").
 
 It is built on VisualGeometryToolkitCore 0.14, VisualGeometryToolkitEstimation 0.13, VisualGeometryToolkitFeatures 0.10,
-VisualGeometryToolkitIO 0.12 and VisualRadiometryToolkitCore/IO 0.1.2 (TEMPORARY `[sources]` on their solve-branch
-worktrees until they are registered).
+VisualGeometryToolkitIO 0.12, VisualRadiometryToolkitCore 0.2 and VisualRadiometryToolkitIO 0.1.2 (TEMPORARY `[sources]` on their
+solve-branch and release/0.2.0 worktrees until they are registered). PanoramaStitching uses none of VisualRadiometryToolkitCore
+0.2.0's retired notation aliases, so the 0.2 compat is the only change it needs.
 
 - **The rotation bundle states every variable and declares the held ones** (VisualGeometryToolkitCore 0.14's block
   contract `fixed_variables(f, u0)`, PS N2): the gauge frame, the tracks left out and the frames left with no kept
