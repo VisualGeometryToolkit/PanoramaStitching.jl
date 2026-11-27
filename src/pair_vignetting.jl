@@ -362,7 +362,7 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCo
     frame_weights = something(VgtkCore.read_context(prob.p, (), (; frame_weights = nothing), "LevelBisection").frame_weights,
                               ones(pc.n_frames))
     lo, hi = alg.bounds; max_iter = stops.max_iter
-    tolerance = max(stops.atol, stops.rtol * (hi - lo))          # ToleranceStops' rule, its scale the width of `bounds`
+    tolerance = VgtkCore.stop_tolerance(stops, hi - lo)          # ToleranceStops' bound, its scale the width of `bounds`
     length(pc) > 0 || throw(ArgumentError("LevelBisection: no correspondences"))
     any((view(pc.values, 1, :) .> hi) .& (view(pc.values, 2, :) .> hi)) ||
         throw(ArgumentError("LevelBisection: no correspondence has both values above the upper bound $hi"))

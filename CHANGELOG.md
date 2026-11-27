@@ -92,6 +92,7 @@ worktrees until they are registered).
 - `additive_level_slope(pc, c; frame_weights)` → `additive_level_slope(pc, c[, frame_weights])` (per-frame data, positional);
   it and `LevelBisection` read the ring vignetting through `solve(EstimationProblem(RingVignetting, pc, (; offset,
   frame_weights)), RingPairMedians())` (`LevelBisection`'s `metadata.vignetting` is that solve's recorded result).
+- `LevelBisection` reads its stop bound from Core's public `stop_tolerance(stops, hi - lo)`, the one owner of the rule.
 
 ### Changed
 
