@@ -232,7 +232,7 @@ function render_panorama(camera::VgtkCore.BoundedCamera, frames::AbstractVector,
     return (; image, owner, coverage, view.extent)
 end
 
-# A map (an output pixel's chain: its ray, its sensor point) at the output pixel's COLMAP centre (Core's `pixel_centre`): an
+# A map (an output pixel's chain: its ray, its sensor point) at the output pixel's COLMAP centre (Core's `pixel_center`): an
 # isbits functor (a closure over the element type would not reach a device).
 struct _AtPixelCentre{T, M}
     map::M
@@ -241,7 +241,7 @@ _AtPixelCentre{T}(map::M) where {T, M} = _AtPixelCentre{T, M}(map)
 # The device form: the map adapted by its own rule (a Core BoundedMap's: each link of its chain, a SplineLens's control grids
 # moved to the device).
 Adapt.adapt_structure(to, p::_AtPixelCentre{T}) where {T} = _AtPixelCentre{T}(Adapt.adapt(to, p.map))
-@inline (p::_AtPixelCentre{T})(I) where {T} = p.map(VgtkCore.pixel_centre(T, I))
+@inline (p::_AtPixelCentre{T})(I) where {T} = p.map(VgtkCore.pixel_center(T, I))
 
 """
     CUBE_FACES

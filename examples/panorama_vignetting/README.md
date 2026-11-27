@@ -27,7 +27,7 @@ The config's tables are named after what they configure (decision 11): `[registr
 `[rotation_problem.ransac]` and `[ransac]` the pairs' RANSAC, `[lag_overlap]` the lag pairs, `[rotation_averaging]` the averaging (its view-graph filters' tolerances still
 `[registration]`'s), `[rotation_bundle_problem.levenberg_marquardt]` (and its `.stops`) the bundle,
 `[registration] bundle` its refine by tag (`"track_check"` or `"levenberg_marquardt"`), `[vignetting_self_calibration]` (and its
-`.stops`) the fit, its `solver` by tag (`"normal_cg"` or `"sparse_cholesky"`); `[vignetting]` the V model. A config states its
+`.stops`) the fit, its `solver` by tag (Core's `NormalCG` or `SparseCholesky`, the tag rule); `[vignetting]` the V model. A config states its
 `config_version` (2); a config of an earlier layout (no `config_version`: version 1, every registration setting under
 `[registration]`, the fit's under `[vignetting]`) is read through `run.jl`'s converter (`EXAMPLE_CONFIG_VERSIONS`,
 VisualGeometryToolkitCore's `ConfigVersions`), so a stored config keeps loading.

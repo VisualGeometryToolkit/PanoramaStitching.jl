@@ -96,6 +96,16 @@ worktrees until they are registered).
   pair's stream), the averaging `FilteredRotationAveraging` and `RotationAveraging`, the bundle's scale `PooledScale`, the
   grid lens's forward spline `CameraRegression`; the panorama record's `fit` goes through VisualGeometryToolkitIO's style
   (`JSON.lower`/`JSON.lift`), its keys unchanged. A detection's centre is Core's `centroid` of its frame.
+- The rotation bundle implements Core 0.14's block contract (`block_structure`, `block_result`, `with_robustifier`), and
+  Core's multi-block LM solves it. `block_refit`, `LmProblem` and `lmsolve_chart!` are retired (R22). The bundle states
+  its free variables once at the guess: the gauge frame, the tracks left out at the start and the frames left with no
+  kept observation are no variables of the LM, and a block of the held gauge frame carries its rotation. The loss width
+  and the scale record come from the summary's parsed refine. Same observations kept, same LM, same result, bit for bit.
+- `eliminate`'s default reads NLLSsolver's Schur system directly (`MultiVariateLSschur` and `iseliminable`), since Core's
+  `nlls_features` is internal now.
+- The example's results record drops `bundle_retcode`, the legacy Symbol (Core retired `retcode_symbol`). The bundle's
+  termination record is `bundle_return_code` and `bundle_stop_rule`, as before.
+- Core's `pixel_centre` is `pixel_center` (decision 11), in `render_panorama`'s pixel map and the seams test.
 
 ## 0.11.0
 

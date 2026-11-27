@@ -519,10 +519,10 @@ function registration(C, inp, lens; log)
                           # the pairs the view-graph filters kept: the averaging's edges (0-based)
                           "pairs_kept" => sort!([[i - 1, j - 1] for (i, j) in keys(reg.pairs) if haskey(reg.graph, i, j)]),
                           "track_check" => [Dict{String, Any}("removed" => h.removed, "rms_px" => h.rms, "inlier_rms_px" => h.inlier_rms) for h in reg.track_check],
-                          # the bundle's termination record (Core's ReturnCode and StopRule, and the legacy retcode Symbol); the observations it
+                          # the bundle's termination record (Core's ReturnCode and StopRule); the observations it
                           # dropped at its start (a start prediction off the camera model's valid domain); the frames it held at their
                           # start rotation (left with no kept observation: their 0-based indices)
-                          "bundle_retcode" => string(VgtkCore.retcode_symbol(reg.bundle)), "bundle_return_code" => string(reg.bundle.retcode),
+                          "bundle_return_code" => string(reg.bundle.retcode),
                           "bundle_stop_rule" => string(reg.bundle.stop_rule),
                           "bundle_dropped_start" => reg.bundle.metadata.n_dropped_start,
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
@@ -546,7 +546,7 @@ function registration(C, inp, lens; log)
             bundle_rms_px = rec["bundle_rms_px"], bundle_inlier_rms_px = rec["bundle_inlier_rms_px"],
             pairs_near_duplicate = rec["pairs_near_duplicate"], pairs_kept = rec["pairs_kept"], track_check = rec["track_check"],
             bundle_sigma = rec["bundle_sigma"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
-            bundle_retcode = rec["bundle_retcode"], bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
+            bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
             loma = rec["loma"], product = p,
             # the bundle's termination record (no estimate, no metadata): what vgio/panorama's `fit` stores
@@ -612,14 +612,14 @@ end
 # refused (no inert setting).
 fit_stops(::VgtkCore.NormalCG, v) = VgtkCore.ToleranceStops(; rtol = v["stops"]["rtol"], max_iter = v["stops"]["max_iter"])
 fit_stops(::SparseCholesky, v) = haskey(v, "stops") ?
-    error("vignetting_self_calibration.stops: read only by solver = \"normal_cg\"; remove it with \"sparse_cholesky\"") : nothing
+    error("vignetting_self_calibration.stops: read only by the NormalCG solver; remove it with SparseCholesky") : nothing
 # One fit of the config's settings; `vignetting` given (a calibration's V) holds V fixed: the frames' gains alone.
 # `point_scale_px` the sensor point's σ of PositionNoise (camera pixels).
 function fit(kind, C, lens, dev, rotations, W, H; vignetting = nothing, point_scale_px = nothing)
     v = C.cfg["vignetting_self_calibration"]; d = C.cfg["domain"]
     m, Z = vignetting === nothing ? vignetting_space(kind, C, lens, W, H) :
            (vignetting, zeros(0, 0))                                      # any vignetting held fixed (a Core model or a callable)
-    solver = LINEAR_SOLVERS[v["solver"]]()                                # "normal_cg" or "sparse_cholesky" (an ArgumentError otherwise)
+    solver = LINEAR_SOLVERS[v["solver"]]()                                # NormalCG or SparseCholesky by tag (an ArgumentError otherwise)
     stops = fit_stops(solver, v)
     gc = PanoramaStitching.GAIN_CORRECTIONS[v["gain_correction"]]                        # "none", "intensity" or "channel" (an ArgumentError otherwise)
     problem = VgtkCore.EstimationProblem(VrtkCore.AbstractVignetting, dev.frames,
@@ -816,7 +816,7 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
                     "covariance, not averaged$(isempty(reg.pairs_no_covariance) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_no_covariance], ", "))" *
                     "; $(length(reg.pairs_removed)) removed by the view-graph filters" *
                     "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
-                    "bundle termination $(reg.bundle_return_code) ($(reg.bundle_stop_rule); retcode $(reg.bundle_retcode)), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
+                    "bundle termination $(reg.bundle_return_code) ($(reg.bundle_stop_rule)), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
                     "rotation: no observation kept).")
         lm = reg.loma["descriptor"]

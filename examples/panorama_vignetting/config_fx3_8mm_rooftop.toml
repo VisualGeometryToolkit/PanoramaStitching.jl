@@ -110,9 +110,9 @@ observation_noise = "none"                         # "none" (the value's noise a
                                                    # (the value and the sensor position: the sensor point's σ the registration bundle's
                                                    # core scale, loss width / scale multiple); the weights are the whitening by it
 observation_noise_iterations = 1                   # position: its reweight-and-solve cycles after the first solve (2: G_x re-evaluated once more)
-solver = "normal_cg"                               # "normal_cg" (Core's NormalCG on the device) or "sparse_cholesky" (SparseCholesky, host)
+solver = "normal_cg"                               # by tag: Core's NormalCG (on the device) or SparseCholesky (host)
 
-[vignetting_self_calibration.stops]                # the CG's stops (Core's ToleranceStops; solver = "normal_cg" only)
+[vignetting_self_calibration.stops]                # the CG's stops (Core's ToleranceStops; the NormalCG solver only)
 rtol = 1.0e-9                                      # the CG's relative residual
 max_iter = 40000                                   # the CG's budget
 

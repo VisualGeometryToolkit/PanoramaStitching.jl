@@ -21,7 +21,7 @@
     r = medians(pc)
     x = r.u; truth = [-0.04 * (j - 1)^1.5 for j in 1:(length(edges) - 1)]
     ok = isfinite.(x)
-    @test VgtkCore.retcode_symbol(r) === :solved && x[1] == 0.0 && count(ok) >= 7
+    @test (r.retcode, r.stop_rule) == (VgtkCore.ReturnCode.Success, VgtkCore.ClosedForm) && x[1] == 0.0 && count(ok) >= 7
     @test maximum(abs, x[ok] .- truth[ok]) < 2e-3                           # the medians are interior values: exact to the frames' Float32
     # a smooth radial V: each ring's value lies within the ring's own range of the truth
     smooth(u) = -0.8 * (radius(u) / 400)^2
@@ -35,7 +35,7 @@
     # frame weights: a frame weighted twice changes nothing on exact data; all-zero weights leave nothing
     w = ones(6); w[3] = 2.0
     @test maximum(abs, filter(isfinite, medians(pc, (; frame_weights = w)).u .- x)) < 2e-3
-    @test VgtkCore.retcode_symbol(medians(pc, (; frame_weights = zeros(6)))) === :degenerate
+    @test (rz = medians(pc, (; frame_weights = zeros(6))); (rz.retcode, rz.stop_rule) == (VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule))
     @test_throws DimensionMismatch medians(pc, (; frame_weights = ones(5)))
 end
 
@@ -60,7 +60,7 @@ end
     @test flat[ok[end]] > x0[ok[end]] + 0.02                                # the level flattens V at the rim
     @test additive_level_slope(pc, 0.0) > 0 && additive_level_slope(pc, 2level) < 0   # positive below the level, negative above
     f = VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009), tolerance = 1e-5))
-    @test VgtkCore.retcode_symbol(f) === :converged
+    @test (f.retcode, f.stop_rule) == (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
     @test abs(f.u - level) < 3e-4
     xr = f.metadata.vignetting.u
     @test maximum(abs, xr[ok] .- x0[ok]) < 5e-3
@@ -134,5 +134,5 @@ end
     # three rings, the only ring pair (2, 3): nothing is connected to the gauge's ring, so nothing is identified — not a success
     pc1 = PairCorrespondences([0.0, 1.0, 2.0, 3.0], 3.0, Int32[1 1; 2 2], Int32[2 2; 3 3], [1.0 2.0; 0.5 1.0], [1.5 1.5; 2.5 2.5], 2, 2, 0)
     r1 = medians(pc1)
-    @test VgtkCore.retcode_symbol(r1) === :degenerate && all(isnan, r1.u[2:end])
+    @test (r1.retcode, r1.stop_rule) == (VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule) && all(isnan, r1.u[2:end])
 end

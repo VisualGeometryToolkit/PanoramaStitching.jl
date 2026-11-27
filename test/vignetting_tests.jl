@@ -91,8 +91,8 @@ end
     @test cg.alg.solver isa VgtkCore.NormalCG && ch.alg.solver isa SparseCholesky   # the solver is the algorithm's, read by type
     e_cg = error_vs(cg.u, radial, q); e_ch = error_vs(ch.u, radial, q)
     @info "VignettingSelfCalibration radial: max/rms error CG $(e_cg), Cholesky $(e_ch); $(cg.stats.nsteps) CG iterations, rms $(cg.rms)"
-    @test VgtkCore.successful_retcode(cg) && cg.stop_rule == VgtkCore.ToleranceMet && VgtkCore.retcode_symbol(cg) === :converged
-    @test VgtkCore.successful_retcode(ch) && ch.stop_rule == VgtkCore.ClosedForm && VgtkCore.retcode_symbol(ch) === :solved
+    @test VgtkCore.successful_retcode(cg) && cg.stop_rule == VgtkCore.ToleranceMet
+    @test VgtkCore.successful_retcode(ch) && ch.stop_rule == VgtkCore.ClosedForm
     @test cg.metadata.log_change == 0 && cg.metadata.observation_noise === nothing && !cg.metadata.value_variance   # the read-noise fallback
     # an uncertain image weights a row by I²/var(I): exact frames give the same V; a mix of plain and uncertain is refused
     un = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, relative_frames(q.frames, 0.01), (; ctx..., vignetting = v0, free_directions = Z)),
@@ -272,7 +272,7 @@ end
                                                                    observation_noise = sw); stops = cg(budget))
     @test capped.stats.nsteps < 3 * budget                   # a later solve met the tolerance within the budget
     @test capped.retcode == VgtkCore.ReturnCode.MaxIters && capped.stop_rule == VgtkCore.IterationCap
-    @test VgtkCore.retcode_symbol(capped) === :max_iterations && !VgtkCore.successful_retcode(capped)
+    @test !VgtkCore.successful_retcode(capped)
     sf = VgtkCore.solve(VgtkCore.EstimationProblem(AbstractVignetting, relative_frames(q.frames, 0.01), (; ctx..., vignetting = with.u, free_directions = zeros(n_control_points(v0), 0))),
                         VignettingSelfCalibration(; alg..., gain_correction = IntensityGains(), solver = SparseCholesky(),
                                                   observation_noise = PositionNoise(; point_covariance = VgtkCore.CovMat{2}(σ = 1.5))))
@@ -681,7 +681,7 @@ end
     q = vignetting_sequence(radial; spikes = [R * SVector(0.0, 0.0, 1.0) for R in plain.R], amp = 5.0, width_deg = 0.3, white = 1.0)
     view = panorama_view(VgtkCore.Equirectangular(), (-80.0, 140.0, -70.0, 70.0), 0.25)
     nv, nλ = view.size
-    D = vec([view.rays(VgtkCore.pixel_centre(Float64, CartesianIndex(i, j))) for i in 1:nv, j in 1:nλ])   # score_seams' order
+    D = vec([view.rays(VgtkCore.pixel_center(Float64, CartesianIndex(i, j))) for i in 1:nv, j in 1:nλ])   # score_seams' order
     kw = (; frame_map = FRAME_MAP, rim_margin_px = 8.0, fov_deg = 120.0, vignetting = (u, f) -> 1.0)
     # the raster's directions some frame sees clipped: seen there with clear masks, not with its own
     s0 = sample_frames(q.camera, q.frames, q.R, D; saturated = [falses(size(m)) for m in q.saturated], kw...)
