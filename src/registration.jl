@@ -179,7 +179,7 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         say("  frame $(k - 1): $(length(f)) detections kept")
         f
     end
-    sz(k) = (size(_frame_image(frames[k]), 1), size(_frame_image(frames[k]), 2))                         # the image a frame's features are in: the frame
+    sz(k) = _frame_size(frames[k])                                                                        # the image a frame's features are in: the frame
     verified = Dict{Tuple{Int, Int}, NamedTuple{(:rotation, :inliers, :covariance), Tuple{SMatrix{3, 3, Float64, 9}, Int, Union{Nothing, SMatrix{3, 3, Float64, 9}}}}}()
     inlier_matches = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
     stats = Dict{Tuple{Int, Int}, NamedTuple{(:matches, :inliers, :rms, :rotation_deg), Tuple{Int, Int, Float64, Float64}}}()
@@ -191,15 +191,15 @@ function verify_pairs(frames::AbstractVector, camera::VgtkCore.BoundedCamera; fr
         end
         cs, kept = pair_bearings(camera, feats[i], feats[j], ms; frame_map)
         res = VgtkCore.solve(VgtkCore.EstimationProblem(VgtkEstimation.RotationProblem(cs)), ransac; rng = _pair_rng(seed, i, j))
-        n = count(VgtkCore.inlier_mask(res))
+        mask = VgtkCore.inlier_mask(res)
+        n = count(mask)
         if !VgtkCore.found_model(res) || n < min_inliers
             say("  pair $(i - 1)-$(j - 1): $(length(ms)) matches, $n inliers → dropped"); return nothing
         end
         R = SMatrix{3, 3, Float64, 9}(res.u)
-        r = res.resid[VgtkCore.inlier_mask(res)]
-        rms = sqrt(sum(abs2, r) / length(r)); ang = rad2deg(norm(VgtkCore.log_so3(R)))
+        rms = VgtkCore.rms(res.resid[mask]); ang = rad2deg(norm(VgtkCore.log_so3(R)))
         verified[(i, j)] = (rotation = R, inliers = n, covariance = _verified_rotation_covariance(cs, res))
-        inlier_matches[(i, j)] = kept[VgtkCore.inlier_mask(res)]
+        inlier_matches[(i, j)] = kept[mask]
         stats[(i, j)] = (matches = length(ms), inliers = n, rms, rotation_deg = ang)
         # the pair's scale: its RANSAC scorer's own ŝ (Core's noise_scale: the consensus set's Student-t posterior scale) and the
         # result's degrees of freedom, what the bundle's pool reads; NaN when the result recorded none
@@ -310,7 +310,7 @@ function refuse_retired_registration(table, where::AbstractString)
     return table
 end
 
-# `register_rotations`' and `verify_pairs`' keywords past their own: a retired one refused naming its successor
+# `register_rotations`', `verify_pairs`' and `detect_features`' keywords past their own: a retired one refused naming its successor
 # (`refuse_retired_registration`), any other as unknown.
 function _refuse_retired_registration_keywords(what, kwargs)
     refuse_retired_registration(kwargs, what)
@@ -454,7 +454,8 @@ function register_rotations(vp::VerifiedPairs, camera::VgtkCore.BoundedCamera; f
     # removed by the filters: the edges of the averaged graph it no longer holds (a pair with no covariance was never an edge)
     removed = sort!([p for p in keys(vp.verified) if p ∉ no_covariance && !haskey(graph, p...)])
     say("  rotation averaging: $(VgtkEstimation.nedges(graph)) edges ($(length(removed)) removed by the view-graph filters" *
-        "$(isempty(removed) ? "" : ": " * join(["$(i - 1)-$(j - 1)" for (i, j) in removed], ", "))), edges with their rotation covariances (scale $(VgtkCore.noise_scale(avg)), $(VgtkCore.scale_source(avg))), $(avg.retcode)")
+        "$(isempty(removed) ? "" : ": " * join(["$(i - 1)-$(j - 1)" for (i, j) in removed], ", "))), edges with their rotation covariances (scale $(VgtkCore.scale_source(avg) == VgtkCore.ScaleNone ? NaN : VgtkCore.noise_scale(avg)), " *
+        "$(VgtkCore.scale_source(avg))), $(avg.retcode)")
     # the near-duplicate pairs (sharing ≥ near_duplicate_overlap of the smaller footprint under the averaged rotations, the one
     # overlap estimate, Core's view_overlap): still edges of the averaging, their matches seed no track
     A = avg.u
@@ -554,7 +555,7 @@ function _view_graph(K::Integer, verified::AbstractDict; check::Bool = true)
     vg = VgtkEstimation.ViewGraph(collect(1:K), edges)
     dropped = _no_covariance_pairs(verified)
     if check && !isempty(dropped)
-        all_pairs = VgtkEstimation.ViewGraph(collect(1:K), Dict(p => VgtkCore.Attributed(e.rotation, (; weight = 1.0)) for (p, e) in verified))
+        all_pairs = VgtkEstimation.ViewGraph(collect(1:K), Dict(p => nothing for p in keys(verified)))   # the connectivity alone
         length(VgtkEstimation.components(vg)) > length(VgtkEstimation.components(all_pairs)) && throw(ArgumentError(
             "register_rotations: dropping the pair(s) with no determined rotation covariance " *
             join(["$(i - 1)-$(j - 1)" for (i, j) in dropped], ", ") * " disconnects the view graph"))
@@ -579,12 +580,8 @@ function _verify_overlap_pairs!(verify, verified::AbstractDict, K::Integer, pair
     tried = Set{Tuple{Int, Int}}()                               # pairs past the lag: no lag pair comes up again
     attempt(p) = (push!(tried, p); verify(p...))
     while true
-        parts = VgtkEstimation.components(_view_graph(K, verified; check = false))
-        length(parts) == 1 && break
-        part = zeros(Int, K)
-        for (c, fs) in enumerate(parts)
-            part[fs] .= c
-        end
+        part = VgtkEstimation.label_components(_view_graph(K, verified; check = false))   # frame → its component
+        all(==(1), values(part)) && break
         joins = [(i, j) for i in 1:K for j in (i + max_lag + 1):K if part[i] != part[j] && (i, j) ∉ tried]
         isempty(joins) && return nothing
         attempt(argmin(p -> (p[2] - p[1], p[1]), joins))

@@ -45,7 +45,10 @@ const _RETIRED_DETECTION_NOISE = "the frame's noise is its `sensor_model` (Visua
 
 # A frame's linear `H × W × 3` image: the frame itself, or a VisualGeometryToolkitCore `LinearRaw`'s (`:bin2`) image.
 _frame_image(frame::AbstractArray{<:Real, 3}) = frame
-_frame_image(frame::VgtkCore.LinearRaw) = first(_frame_values(frame.image))   # its values (an uncertain image's value plane)
+_frame_image(frame::VgtkCore.LinearRaw) = _value_plane(frame.image)   # its values (an uncertain image's value plane)
+# A frame's pixel size `(H, W)`, read off the stored array (no value plane built).
+_frame_size(frame::AbstractArray{<:Any, 3}) = (size(frame, 1), size(frame, 2))
+_frame_size(frame::VgtkCore.LinearRaw) = _frame_size(frame.image)
 
 # A frame's clip mask (`true` where a value is clipped: Features' detection `exclusion_mask`): the caller's, else a `LinearRaw`'s own
 # saturation, else none.
@@ -109,10 +112,7 @@ function detect_features(camera::VgtkCore.BoundedCamera, frame, descriptor; fram
                          selection::Symbol = :spread, detection_image::Symbol = :tone,
                          sensor_model::VgtkCore.SensorModel = VgtkCore.SensorModel(), noise_sigmas::Union{Nothing, Real} = nothing,
                          saturated::Union{Nothing, AbstractMatrix{Bool}} = nothing, retired...)
-    for k in keys(retired)
-        k === :detection_noise && throw(ArgumentError("detect_features: the keyword `detection_noise` is retired: $(_RETIRED_DETECTION_NOISE)"))
-        throw(ArgumentError("detect_features: unknown keyword `$k`"))
-    end
+    _refuse_retired_registration_keywords("detect_features", retired)   # the registration's one refusal (`detection_noise` among its retired keys)
     _check_detector_settings("detect_features", selection, detection_image, (sensor_model,), noise_sigmas)
     img = _frame_image(frame)
     Hf, Wf = size(img, 1), size(img, 2)

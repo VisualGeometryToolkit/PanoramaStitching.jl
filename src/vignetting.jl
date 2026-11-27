@@ -60,7 +60,7 @@ the farthest kept point and 72 azimuths, both points kept.
 function vignetting_summary(v, center::AbstractVector, frame_map, frame_size::Tuple{Integer, Integer}; mask)
     Hf, Wf = frame_size
     c = SVector{2, Float64}(center)
-    pts = filter(mask, vec([frame_map(SVector(j - 0.5, i - 0.5)) for i in 1:2:Hf, j in 1:2:Wf]))
+    pts = filter(mask, vec([frame_map(VgtkCore.pixel_center(CartesianIndex(i, j))) for i in 1:2:Hf, j in 1:2:Wf]))
     isempty(pts) && throw(ArgumentError("vignetting_summary: the mask keeps no pixel"))
     lv = [log(v(u)) for u in pts]
     imax = argmax(lv)
@@ -176,7 +176,10 @@ const OBSERVATION_NOISES = VgtkCore.TagRegistry(:observation_noise, "Noise", "no
 # A frame's values and, for an uncertain image (Core's LinearRaw under a sensor model whose noise feeds a variance), each value's
 # variance var(I); a plain image has none (`nothing`).
 _frame_values(F::AbstractArray{<:Real}) = (F, nothing)
-_frame_values(F::AbstractArray) = (map(VgtkCore.value_of, F), map(x -> Float64(Statistics.var(x)), F))
+_frame_values(F::AbstractArray) = (_value_plane(F), map(x -> Float64(Statistics.var(x)), F))
+# The value plane alone: a plain image itself, an uncertain image's values.
+_value_plane(F::AbstractArray{<:Real}) = F
+_value_plane(F::AbstractArray) = map(VgtkCore.value_of, F)
 
 """
     AzimuthalChart(axis, half_extent, spacing)

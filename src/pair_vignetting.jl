@@ -249,7 +249,9 @@ function _ring_pair_medians(pc::PairCorrespondences, offset::Real, frame_weights
     x = fill(NaN, R)
     meta(r, u) = PairVignettingMetadata(pc.edges, pc.tmax, Float64(offset), med, wt, r, cnt, u)
     isempty(rows) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, VgtkCore.SolveStats(), NaN, 0, meta(NaN, collect(2:R)))
-    conn = _connected_to_first(R, rows)
+    # the rings the ring-pair graph connects to the first (the gauge's ring): Estimation's view-graph components
+    lab = VgtkEstimation.label_components(VgtkEstimation.ViewGraph(collect(1:R), Dict(r => nothing for r in rows)))
+    conn = [lab[q] == lab[1] for q in 1:R]
     free = [q for q in 2:R if conn[q]]; col = Dict(q => c for (c, q) in enumerate(free))
     isempty(free) && return VgtkCore.FitResult(x, VgtkCore.ReturnCode.InitialFailure, VgtkCore.NoRule, VgtkCore.SolveStats(), NaN, 0, meta(NaN, collect(2:R)))
     rows = [(i, j) for (i, j) in rows if conn[i] && conn[j]]
@@ -258,7 +260,7 @@ function _ring_pair_medians(pc::PairCorrespondences, offset::Real, frame_weights
         haskey(col, i) && (M[r, col[i]] = 1.0); haskey(col, j) && (M[r, col[j]] = -1.0)
         m[r] = med[i, j]; s[r] = sqrt(wt[i, j])
     end
-    z = isempty(free) ? Float64[] : (s .* M) \ (s .* m)
+    z = (s .* M) \ (s .* m)
     x[1] = 0.0; x[free] .= z
     res = (M * z .- m)
     rms = sqrt(sum(s .^ 2 .* res .^ 2) / sum(abs2, s))
@@ -268,22 +270,6 @@ function _ring_pair_medians(pc::PairCorrespondences, offset::Real, frame_weights
     q = sortperm(e)
     mad = isempty(e) ? NaN : _sorted_weighted_median(e[q], we[q])
     return VgtkCore.FitResult(x, VgtkCore.ReturnCode.Success, VgtkCore.ClosedForm, VgtkCore.SolveStats(), rms, count(ok), meta(mad, [q for q in 2:R if !conn[q]]))
-end
-
-# The rings the ring-pair graph connects to the first (the gauge's ring): a breadth-first search over the rows.
-function _connected_to_first(R::Int, rows)
-    adj = [Int[] for _ in 1:R]
-    for (i, j) in rows
-        push!(adj[i], j); push!(adj[j], i)
-    end
-    seen = falses(R); seen[1] = true; queue = [1]
-    while !isempty(queue)
-        q = popfirst!(queue)
-        for n in adj[q]
-            seen[n] || (seen[n] = true; push!(queue, n))
-        end
-    end
-    return seen
 end
 
 # INTERNAL: LevelBisection's objective, its value at the solution the solve's `metadata.slope`. The dependence of the pair
@@ -343,7 +329,8 @@ once the bracket's width is at most `max(atol, rtol · (hi − lo))` — the sca
 halvings (`ToleranceStops(; max_iter = 100, rtol = 0, atol = 1e-5)`: a bracket of 1e-5 in the frames' units). The estimate is
 `c`; the termination record `(Success, ToleranceMet)` when the bracket closed within `max_iter` iterations (`stats.nsteps`;
 `(MaxIters, IterationCap)` otherwise; `(Failure, NoRule)` when the slope does not change sign over `bounds`: no root there,
-the estimate the end of the smaller slope); `rms` the robust residual scale of [`RingPairMedians`](@ref) at `c`, `n` its
+the estimate the end of the smaller slope; `(Failure, NonFinite)` when the slope is not finite at a midpoint, the estimate
+the bracket's centre then); `rms` the robust residual scale of [`RingPairMedians`](@ref) at `c`, `n` its
 correspondences, the metadata `(; vignetting, slope)`: that solution at `c` and the slope there. The context's one key,
 `frame_weights`, is optional (Core's `read_context`). `bounds` with `lo ≥ hi` is an `ArgumentError` at construction; no
 correspondence, or none with both values above `hi`, at the solve.
@@ -375,9 +362,11 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCo
         c = abs(fa) <= abs(fb) ? a : b
         code, rule = VgtkCore.ReturnCode.Failure, VgtkCore.NoRule
     else
+        nonfinite = false
         while b - a > tolerance && it < max_iter
             it += 1
             m = (a + b) / 2; fm = f(m)
+            isfinite(fm) || (nonfinite = true; break)   # a NaN slope has no sign: the bracket cannot be halved on it
             if fa * fm <= 0
                 b, fb = m, fm
             else
@@ -385,7 +374,8 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCo
             end
         end
         c = (a + b) / 2
-        code, rule = b - a > tolerance ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
+        code, rule = nonfinite ? (VgtkCore.ReturnCode.Failure, VgtkCore.NonFinite) :
+                     b - a > tolerance ? (VgtkCore.ReturnCode.MaxIters, VgtkCore.IterationCap) : (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
     end
     r = VgtkCore.solve(VgtkCore.EstimationProblem(RingVignetting, pc, (; offset = c, frame_weights)), RingPairMedians())
     return VgtkCore.FitResult(c, code, rule, VgtkCore.SolveStats(; nsteps = it), r.metadata.residual_mad, r.n, (; vignetting = r, slope = f(c)))

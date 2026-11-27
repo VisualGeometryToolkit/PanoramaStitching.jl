@@ -122,6 +122,15 @@ solve-branch and release/0.2.0 worktrees until they are registered). PanoramaSti
   `retcode_symbol`), `bundle_return_code`, `bundle_stop_rule`, `bundle_iterations_run` and `bundle_rms_px`, which
   spelled those values a second time, are gone; a cached registration is recomputed once, no number moves.
 - Core's `pixel_centre` is `pixel_center` (decision 11), in `render_panorama`'s pixel map and the seams test.
+- The rotation bundle's `rms` and `inlier_rms` and a verified pair's `rms` are Core's `rms` (the one place it is
+  computed; the bundle's summed in Base's order again, as in 0.11), its scale record Core's `scale_record` of the parsed
+  refine. `vignetting_summary` and the seeds' sample grid take a pixel's centre from Core's `pixel_center`. The
+  ring-pair gauge's connectivity (`_connected_to_first`, a breadth-first search) is Estimation's `label_components` of
+  the ring-pair `ViewGraph`, as the frame graph's. `detect_features` refuses its retired `detection_noise` through the
+  registration's one refusal. A frame's size is read off its stored array (no value plane built per pair).
+- `register_rotations` no longer throws when the averaging records no scale (plain least squares, `ScaleNone`): its
+  progress line prints NaN. `LevelBisection` stops with `(Failure, NonFinite)` when the slope is not finite at a
+  midpoint (it slid the bracket to its upper end and reported Success).
 
 ## 0.11.0
 

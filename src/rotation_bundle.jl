@@ -513,13 +513,12 @@ end
 # Core's `bundle_loss` of the solve's strategy and scale input (`(; strategy, input, loss)`). Its strategy is a Triggs{K} —
 # the loss K as NLLSsolver's robustifier at the deployed width, `sqrt(sq_loss_width(loss))` as every bundle of the stack —
 # or `nothing` (plain least squares); an Irls{K} is refused by Core's bundle_loss: this bundle runs one LM. The scale record
-# is the input's (`scale_source`, and `noise_scale` unless ScaleNone: NaN).
+# is Core's `scale_record` of it (the input's scale and source, the loss's width; NaN for least squares).
 function _rotation_bundle_result(st, r::VgtkCore.FitResult, bundle::NamedTuple)
     (; camera, tracks, chc, cv, free_names, E, frames, fid, nf, ic, active, nkept, nobs, unconstrained, observation) = st
     loss = bundle.strategy === nothing ? nothing : VgtkCore.strategy_loss(bundle.strategy)()
-    width = bundle.loss === nothing ? NaN : sqrt(VgtkCore.sq_loss_width(bundle.loss))
-    scale_source = VgtkCore.scale_source(bundle.input)
-    scale = scale_source == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(bundle.input))
+    (; scale, scale_source, loss_width) = VgtkCore.scale_record(bundle)   # Core's record of the parsed refine
+    width = loss_width
     robustifier() = loss === nothing ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width)
     vars = r.u                                                              # every variable, the held ones as stated
     solved = !(r.stats.nsteps == 0 && r.stop_rule == VgtkCore.IterationCap)   # `max_iter = 0` runs no solve
@@ -533,8 +532,9 @@ function _rotation_bundle_result(st, r::VgtkCore.FitResult, bundle::NamedTuple)
                           (j, i, o) -> observation(solved ? robustifier() : NLLSsolver.NoRobust(), j, i, o),
                           vars, fid, nf, unconstrained)
     u = chc === nothing ? out : (; camera = VgtkCore.with_model(camera, _camera_of_chart(vars[ic])), rotations = out)
-    return VgtkCore.FitResult(u, r.retcode, r.stop_rule, VgtkCore.SolveStats(; nsteps = r.stats.nsteps), _plain_rms(flat), nkept,
-                              RotationBundleMetadata(dirs, rn, width, _rms(filter(≤(width), flat)), scale, scale_source, nobs, nobs - nkept, unconstrained, calib))
+    return VgtkCore.FitResult(u, r.retcode, r.stop_rule, VgtkCore.SolveStats(; nsteps = r.stats.nsteps),
+                              VgtkCore.rms(flat, max(length(flat), 1)), nkept,   # 0 with none kept, as before
+                              RotationBundleMetadata(dirs, rn, width, _inlier_rms(filter(≤(width), flat)), scale, scale_source, nobs, nobs - nkept, unconstrained, calib))
 end
 
 # =============================================================================
@@ -602,10 +602,8 @@ function VgtkCore.__solve(prob::VgtkCore.RefineProblem{<:RotationBundleProblem},
                               (; bundle, history, kept); resid = bundle.resid)
 end
 
-# The rms of residual norms: the result's `rms` over every kept observation (0 with none, as before), and its inliers' (those
-# within the loss width; NaN with none)
-_plain_rms(r) = sqrt(sum(abs2, r; init = 0.0) / max(length(r), 1))
-_rms(r) = isempty(r) ? NaN : _plain_rms(r)
+# The inliers' rms (the residual norms within the loss width; NaN with none), Core's `rms`
+_inlier_rms(r) = isempty(r) ? NaN : VgtkCore.rms(r)
 
 # The autocalibration's information at the result (`RotationBundleMetadata`'s `calibration`): the Gauss–Newton information
 # H = Σ w JᵀJ of every kept observation (its loss's IRLS weight w at the result; the rows already whitened) over the frames,

@@ -13,7 +13,7 @@
     frames = map(rotations) do R
         img = zeros(Float32, 40, 40, 3)
         for j in 1:40, i in 1:40
-            u = frame_map(SVector(j - 0.5, i - 0.5))                    # the frame pixel's centre in the camera's pixels
+            u = frame_map(VgtkCore.pixel_center(CartesianIndex(i, j)))  # the frame pixel's centre in the camera's pixels
             hypot(u[1] - 40.0, u[2] - 40.0) < 38.0 || continue
             img[i, j, :] .= Float32(scene(R * VgtkCore.backproject(camera, u)) * exp(-0.3 * (hypot(u[1] - 40.0, u[2] - 40.0) / 40)^2))
         end
