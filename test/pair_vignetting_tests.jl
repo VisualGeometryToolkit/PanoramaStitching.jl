@@ -41,7 +41,7 @@ end
 
 @testitem "LevelBisection: the additive level found and removed; the symmetric saturation mask" setup = [VignettingSequence, BayerMaps] begin
     using Test, Statistics, StaticArrays
-    using PanoramaStitching: ring_correspondences, RingVignetting, RingPairMedians, AdditiveLevel, LevelBisection, additive_level_slope, fibonacci_directions
+    using PanoramaStitching: ring_correspondences, RingVignetting, RingPairMedians, AdditiveLevel, LevelBisection, fibonacci_directions
     import VisualGeometryToolkitCore as VgtkCore
     medians(pc, p = VgtkCore.NullParameters()) = VgtkCore.solve(VgtkCore.EstimationProblem(RingVignetting, pc, p), RingPairMedians())
     c = SVector(400.0, 400.0)
@@ -58,10 +58,12 @@ end
     flat = medians(pc).u
     ok = findall(isfinite, x0)
     @test flat[ok[end]] > x0[ok[end]] + 0.02                                # the level flattens V at the rim
-    @test additive_level_slope(pc, 0.0) > 0 && additive_level_slope(pc, 2level) < 0   # positive below the level, negative above
+    slope(c) = PanoramaStitching._additive_level_slope(pc, c)                # LevelBisection's objective (internal)
+    @test slope(0.0) > 0 && slope(2level) < 0                                # positive below the level, negative above
     f = VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009)); stops = VgtkCore.ToleranceStops(; max_iter = 100, rtol = 0.0, atol = 1e-5))
     @test (f.retcode, f.stop_rule) == (VgtkCore.ReturnCode.Success, VgtkCore.ToleranceMet)
     @test abs(f.u - level) < 3e-4
+    @test f.metadata.slope === slope(f.u)                                     # the slope at the solution: the solve's metadata
     # the stops are Core's ToleranceStops: a relative bound reads the width of `bounds` (the same bracket, the same
     # halvings), the stops a required solve keyword, the bounds checked at construction
     fr = VgtkCore.solve(VgtkCore.EstimationProblem(AdditiveLevel, pc), LevelBisection(; bounds = (-0.01, 0.009)); stops = VgtkCore.ToleranceStops(; max_iter = 100, rtol = 1e-5 / 0.019 * 1.0000001))

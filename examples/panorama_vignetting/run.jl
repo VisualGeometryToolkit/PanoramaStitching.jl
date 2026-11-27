@@ -312,6 +312,9 @@ stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
 # (bundle_scale_px), the pairs' strategy key is local_optimization_strategy.
 # v11: the bundle's termination record, Core's ReturnCode and StopRule (bundle_return_code, bundle_stop_rule) in place of
 # PanoramaStitching's outcome Symbol (bundle_outcome retired).
+# v18: the bundle's termination record stored once, `bundle_fit` through VisualGeometryToolkitIO's style codec (its return
+# code and stop rule by name, its iterations, rms and n); bundle_return_code, bundle_stop_rule, bundle_iterations_run and
+# bundle_rms_px, which spelled the same values a second time, retired.
 # v17: the near-duplicate pairs by VisualGeometryToolkitCore's view_overlap (`near_duplicate_overlap`, of the smaller footprint;
 # PanoramaStitching 0.8), not an optical-axis angle.
 # v16: the near-duplicate pairs left out of the chaining (`near_duplicate_deg`), the track check (`check_tracks`: per tested
@@ -323,7 +326,7 @@ stage_record(p) = VgtkEval.Experiments.load_output(Dict{String, Any}, p)
 # v12: every bundle observation whitened by its detection's covariance, the detector's (the whitening switch retired); the bundle's
 # scale σ₀ the variance factor of those covariances (bundle_scale, bundle_sigma, bundle_loss_width: no pixel unit); no point
 # scale for the position noise.
-const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v17 (the near-duplicate pairs by view_overlap's shared fraction of the smaller footprint; the kept pairs; the near-duplicate pairs not chained; the track check, per solve its removals and rms; the bundle's inlier rms; pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
+const REGISTRATION_FORMAT = "panorama_vignetting/rotations/v18 (the bundle's termination record once, through VisualGeometryToolkitIO's style codec; the near-duplicate pairs by view_overlap's shared fraction of the smaller footprint; the kept pairs; the near-duplicate pairs not chained; the track check, per solve its removals and rms; the bundle's inlier rms; pairs_removed the filters' only; plain detections, the bundle in pixels; the bundle's scale the pairs' RANSAC scales pooled upstream; every bundle observation whitened by its detection's covariance, the scale σ₀ of those covariances; the bundle's termination record, Core's ReturnCode and StopRule; the averaging on the pairs' Uncertain edges, the pairs with no covariance and the averaging's scale record; the averaging's and the bundle's optimization strategies, the bundle's scale record, the pairs' local_optimization_strategy; the clip mask and the canonical detection order of verified pairs v5; one bundle run at the pooled SIMFIT++ scale; the view-graph filters, their tolerances and removed pairs; LoMa's provider in the key and its provenance; the bundle's retcode, outcome, observations dropped and frames held at its start; pair samplers by stable_seed)"
 # The registration's settings: its own table and those of the algorithms it composes.
 const REGISTRATION_TABLES = ("registration", "rotation_problem", "ransac", "lag_overlap", "rotation_averaging", "rotation_bundle_problem")
 registration_settings(C, inp, provider::Symbol) =
@@ -512,30 +515,26 @@ function registration(C, inp, lens; log)
                           "averaging_scale" => VgtkCore.noise_scale(reg.averaging),
                           "averaging_scale_source" => string(VgtkCore.scale_source(reg.averaging)),
                           "cycle_tol_deg" => Float64(r["cycle_tol_deg"]), "orientation_tol_deg" => Float64(r["orientation_tol_deg"]),
-                          "bundle_rms_px" => reg.bundle.rms, "bundle_inlier_rms_px" => reg.bundle.metadata.inlier_rms, "seconds" => vp.seconds + time() - t0,
+                          "bundle_inlier_rms_px" => reg.bundle.metadata.inlier_rms, "seconds" => vp.seconds + time() - t0,
                           # the near-duplicate pairs (averaged, not chained; 0-based) and the track check's counts with the first
                           # bundle's rms and inlier rms (px)
                           "pairs_near_duplicate" => [[i - 1, j - 1] for (i, j) in reg.near_duplicates],
                           # the pairs the view-graph filters kept: the averaging's edges (0-based)
                           "pairs_kept" => sort!([[i - 1, j - 1] for (i, j) in keys(reg.pairs) if haskey(reg.graph, i, j)]),
                           "track_check" => [Dict{String, Any}("removed" => h.removed, "rms_px" => h.rms, "inlier_rms_px" => h.inlier_rms) for h in reg.track_check],
-                          # the bundle's termination record (Core's ReturnCode and StopRule); the observations it
-                          # dropped at its start (a start prediction off the camera model's valid domain); the frames it held at their
-                          # start rotation (left with no kept observation: their 0-based indices)
-                          "bundle_return_code" => string(reg.bundle.retcode),
-                          "bundle_stop_rule" => string(reg.bundle.stop_rule),
+                          # the observations the bundle dropped at its start (a start prediction off the camera model's valid
+                          # domain); the frames it held at their start rotation (left with no kept observation: their 0-based indices)
                           "bundle_dropped_start" => reg.bundle.metadata.n_dropped_start,
                           "bundle_frames_held" => [k - 1 for k in reg.bundle.metadata.frames_unconstrained],
                           # the bundle's robust loss width and scale (px) and its strategy
                           "bundle_loss_width" => reg.bundle.metadata.loss_width,
                           "bundle_optimization_strategy" => VgtkEstimation.config_dict(bundle_strategy(C.cfg)),
                           "bundle_scale" => VgtkCore.noise_scale(reg.bundle),
-                          # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the detections' covariances) and the LM
-                          # iterations its one run took
-                          "bundle_sigma" => reg.bundle_sigma, "bundle_iterations_run" => reg.bundle.stats.nsteps,
-                          # the bundle's termination record as Core's values (the results file's `fit`: vgio/panorama's)
-                          "bundle_fit" => (retcode = reg.bundle.retcode, stop_rule = reg.bundle.stop_rule,
-                                           iterations = reg.bundle.stats.nsteps, rms = reg.bundle.rms, n = reg.bundle.n),
+                          # the bundle's noise scale (the kept pairs' pooled RANSAC ŝ, px of the detections' covariances)
+                          "bundle_sigma" => reg.bundle_sigma,
+                          # the bundle's termination record — its return code, stop rule, LM iterations, rms (px) and residual
+                          # count — once, through VisualGeometryToolkitIO's style codec (the results file's `fit`: vgio/panorama's)
+                          "bundle_fit" => JSON.lower(VgtkIO.VgioStyle(), reg.bundle),
                           # what ran LoMa (VisualGeometryToolkitFeatures' loma_provenance, carried by the verified pairs): the models,
                           # the ONNX Runtime provider used, its threads and, on CUDA, the driver, runtime and cuDNN versions
                           "loma" => loma_record(reg.loma))
@@ -543,14 +542,13 @@ function registration(C, inp, lens; log)
     rec = stage_record(p)
     return (; rotations = [SMatrix{3, 3, Float64, 9}(reduce(vcat, permutedims.(Vector{Float64}.(R)))) for R in rec["rotations"]],
             pairs = rec["pairs"], pairs_removed = rec["pairs_removed"], pairs_no_covariance = rec["pairs_no_covariance"],
-            bundle_rms_px = rec["bundle_rms_px"], bundle_inlier_rms_px = rec["bundle_inlier_rms_px"],
+            bundle_inlier_rms_px = rec["bundle_inlier_rms_px"],
             pairs_near_duplicate = rec["pairs_near_duplicate"], pairs_kept = rec["pairs_kept"], track_check = rec["track_check"],
-            bundle_sigma = rec["bundle_sigma"], bundle_iterations_run = rec["bundle_iterations_run"], seconds = something(rec["seconds"], 0.0),
-            bundle_return_code = rec["bundle_return_code"], bundle_stop_rule = rec["bundle_stop_rule"],
+            bundle_sigma = rec["bundle_sigma"], seconds = something(rec["seconds"], 0.0),
             bundle_dropped_start = rec["bundle_dropped_start"], bundle_frames_held = rec["bundle_frames_held"], provenance = get(rec, "provenance", nothing),
             loma = rec["loma"], product = p,
             # the bundle's termination record (no estimate, no metadata): what vgio/panorama's `fit` stores
-            bundle_fit = (b = rec["bundle_fit"]; VgtkCore.FitResult(nothing, b.retcode, b.stop_rule, VgtkCore.SolveStats(; nsteps = b.iterations), b.rms, b.n, nothing)))
+            bundle_fit = JSON.lift(VgtkIO.VgioStyle(), VgtkCore.FitResult, rec["bundle_fit"]))
 end
 
 # ----------------------------------------------------------------------------- vignetting spaces from the config
@@ -810,13 +808,13 @@ function write_summary(C, inp, reg, rows, before, ext, exposure, T, W, H, pp)
         println(io, "Config of record: `$(basename(C.path))`. Data root `\$VGTK_DATA_ROOT`; RAW `$(C.cfg["inputs"]["raw_dir"])`, lens `$(C.cfg["inputs"]["lens"])`.\n")
         println(io, "- Frames: $(length(inp.frames)), decoded $(C.cfg["decode"]["mode"]) gain $(C.cfg["decode"]["gain"]) → $(size(inp.frames[1], 2)) × $(size(inp.frames[1], 1)); saturated or defect quads (all frames): $(sum(count, inp.saturated)).")
         println(io, "- Sensor record of the frames' decode (and of the seam scores): $(something(inp.sensor_characterization_sha256, "none (the file's black, no defects)")) ([decode] sensor_characterization = $(C.cfg["decode"]["sensor_characterization"])).")
-        bund = "$(f(reg.bundle_rms_px; d = 3)) px (one LM run of $(reg.bundle_iterations_run) iterations, the strategy " *
+        bund = "$(f(reg.bundle_fit.rms; d = 3)) px (one LM run of $(reg.bundle_fit.stats.nsteps) iterations, the strategy " *
                "$(C.cfg["rotation_bundle_problem"]["levenberg_marquardt"]["optimization_strategy"]) at σ̂ $(f(reg.bundle_sigma; d = 4)), the pairs' pooled RANSAC scale of the detections' covariances)"
         println(io, "- Registration: $(reg.pairs) verified pairs ($(length(reg.pairs_no_covariance)) with no determined rotation " *
                     "covariance, not averaged$(isempty(reg.pairs_no_covariance) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_no_covariance], ", "))" *
                     "; $(length(reg.pairs_removed)) removed by the view-graph filters" *
                     "$(isempty(reg.pairs_removed) ? "" : ": " * join(["$(p[1])-$(p[2])" for p in reg.pairs_removed], ", "))), bundle rms $bund$(reg.provenance === nothing ? "" : "; $(reg.provenance)"); " *
-                    "bundle termination $(reg.bundle_return_code) ($(reg.bundle_stop_rule)), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
+                    "bundle termination $(reg.bundle_fit.retcode) ($(reg.bundle_fit.stop_rule)), $(reg.bundle_dropped_start) observations dropped at its start: not imaged there; " *
                     "$(isempty(reg.bundle_frames_held) ? "no frame" : "frames $(join(reg.bundle_frames_held, ", "))") held at the start " *
                     "rotation: no observation kept).")
         lm = reg.loma["descriptor"]

@@ -89,8 +89,9 @@ worktrees until they are registered).
   is recomputed once; no number moves. The view-graph filters' `cycle_tol_deg` and `orientation_tol_deg` stay in
   `[registration]`: their algorithm's tag, `filtered_rotation_averaging`, is a retired function name, which the naming gate
   accepts as a table name only for an algorithm the package itself defines.
-- `additive_level_slope(pc, c; frame_weights)` → `additive_level_slope(pc, c[, frame_weights])` (per-frame data, positional);
-  it and `LevelBisection` read the ring vignetting through `solve(EstimationProblem(RingVignetting, pc, (; offset,
+- `additive_level_slope` is internal (`_additive_level_slope`): it is `LevelBisection`'s objective, not an estimator of its
+  own, and its value at the solution is the solve's `metadata.slope` (`LevelBisection`'s docstring states the slope). It
+  reads the ring vignetting through `solve(EstimationProblem(RingVignetting, pc, (; offset,
   frame_weights)), RingPairMedians())` (`LevelBisection`'s `metadata.vignetting` is that solve's recorded result).
 - `LevelBisection` reads its stop bound from Core's public `stop_tolerance(stops, hi - lo)`, the one owner of the rule.
 
@@ -107,8 +108,11 @@ worktrees until they are registered).
   and the scale record come from the summary's parsed refine. Same observations kept, same LM, same result, bit for bit.
 - `eliminate`'s default is VisualGeometryToolkitCore's `has_nlls_schur()` (Core 0.14, set 3: the stack's one detection of
   NLLSsolver's Schur system); the package's own `isdefined` test (`_SCHUR`) is gone. Same default, same refusal.
-- The example's results record drops `bundle_retcode`, the legacy Symbol (Core retired `retcode_symbol`). The bundle's
-  termination record is `bundle_return_code` and `bundle_stop_rule`, as before.
+- The example's registration record (format v18) stores the bundle's termination record once, `bundle_fit`, through
+  VisualGeometryToolkitIO's style codec (`JSON.lower`/`JSON.lift` of the `FitResult`: its return code and stop rule by
+  name, `iterations`, `rms`, `n`; the panorama record's `fit`). `bundle_retcode` (the legacy Symbol; Core retired
+  `retcode_symbol`), `bundle_return_code`, `bundle_stop_rule`, `bundle_iterations_run` and `bundle_rms_px`, which
+  spelled those values a second time, are gone; a cached registration is recomputed once, no number moves.
 - Core's `pixel_centre` is `pixel_center` (decision 11), in `render_panorama`'s pixel map and the seams test.
 
 ## 0.11.0

@@ -65,8 +65,7 @@ export VignettingSelfCalibration, AzimuthalChart, VignettingMetadata, SparseChol
 export IntensityGains, ChannelGains
 export score_seams, vignetting_summary
 export save_panorama, load_panorama
-export PairCorrespondences, ring_correspondences, RingVignetting, RingPairMedians, AdditiveLevel, LevelBisection, additive_level_slope,
-       PairVignettingMetadata
+export PairCorrespondences, ring_correspondences, RingVignetting, RingPairMedians, AdditiveLevel, LevelBisection, PairVignettingMetadata
 public PANORAMA_KIND, panorama_json_schema
 public detect_features, pair_bearings, frame_region, CUBE_FACES, GAIN_CORRECTIONS, OBSERVATION_NOISES, refuse_retired_registration
 

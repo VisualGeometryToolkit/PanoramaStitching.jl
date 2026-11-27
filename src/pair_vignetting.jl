@@ -12,7 +12,7 @@
 #
 # An ADDITIVE level c in the frames (I = L·V + c: a veiling glare or a black-level error) breaks the cancellation — the pair's log
 # ratio then depends on L — and flattens the solution at the rim, where V is small; `LevelBisection` estimates c as the level
-# at which the log ratio no longer depends on the scene's brightness (`additive_level_slope`) and the solution is read with it
+# at which the log ratio no longer depends on the scene's brightness (`LevelBisection`'s objective, its `metadata.slope`) and the solution is read with it
 # removed.
 #
 # The correspondences are the frames sampled at directions (`sample_frames`: one batch per frame on the frames' backend); a
@@ -156,7 +156,7 @@ function _sorted_weighted_median(y, w)
 end
 
 # The correspondences grouped by ring pair (a, b): the permutation sorting them by ring pair and then by `y`, and each ring
-# pair's range of it (`RingPairMedians`' medians, `additive_level_slope`'s within-pair slopes).
+# pair's range of it (`RingPairMedians`' medians, `LevelBisection`'s within-pair slopes).
 function _ring_pair_runs(pc::PairCorrespondences, y)
     R = length(pc.edges) - 1
     key = (Int.(view(pc.rings, 1, :)) .- 1) .* R .+ Int.(view(pc.rings, 2, :))
@@ -286,19 +286,17 @@ function _connected_to_first(R::Int, rows)
     return seen
 end
 
-"""
-    additive_level_slope(pc::PairCorrespondences, c[, frame_weights = ones(pc.n_frames)]) -> Float64
-
-The dependence of the pair equation on the scene's brightness at the level `c`: the pooled within-ring-pair least-squares slope of
-the residual `e = ln(I_k − c) − ln(I_l − c) − (v(θ_k) − v(θ_l))` on the brightness `ln(I_k − c) − v(θ_k) + ln(I_l − c) − v(θ_l)`
-(`v` the [`RingPairMedians`](@ref) solution at `c` — `solve(EstimationProblem(RingVignetting, pc, (; offset = c,
-frame_weights)), RingPairMedians())`, the correspondences weighted by their frames' `frame_weights` — linear in the field angle between the ring centres and held beyond: the
-vignetting's variation inside a ring taken out of both, so neither carries it), each ring pair centred on its own median of `e`
-and mean of the brightness, the correspondences past 5 robust deviations of their pair's median left out. Zero at the true
-level (the log ratio then is the vignetting's, whatever `L`); positive below it (a residual level lifts the dark directions'
-ratio toward 0) and negative above it.
-"""
-function additive_level_slope(pc::PairCorrespondences, c::Real, frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
+# INTERNAL: LevelBisection's objective, its value at the solution the solve's `metadata.slope`. The dependence of the pair
+# equation on the scene's brightness at the level `c`, `_additive_level_slope(pc, c[, frame_weights = ones(pc.n_frames)])`:
+# the pooled within-ring-pair least-squares slope of the residual `e = ln(I_k − c) − ln(I_l − c) − (v(θ_k) − v(θ_l))` on the
+# brightness `ln(I_k − c) − v(θ_k) + ln(I_l − c) − v(θ_l)` (`v` the `RingPairMedians` solution at `c` —
+# `solve(EstimationProblem(RingVignetting, pc, (; offset = c, frame_weights)), RingPairMedians())`, the correspondences
+# weighted by their frames' `frame_weights` — linear in the field angle between the ring centres and held beyond: the
+# vignetting's variation inside a ring taken out of both, so neither carries it), each ring pair centred on its own median of
+# `e` and mean of the brightness, the correspondences past 5 robust deviations of their pair's median left out. Zero at the
+# true level (the log ratio then is the vignetting's, whatever `L`); positive below it (a residual level lifts the dark
+# directions' ratio toward 0) and negative above it.
+function _additive_level_slope(pc::PairCorrespondences, c::Real, frame_weights::AbstractVector{<:Real} = ones(pc.n_frames))
     fw = Float64.(frame_weights)
     x = VgtkCore.solve(VgtkCore.EstimationProblem(RingVignetting, pc, (; offset = c, frame_weights = fw)), RingPairMedians()).u
     mids = (pc.edges[1:(end - 1)] .+ pc.edges[2:end]) ./ 2
@@ -335,8 +333,12 @@ A VisualGeometryToolkitCore `FitKind` (iterative: a bisection to a tolerance, wi
           LevelBisection(; bounds); stops::ToleranceStops) -> FitResult{Float64}
 
 The additive level `c` of the sweep's frames (`I = L·V + c`, the plane `pc` read): the root in `bounds = (lo, hi)` (the frames'
-units; a correspondence with a value at or below a level is no row at it) of [`additive_level_slope`](@ref) — the level at which the pair equation's log ratio no longer depends on the scene's
-brightness — by bisection. `stops` (Core's `ToleranceStops(; max_iter, rtol, atol)`, a required solve keyword) ends it
+units; a correspondence with a value at or below a level is no row at it) of the pair equation's dependence on the scene's
+brightness — the level at which the log ratio no longer depends on it — by bisection. That dependence at a level `c` is the pooled
+within-ring-pair least-squares slope of the residual `e = ln(I_k − c) − ln(I_l − c) − (v(θ_k) − v(θ_l))` on the brightness
+`ln(I_k − c) − v(θ_k) + ln(I_l − c) − v(θ_l)` (`v` the [`RingPairMedians`](@ref) solution at `c`, linear in the field angle
+between the ring centres), each ring pair centred on its own median of `e` and mean of the brightness, the correspondences past
+5 robust deviations of their pair's median left out: zero at the true level, positive below it and negative above it. `stops` (Core's `ToleranceStops(; max_iter, rtol, atol)`, a required solve keyword) ends it
 once the bracket's width is at most `max(atol, rtol · (hi − lo))` — the scale the width of `bounds` — or after `max_iter`
 halvings (`ToleranceStops(; max_iter = 100, rtol = 0, atol = 1e-5)`: a bracket of 1e-5 in the frames' units). The estimate is
 `c`; the termination record `(Success, ToleranceMet)` when the bracket closed within `max_iter` iterations (`stats.nsteps`;
@@ -366,7 +368,7 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{AdditiveLevel, PairCo
     length(pc) > 0 || throw(ArgumentError("LevelBisection: no correspondences"))
     any((view(pc.values, 1, :) .> hi) .& (view(pc.values, 2, :) .> hi)) ||
         throw(ArgumentError("LevelBisection: no correspondence has both values above the upper bound $hi"))
-    f(c) = additive_level_slope(pc, c, frame_weights)
+    f(c) = _additive_level_slope(pc, c, frame_weights)
     a, b = lo, hi; fa, fb = f(a), f(b)
     it = 0
     if !(isfinite(fa) && isfinite(fb) && fa * fb <= 0)

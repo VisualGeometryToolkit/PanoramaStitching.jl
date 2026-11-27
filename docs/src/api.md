@@ -74,7 +74,6 @@ RingPairMedians
 PairVignettingMetadata
 AdditiveLevel
 LevelBisection
-additive_level_slope
 ```
 
 ## The results of record

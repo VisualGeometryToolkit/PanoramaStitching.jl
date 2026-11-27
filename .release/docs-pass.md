@@ -6,8 +6,8 @@ landing: none (the docs site is the Docs workflow's build of docs/src; no separa
 
 On 0.9.0 (8abc4b7): the Core 0.11.0 cascade (VisualGeometryToolkitCore 0.11: an LM tolerance stop is converged).
 [x] API diff since 0.9.0: no name added, removed or re-signatured (the diff touches src/rotation_bundle.jl's prose only).
-[x] Docstrings: `refine_rotations` (and `refine_camera_and_rotations`, which refers to it): the termination record is Core's
-    `lmsolve_chart!` verdict, returned as it is (an ftol/xtol stop is Success with no stationarity test; a NaN wall
+[x] Docstrings: `refine_rotations` (and `refine_camera_and_rotations`, which refers to it): the termination record is the
+    LevenbergMarquardt solve's termination record, returned as it is (an ftol/xtol stop is Success with no stationarity test; a NaN wall
     (Stalled, NonFinite); the cap MaxIters; max_iter = 0 (MaxIters, IterationCap)); "a refine descends towards the local
     minimum ... until a stop" (it no longer claims to end in it). `Registration`'s bundle field names Core's record: unchanged.
 [x] Guide (docs/src/guide.md:106, `VgtkCore.retcode(reg.bundle)`: "how the bundle ended"), landing page, README and the
