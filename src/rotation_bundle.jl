@@ -26,7 +26,7 @@
 # depends. With the first frame's rotation the gauge, a rotating sequence leaves
 # nothing else free; the bundle's metadata carries the reduced (Schur) information
 # of the rotations and the camera with which to check it. Both are the one
-# bundle below (`_rotation_bundle_structure` and `_rotation_bundle_result`), the camera variable present or absent.
+# bundle below (`_rotation_bundle_statement`, `_rotation_bundle_blocks` and `_rotation_bundle_result`), the camera variable present or absent.
 # =============================================================================
 
 # A frame's variable is a `VgtkCore.SO3Manifold{Float64}`, a track direction's a 2-dof
@@ -176,33 +176,6 @@ NLLSsolver.computeresidual(r::_CameraObservation, ch::VgtkCore.RotationChart, d:
 # below it, and a NaN cost accepted there fails its callback's cost check).
 NLLSsolver.computecost(vars::AbstractVector, r::Union{_Observation, _CameraObservation}) =
     VgtkCore.finite_cost(NLLSsolver.computecost(r, NLLSsolver.getvars(r, vars)...))
-
-# An observation of a HELD frame (the gauge: the bundle states its free variables only (`block_structure`), so a held one is
-# no variable and the block carries its value, as Estimation's bundle blocks do): `obs`'s residual and Jacobian with the frame's
-# rotation `frame` fixed, its variables the direction (and the camera) only, `varind` their indices in the solve's variables.
-# NLLSsolver's variable flags count from the direction: shifted by one they are `obs`'s (bit 1 the frame, never set here).
-struct _HeldFrame{N, O} <: NLLSsolver.AbstractResidual
-    obs::O
-    frame::VgtkCore.SO3Manifold{Float64}
-    varind::SVector{N, Int}
-end
-NLLSsolver.ndeps(::_HeldFrame{N}) where {N} = static(N)
-NLLSsolver.nres(::_HeldFrame) = static(2)
-NLLSsolver.varindices(r::_HeldFrame) = r.varind
-NLLSsolver.robustkernel(r::_HeldFrame) = NLLSsolver.robustkernel(r.obs)
-Base.eltype(::_HeldFrame) = Float64
-# NLLSsolver reads only the block's variables (the direction, and the camera); the held frame's rotation is prepended for `obs`.
-NLLSsolver.getvars(r::_HeldFrame{1, <:_Observation{E}}, vars::Vector) where {E} = (vars[r.varind[1]]::VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}},)
-NLLSsolver.getvars(r::_HeldFrame{2, <:_CameraObservation{E}}, vars::Vector) where {E} =
-    (vars[r.varind[1]]::VgtkCore.Eliminable{E, VgtkCore.SphereManifold{3, 2, Float64, 6, typeof(identity)}}, vars[r.varind[2]])
-NLLSsolver.computeresidual(r::_HeldFrame, args...) = NLLSsolver.computeresidual(r.obs, r.frame, args...)
-NLLSsolver.computeresjac(varflags, r::_HeldFrame, args...) = NLLSsolver.computeresjac(Int(varflags) << 1, r.obs, r.frame, args...)
-NLLSsolver.computecost(vars::AbstractVector, r::_HeldFrame) =
-    VgtkCore.finite_cost(NLLSsolver.computecost(r.obs, r.frame, NLLSsolver.getvars(r, vars)...))
-# The same observation with its variables' indices in the solve's variables (the held ones left out).
-_with_varind(o::_Observation{E, C, P, L, W}, varind) where {E, C, P, L, W} =
-    _Observation{E, C, P, L, W}(o.camera, o.projection, o.x, varind, o.kernel, o.whitening)
-_with_varind(o::_CameraObservation{E, L, W}, varind) where {E, L, W} = _CameraObservation{E, L, W}(o.x, varind, o.kernel, o.whitening)
 
 # Its closed-form frame and direction blocks (those of `_Observation`, through the variable's model) and its camera block,
 # ForwardDiff of π along the camera chart's coordinates at its anchor. `varflags`: bit 1 the frame, bit 2 the direction, bit 3
@@ -402,17 +375,20 @@ _estimation_strategy(table::AbstractString, key::AbstractString, class::Symbol) 
 const _DEFAULT_BUNDLE_STRATEGY = _estimation_strategy("camera_poses_problem", "optimization_strategy", :camera_poses_problem)
 VgtkCore.default_optimization_strategy(::RotationBundleProblem) = _DEFAULT_BUNDLE_STRATEGY
 
-# The block contract (Core's `block_structure` and `block_result`): the bundle stated once at the guess — its FREE variables,
-# its blocks of the observations kept, and the rest of the statement (`stated`: every variable, which are held, the kept
-# observations) — and the result assembled from the solved variables and the summary's parsed refine (`summary.loss`).
-# The held camera: the guess is the rotations.
-VgtkCore.block_structure(f::RotationBundleProblem, rotations::AbstractDict) =
-    _rotation_bundle_structure(f.camera, rotations, f.tracks, nothing, (); eliminate = f.eliminate)
-VgtkCore.block_structure(::RotationBundleProblem{Nothing}, ::AbstractDict) =
+# The block contract (Core's `block_structure`, `fixed_variables` and `block_result`): the bundle stated once at the guess —
+# EVERY variable, its blocks of the observations kept, and the rest of the statement (`stated`: which are held, the kept
+# observations) — the held variables declared at the guess (`fixed_variables(f, u0)`: the gauge frame, the tracks left out,
+# the frames left with no kept observation; they depend on the start), and the result assembled from the solved variables
+# and the summary's parsed refine (`summary.loss`). The held camera: the guess is the rotations.
+VgtkCore.block_structure(f::RotationBundleProblem, u0) = _rotation_bundle_blocks(_rotation_bundle_statement(f, u0))
+VgtkCore.fixed_variables(f::RotationBundleProblem, u0) = findall(!, _rotation_bundle_statement(f, u0).unfixed)
+_rotation_bundle_statement(f::RotationBundleProblem, rotations::AbstractDict) =
+    _rotation_bundle_statement(f.camera, rotations, f.tracks, nothing, (); eliminate = f.eliminate)
+_rotation_bundle_statement(::RotationBundleProblem{Nothing}, ::AbstractDict) =
     throw(ArgumentError("RotationBundleProblem: the autocalibration (no camera in the problem) refines the guess " *
                         "(; camera, rotations); give the camera to the problem to hold it"))
 # The autocalibration: the camera is the guess's, refined over its free parameters.
-function VgtkCore.block_structure(f::RotationBundleProblem{Nothing}, u0::NamedTuple{(:camera, :rotations)})
+function _rotation_bundle_statement(f::RotationBundleProblem{Nothing}, u0::NamedTuple{(:camera, :rotations)})
     camera = u0.camera
     m = camera isa VgtkCore.BoundedCamera ? VgtkCore.model(camera) : camera
     # the camera's variable: Core's ParameterManifold of its model restricted to the free parameters (names checked by
@@ -425,7 +401,7 @@ function VgtkCore.block_structure(f::RotationBundleProblem{Nothing}, u0::NamedTu
         "RotationBundleProblem: `fixed` holds every camera parameter: nothing to calibrate (give the camera to the problem " *
         "to hold its calibration)"))
     chc = VgtkCore.restrict(VgtkCore.ParameterManifold(m), names)
-    return _rotation_bundle_structure(camera, u0.rotations, f.tracks, chc, names; eliminate = f.eliminate)
+    return _rotation_bundle_statement(camera, u0.rotations, f.tracks, chc, names; eliminate = f.eliminate)
 end
 VgtkCore.block_result(::RotationBundleProblem, _u0, r::VgtkCore.FitResult, summary) = _rotation_bundle_result(summary.stated, r, summary.loss)
 
@@ -440,18 +416,12 @@ VgtkCore.with_robustifier(o::_Observation{E, C, P, L, W}, sqrt_weight, kernel::K
     (_unit_sqrt_weight(sqrt_weight); _Observation{E, C, P, K, W}(o.camera, o.projection, o.x, o.varind, kernel, o.whitening))
 VgtkCore.with_robustifier(o::_CameraObservation{E, L, W}, sqrt_weight, kernel::K) where {E, L, W, K} =
     (_unit_sqrt_weight(sqrt_weight); _CameraObservation{E, K, W}(o.x, o.varind, kernel, o.whitening))
-function VgtkCore.with_robustifier(h::_HeldFrame{N}, sqrt_weight, kernel) where {N}
-    o = VgtkCore.with_robustifier(h.obs, sqrt_weight, kernel)
-    return _HeldFrame{N, typeof(o)}(o, h.frame, h.varind)
-end
 
 # The one rotation bundle's statement (`chc === nothing`: the camera held; else `chc` the camera's chart over its free
 # parameters `free_names`): the observations kept at the start (a fixed point, below), the variables (every frame's rotation,
-# every track's direction, the camera last), the held ones (the gauge frame, the tracks left out, the frames left with no
-# kept observation) and the blocks of the kept observations over the FREE variables only — a held variable is no variable
-# of the LM, and a block of the held gauge frame carries its rotation (`_HeldFrame`). Each block's kernel is NLLSsolver's
-# `NoRobust()`; Core robustifies them at the solve's loss (`with_robustifier`).
-function _rotation_bundle_structure(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free_names::Tuple{Vararg{Symbol}};
+# every track's direction, the camera last) and the held ones (the gauge frame, the tracks left out, the frames left with no
+# kept observation: `unfixed` false), which the LM holds (Core's `fixed_variables`, NLLSsolver's unfixed mask).
+function _rotation_bundle_statement(camera, rotations::AbstractDict{K}, tracks::AbstractVector, chc, free_names::Tuple{Vararg{Symbol}};
                                     eliminate::Bool) where {K}
     what = "RotationBundleProblem"
     fwd = _forward_map(camera); bc = _BundleCamera(camera); C = typeof(bc); P = typeof(fwd)
@@ -524,21 +494,18 @@ function _rotation_bundle_structure(camera, rotations::AbstractDict{K}, tracks::
     end
     unconstrained = K[frames[i] for i in 2:nf if !observed[i]]
     foreach(k -> (unfixed[fid[k]] = false), unconstrained)
-    newidx = cumsum(unfixed) .* unfixed                                     # a free variable's index in the solve, 0 held
+    return (; camera, tracks, chc, cv, free_names, E, frames, fid, nf, ic, vars, unfixed, active, nkept, nobs,
+            unconstrained, observation)
+end
+# The bundle's variables (every one: Core holds the held ones), its blocks of the kept observations (each kernel NLLSsolver's
+# `NoRobust()`; Core robustifies them at the solve's loss, `with_robustifier`) and the statement, from `st`.
+function _rotation_bundle_blocks(st)
+    (; tracks, active, observation) = st
     blocks = NLLSsolver.AbstractResidual[]
     for (j, t) in enumerate(tracks), (i, o) in enumerate(t)
-        active[j][i] || continue
-        ob = observation(NLLSsolver.NoRobust(), j, i, o); vi = ob.varind
-        if unfixed[vi[1]]
-            push!(blocks, _with_varind(ob, SVector(Tuple(newidx[v] for v in vi))))
-        else
-            rest = SVector(Tuple(newidx[v] for v in vi[2:end]))
-            push!(blocks, _HeldFrame{length(rest), typeof(ob)}(ob, vars[vi[1]]::VgtkCore.SO3Manifold{Float64}, rest))
-        end
+        active[j][i] && push!(blocks, observation(NLLSsolver.NoRobust(), j, i, o))
     end
-    stated = (; camera, tracks, chc, cv, free_names, E, frames, fid, nf, ic, vars, unfixed, newidx, active, nkept, nobs,
-              unconstrained, observation)
-    return V[vars[v] for v in eachindex(vars) if unfixed[v]], blocks, stated
+    return copy(st.vars), blocks, st
 end
 
 # The one rotation bundle's result from its statement `st`, the LM's result `r` (`r.u` its free variables; no solve at
@@ -548,16 +515,13 @@ end
 # or `nothing` (plain least squares); an Irls{K} is refused by Core's bundle_loss: this bundle runs one LM. The scale record
 # is the input's (`scale_source`, and `noise_scale` unless ScaleNone: NaN).
 function _rotation_bundle_result(st, r::VgtkCore.FitResult, bundle::NamedTuple)
-    (; camera, tracks, chc, cv, free_names, E, frames, fid, nf, ic, unfixed, newidx, active, nkept, nobs, unconstrained, observation) = st
+    (; camera, tracks, chc, cv, free_names, E, frames, fid, nf, ic, active, nkept, nobs, unconstrained, observation) = st
     loss = bundle.strategy === nothing ? nothing : VgtkCore.strategy_loss(bundle.strategy)()
     width = bundle.loss === nothing ? NaN : sqrt(VgtkCore.sq_loss_width(bundle.loss))
     scale_source = VgtkCore.scale_source(bundle.input)
     scale = scale_source == VgtkCore.ScaleNone ? NaN : Float64(VgtkCore.noise_scale(bundle.input))
     robustifier() = loss === nothing ? NLLSsolver.NoRobust() : VgtkCore.loss_robustifier(loss, width)
-    vars = copy(st.vars)
-    for v in eachindex(vars)                                                # the solution into the full variable vector
-        unfixed[v] && (vars[v] = r.u[newidx[v]])
-    end
+    vars = r.u                                                              # every variable, the held ones as stated
     solved = !(r.stats.nsteps == 0 && r.stop_rule == VgtkCore.IterationCap)   # `max_iter = 0` runs no solve
     out = Dict(k => RotMatrix{3, Float64, 9}(SMatrix{3, 3, Float64, 9}((vars[fid[k]]::VgtkCore.SO3Manifold{Float64}).R)) for k in frames)
     dirs = [SVector{3, Float64}(VgtkCore.model((vars[nf + j]::VgtkCore.Eliminable{E}).value)) for j in eachindex(tracks)]

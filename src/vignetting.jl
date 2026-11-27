@@ -783,7 +783,8 @@ The algorithm's settings are every other keyword above and below (each required)
   are always the whitening of the log-I constraint by the whole noise (Core's
   `whitening_factor`). TOML: [`OBSERVATION_NOISES`](@ref).
 - The solve: `solver`, VisualGeometryToolkitCore's `NormalCG()` (Jacobi-preconditioned conjugate gradients on the
-  applied normal equations, its `NormalEquationsProblem`, on the frames' backend) or a [`SparseCholesky`](@ref) (the same
+  applied normal equations, its `NormalEquationsProblem`, on the frames' backend; the fit forms the preconditioner,
+  the normal matrix's diagonal, and runs `NormalCG(; preconditioner)` with it) or a [`SparseCholesky`](@ref) (the same
   system assembled sparse and factored on the host). The CG's stops are the solve keyword `stops`, Core's
   `ToleranceStops(; rtol, max_iter)` (required with `NormalCG()`: the relative residual `‖g − N x‖ ≤ rtol·‖g‖`, `g` the
   right-hand side, within `max_iter` iterations; a solve that ends at its budget is `MaxIters` with `IterationCap`,
@@ -868,8 +869,13 @@ function VgtkCore.__solve(prob::VgtkCore.EstimationProblem{VrtkCore.AbstractVign
 end
 
 # The CG's stops are the solve's; a Cholesky solve reads none (no inert setting).
-_check_stops(::VgtkCore.NormalCG, stops) = stops === nothing &&
-    throw(ArgumentError("VignettingSelfCalibration: solver = NormalCG() needs the solve keyword `stops = ToleranceStops(; rtol, max_iter)`"))
+function _check_stops(cg::VgtkCore.NormalCG, stops)
+    stops === nothing && throw(ArgumentError(
+        "VignettingSelfCalibration: solver = NormalCG() needs the solve keyword `stops = ToleranceStops(; rtol, max_iter)`"))
+    cg.preconditioner === nothing || throw(ArgumentError(
+        "VignettingSelfCalibration: the fit forms its normal matrix's Jacobi preconditioner itself; give `NormalCG()`"))
+    return false
+end
 _check_stops(::SparseCholesky, stops) = stops === nothing ||
     throw(ArgumentError("VignettingSelfCalibration: solver = SparseCholesky() reads no `stops` (a closed form); leave it out"))
 
@@ -1047,7 +1053,8 @@ function _fit_plane(vignetting, camera, frames::AbstractVector, rotations::Abstr
             # warm start after the first solve: the scene and the gains as solved (absolute unknowns), V's increment 0
             x0 = it == 1 ? nothing : VgtkCore.ka_upload(Float64, be, vcat(cL, zeros(mV), xh[(end - nG + 1):end]))
             # Core's conjugate gradients on the applied normal operator (Jacobi, cgls's stopping rule ‖g − N x‖ ≤ rtol·‖g‖)
-            sol = VgtkCore.solve(VgtkCore.NormalEquationsProblem(N, rhs; diagonal, u0 = x0), solver; stops)
+            # (the Jacobi preconditioner, the normal matrix's diagonal, is Core's CG's configuration: its field)
+            sol = VgtkCore.solve(VgtkCore.NormalEquationsProblem(N, rhs; u0 = x0), VgtkCore.NormalCG(; preconditioner = diagonal); stops)
             x = sol.u; rel = sol.metadata.relres; iters += sol.stats.nsteps
             t = (sol.retcode, sol.stop_rule)
             term = it == 1 ? t : VgtkCore.worst_retcode(term, t)            # every solve's, not the last one's alone

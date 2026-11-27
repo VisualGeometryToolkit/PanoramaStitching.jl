@@ -10,6 +10,13 @@ It is built on VisualGeometryToolkitCore 0.14, VisualGeometryToolkitEstimation 0
 VisualGeometryToolkitIO 0.12 and VisualRadiometryToolkitCore/IO 0.1.2 (TEMPORARY `[sources]` on their solve-branch
 worktrees until they are registered).
 
+- **The rotation bundle states every variable and declares the held ones** (VisualGeometryToolkitCore 0.14's block
+  contract `fixed_variables(f, u0)`, PS N2): the gauge frame, the tracks left out and the frames left with no kept
+  observation are held by Core's LM (NLLSsolver's unfixed mask) at the guess's statement; the private held-frame block
+  wrapper (`_HeldFrame`) and the free-variable re-indexing are deleted. The vignetting's conjugate gradients take
+  their Jacobi preconditioner as Core's algorithm field (`NormalCG(; preconditioner)`), the fit forming it as before;
+  a `solver = NormalCG(; preconditioner)` given to the fit is refused (it forms its own).
+
 ### Breaking (retired names, each with its replacement)
 
 - American in identifiers (owner decision 11): the example's config key `sensor_characterisation` (`[decode]`,
