@@ -128,6 +128,10 @@ solve-branch and release/0.2.0 worktrees until they are registered). PanoramaSti
   ring-pair gauge's connectivity (`_connected_to_first`, a breadth-first search) is Estimation's `label_components` of
   the ring-pair `ViewGraph`, as the frame graph's. `detect_features` refuses its retired `detection_noise` through the
   registration's one refusal. A frame's size is read off its stored array (no value plane built per pair).
+- `TrackCheck` refuses `Uncertain` observations (an `ArgumentError` naming the reason): its cut compares each
+  observation's pixel residual, unwhitened, with a multiple of the bundle's noise scale, which a whitened bundle states in
+  units of the covariances. The refusal stands until the check whitens its residuals. `register_rotations` gives plain
+  pixels (detection covariances off), so no result moves.
 - `register_rotations` no longer throws when the averaging records no scale (plain least squares, `ScaleNone`): its
   progress line prints NaN. `LevelBisection` stops with `(Failure, NonFinite)` when the slope is not finite at a
   midpoint (it slid the bracket to its upper end and reported Success).

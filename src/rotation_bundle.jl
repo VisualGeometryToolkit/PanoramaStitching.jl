@@ -561,7 +561,9 @@ The result is the last bundle's (`u`, termination record, `stats`, `rms`, `n`, `
 kept)`: `bundle` that last bundle's own result (its [`RotationBundleMetadata`](@ref)), `history` per solve the check tested
 its `removed` count, `rms` and `inlier_rms` (px), and `kept` the observations the last bundle solved, `j => indices` per
 track `j` of the problem's `tracks` it kept (the tracks left out absent). `cut_multiple` must be positive and
-`max_outer_iterations` at least 1 (an `ArgumentError`).
+`max_outer_iterations` at least 1 (an `ArgumentError`). The observations must be plain pixels: an `Uncertain` one (whitened
+by its covariance) is refused (an `ArgumentError`), since the cut compares the bundle's pixel residuals with its noise scale,
+which a whitened bundle states in units of the covariances, until the check whitens its residuals.
 """
 struct TrackCheck{A <: VgtkCore.LevenbergMarquardt} <: VgtkCore.AbstractEstimationAlgorithm
     refine::A
@@ -581,6 +583,12 @@ VgtkCore.estimator_kind(::TrackCheck) = VgtkCore.RefineKind()
 function VgtkCore.__solve(prob::VgtkCore.RefineProblem{<:RotationBundleProblem}, alg::TrackCheck; kwargs...)
     f = prob.f
     tracks = f.tracks
+    # the cut compares each observation's pixel residual (unwhitened: the metadata's `residuals`) with a multiple of the
+    # bundle's noise scale; a whitened observation's scale is in units of its covariance, not pixels: refused until the
+    # check whitens its residuals
+    any(t -> any(o -> last(o) isa VgtkCore.Uncertain, t), tracks) &&
+        throw(ArgumentError("TrackCheck: an observation is Uncertain (whitened by its covariance): the check compares its " *
+                            "unwhitened pixel residual with the bundle's whitened noise scale; give plain pixels"))
     sub(kept) = RotationBundleProblem(f.camera, [tracks[j][idx] for (j, idx) in kept], f.fixed, f.eliminate)
     kept = [j => collect(eachindex(t)) for (j, t) in enumerate(tracks)]
     bundle = VgtkCore.solve(VgtkCore.RefineProblem(f, prob.u0, prob.p), alg.refine; kwargs...)

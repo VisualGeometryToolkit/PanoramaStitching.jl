@@ -82,6 +82,15 @@ end
     @test_throws ArgumentError bundle([[1 => u1, 2 => unc(u2, Σ)]])                     # some, not all
     @test_throws ArgumentError bundle([[1 => unc(u1, Σ), 2 => unc(u2, fill(NaN, SMatrix{2, 2, Float64, 4}))]])
     @test_throws ArgumentError bundle([[1 => unc(u1, Σ), 2 => unc(u2, SMatrix{2, 2, Float64, 4}(1.0, 2.0, 2.0, 1.0))]])
+    # the track check refuses whitened observations: its cut compares pixel residuals with the whitened noise scale
+    whitened = [[1 => unc(u1, Σ), 2 => unc(u2, Σ)]]
+    @test bundle(whitened) isa VgtkCore.FitResult                                         # the bundle itself takes them
+    err = try
+        solve(RefineProblem(RotationBundleProblem(CAM, whitened), R), PanoramaStitching.TrackCheck(lm); width = 3.0, stops); nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("Uncertain", err.msg) && occursin("unwhitened pixel residual", err.msg)
 end
 
 @testitem "detection covariances off: the pairs and the bundle read plain pixels, no consumer default" setup = [SweepScene, BayerMaps] begin
